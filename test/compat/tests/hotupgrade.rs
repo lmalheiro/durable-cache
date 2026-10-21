@@ -26,12 +26,13 @@
 
 #![cfg(target_os = "linux")]
 
+use std::time::Duration;
+
 use durable_cache_harness::hotupgrade::HotUpgradePair;
 use durable_cache_harness::process::free_port;
 use durable_cache_mock_origin::script::{Chunk, Scenario};
 use durable_cache_mock_origin::MockOrigin;
 use futures_util::StreamExt;
-use std::time::Duration;
 
 // IMP-TC.COMPAT.HOTUPGRADE-01: satisfy TC-COMPAT.HOTUPGRADE-01
 

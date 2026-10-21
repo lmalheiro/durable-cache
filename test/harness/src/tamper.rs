@@ -5,11 +5,12 @@
 //! byte-flip/truncate an object file at exact offsets from the record
 //! layout (`durable_cache::test_support`).
 
-use anyhow::Result;
-use durable_cache::test_support::HEADER_LEN;
 use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
+
+use anyhow::Result;
+use durable_cache::test_support::HEADER_LEN;
 
 /// Flip one byte at `offset` within the fixed record header.
 pub fn flip_header_byte(path: &Path, offset: usize) -> Result<()> {

@@ -16,16 +16,16 @@
 //! a new one (FRE-COMPAT.FORMATUPGRADE-01). A record of another revision is
 //! forged by rewriting its version field and resealing its header checksum.
 
-use super::support;
+use std::path::Path;
+use std::time::{Duration, UNIX_EPOCH};
 
-use durable_cache::format;
 use durable_cache::recovery::recover;
-use durable_cache::FsCache;
+use durable_cache::{format, FsCache};
 use pingora_cache::eviction::simple_lru::Manager;
 use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
-use std::path::Path;
-use std::time::{Duration, UNIX_EPOCH};
+
+use super::support;
 
 // IMP-TC.COMPAT.FORMATUPGRADE-01: satisfy TC-COMPAT.FORMATUPGRADE-01
 

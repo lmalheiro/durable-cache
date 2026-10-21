@@ -7,15 +7,15 @@
 //! exactly, with record sizes — whether serving waited for it or ran
 //! alongside it — with no snapshot or delta log involved.
 
-use super::support;
-
-use pingora_cache::eviction::simple_lru::Manager;
-use pingora_cache::eviction::EvictionManager;
+use std::time::Duration;
 
 use durable_cache::hooks::PausePoint;
 use durable_cache::recovery::recover;
 use durable_cache::FsCache;
-use std::time::Duration;
+use pingora_cache::eviction::simple_lru::Manager;
+use pingora_cache::eviction::EvictionManager;
+
+use super::support;
 
 // IMP-TC.EVICTION.RECONSTRUCT-01: satisfy TC-EVICTION.RECONSTRUCT-01
 

@@ -8,11 +8,11 @@
 //! SDS-LAYOUT.OBJECTFILE-01) are covered directly against
 //! `Storage::get_miss_handler`/`lookup` -- no HTTP needed.
 
-use super::support;
-
 use bytes::Bytes;
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
+
+use super::support;
 
 // IMP-TC.COMPLIANCE.BODY-01: satisfy TC-COMPLIANCE.BODY-01
 

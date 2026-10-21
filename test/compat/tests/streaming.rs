@@ -11,12 +11,13 @@
 //! genuinely needs a real upstream to count against; that's this file's
 //! job, closing the TC jointly with the crate-level file.
 
+use std::time::Duration;
+
 use durable_cache_harness::fixture_proxy::{FixtureProxyHandle, FixtureProxyOptions};
 use durable_cache_harness::process::free_port;
 use durable_cache_mock_origin::script::{Chunk, Scenario};
 use durable_cache_mock_origin::MockOrigin;
 use futures_util::StreamExt;
-use std::time::Duration;
 
 // IMP-TC.COMPAT.STREAMING-01: satisfy TC-COMPAT.STREAMING-01
 

@@ -16,12 +16,13 @@
 //! latency figure for the storage operations themselves, which
 //! TC-PERFORMANCE.LOOKUP-01 measures.
 
-use super::support;
-
-use pingora_cache::storage::Storage;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use pingora_cache::storage::Storage;
+
+use super::support;
 
 // IMP-TC.STORAGE.EXECUTOR-01: satisfy TC-STORAGE.EXECUTOR-01
 
@@ -250,12 +251,13 @@ fn tc_storage_executor_01_the_restart_scan_frees_files_off_the_worker() {
 /// task on the scan's single worker runs between any two of those calls.
 #[test]
 fn tc_storage_executor_01_the_restart_scan_yields_between_records() {
+    use std::sync::Mutex;
+    use std::time::SystemTime;
+
     use durable_cache::hooks::PausePoint;
     use durable_cache::recovery::recover;
     use pingora_cache::eviction::simple_lru::Manager;
     use pingora_cache::eviction::{CacheEntryKey, CacheEntryKeyRef, EvictionManager};
-    use std::sync::Mutex;
-    use std::time::SystemTime;
 
     type Events = Arc<Mutex<Vec<&'static str>>>;
 

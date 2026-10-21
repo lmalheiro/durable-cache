@@ -9,7 +9,7 @@
 //! its primary holds, never unlinking a record a live store has just
 //! replaced, and reporting what it reclaimed.
 
-use super::support;
+use std::time::{Duration, SystemTime};
 
 use durable_cache::hooks::PausePoint;
 use durable_cache::recovery::recover;
@@ -18,7 +18,8 @@ use pingora_cache::eviction::simple_lru::Manager;
 use pingora_cache::eviction::EvictionManager;
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::Storage;
-use std::time::{Duration, SystemTime};
+
+use super::support;
 
 // IMP-TC.STORAGE.RECLAIM-01: satisfy TC-STORAGE.RECLAIM-01
 

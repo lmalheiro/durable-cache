@@ -13,7 +13,9 @@
 //! The exhaustive boundary-splitting checks on the path helpers themselves
 //! live as unit tests in `src/sharding.rs`.
 
-use super::support;
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::Arc;
 
 use durable_cache::hooks::HookConfig;
 use durable_cache::recovery::recover;
@@ -23,9 +25,8 @@ use pingora_cache::eviction::simple_lru::Manager;
 use pingora_cache::eviction::EvictionManager;
 use pingora_cache::key::{CacheHashKey, CacheKey};
 use pingora_cache::storage::PurgeOutcome;
-use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::Arc;
+
+use super::support;
 
 // IMP-TC.LAYOUT.SHARDING-01: satisfy TC-LAYOUT.SHARDING-01
 

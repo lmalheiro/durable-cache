@@ -15,14 +15,15 @@
 //! (`compat_headers.rs`'s concern) alongside them -- both covered here,
 //! directly against `Storage`, no HTTP needed.
 
-use super::support;
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
 use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
-use std::time::{Duration, SystemTime};
+
+use super::support;
 
 // IMP-TC.COMPLIANCE.FRESHNESS-01: satisfy TC-COMPLIANCE.FRESHNESS-01
 

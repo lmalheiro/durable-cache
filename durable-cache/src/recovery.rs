@@ -13,23 +13,19 @@
 //! rename also takes, and a ghost pass after enumeration drops entries
 //! whose file has gone.
 
-use crate::blocking;
-use crate::format::HeaderError;
-#[cfg(test)]
-use crate::hooks::PausePoint;
-use crate::key_codec;
-use crate::metrics;
-use crate::purge;
-use crate::reclaim::{self, ReclaimClass};
-use crate::record::{self, FileIdentity, ReadError, RecordError, RecordKind};
-use crate::sharding;
-use crate::writerid;
-use crate::FsCache;
-use pingora_cache::eviction::{CacheEntryKey, CacheEntryKeyRef, EvictionManager};
-use pingora_cache::storage::{PurgeTarget, PurgeType};
 use std::fs::{DirEntry, File, FileType, ReadDir};
 use std::io;
 use std::path::Path;
+
+use pingora_cache::eviction::{CacheEntryKey, CacheEntryKeyRef, EvictionManager};
+use pingora_cache::storage::{PurgeTarget, PurgeType};
+
+use crate::format::HeaderError;
+#[cfg(test)]
+use crate::hooks::PausePoint;
+use crate::reclaim::{self, ReclaimClass};
+use crate::record::{self, FileIdentity, ReadError, RecordError, RecordKind};
+use crate::{blocking, key_codec, metrics, purge, sharding, writerid, FsCache};
 
 // IMP-EVICTION.STARTUP-01: satisfy FDS-EVICTION.STARTUP-01
 

@@ -18,17 +18,17 @@
 //! anything the caller holds, because the caller of an expiry holds no
 //! `CacheMeta` at all: it arrives with a key and nothing else.
 
-use crate::error::{refuse_read_only, Op};
-use crate::key_codec;
-use crate::metaupdate;
-use crate::record::{self, ParsedRecord, ReadError, RecordKind};
-use crate::FsCache;
+use std::fs::{File, OpenOptions};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use pingora_cache::key::CompactCacheKey;
 use pingora_cache::storage::PurgeOutcome;
 use pingora_cache::CacheMeta;
 use pingora_error::{Error, ErrorType, OrErr, Result};
-use std::fs::{File, OpenOptions};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::error::{refuse_read_only, Op};
+use crate::record::{self, ParsedRecord, ReadError, RecordKind};
+use crate::{key_codec, metaupdate, FsCache};
 
 // IMP-STORAGE.EXPIRE-01: satisfy FDS-STORAGE.EXPIRE-01
 
@@ -176,8 +176,9 @@ fn start_of_second(now: SystemTime) -> Result<SystemTime> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pingora_http::ResponseHeader;
+
+    use super::*;
 
     /// Seconds on each side of the boundary between MessagePack's five-byte
     /// integers and its nine-byte ones (2^32, in 2106), up to the last

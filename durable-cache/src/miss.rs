@@ -13,16 +13,12 @@
 //! that never finishes takes its temporary with it, and so does one that an
 //! invalidating purge of its key ended while it was in flight.
 
-use crate::blocking;
-use crate::error::STORE_PURGED;
-use crate::format::{self, RecordHeader};
-#[cfg(test)]
-use crate::hooks::FaultPoint;
-use crate::inflight::{InFlightWriter, WriteOutcome};
-use crate::key_codec;
-use crate::publish;
-use crate::sharding;
-use crate::FsCache;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::os::unix::fs::FileExt;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use pingora_cache::eviction::CacheEntryId;
@@ -30,12 +26,14 @@ use pingora_cache::storage::streaming_write::U64WriteId;
 use pingora_cache::storage::{HandleMiss, MissFinishType};
 use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{Error, ErrorType, OrErr, Result};
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::os::unix::fs::FileExt;
-use std::path::PathBuf;
-use std::sync::Arc;
 use zerocopy::IntoBytes;
+
+use crate::error::STORE_PURGED;
+use crate::format::{self, RecordHeader};
+#[cfg(test)]
+use crate::hooks::FaultPoint;
+use crate::inflight::{InFlightWriter, WriteOutcome};
+use crate::{blocking, key_codec, publish, sharding, FsCache};
 
 /// How many counter values a store tries before giving up on finding a free
 /// temporary name (FDS-STORAGE.PUBLISH-01, "advance the counter and retry").

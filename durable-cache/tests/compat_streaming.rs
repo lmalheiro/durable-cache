@@ -17,11 +17,12 @@
 //! closes this TC jointly with this file. The abort leg
 //! (FRE-COMPLIANCE.PARTIALABORT-01) is in `compat_incomplete.rs`.
 
-use super::support;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use pingora_cache::storage::Storage;
-use std::time::{Duration, Instant};
+
+use super::support;
 
 /// Step 1: the flag that lets followers reach a partial hit at all
 /// (FRE-COMPAT.STREAMFLAG-01).

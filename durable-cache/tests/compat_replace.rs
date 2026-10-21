@@ -8,10 +8,10 @@
 //! scenario under a different TC ID); that TC's own IMP marker is in
 //! `storage_publish.rs`.
 
-use super::support;
-
 use bytes::Bytes;
 use pingora_cache::storage::Storage;
+
+use super::support;
 
 // IMP-TC.COMPLIANCE.REPLACE-01: satisfy TC-COMPLIANCE.REPLACE-01
 

@@ -11,8 +11,9 @@
 //! and a context saying what was being done, and keeps the lower-level
 //! error as the cause.
 
-use pingora_error::{Error, ErrorType, Result};
 use std::fmt;
+
+use pingora_error::{Error, ErrorType, Result};
 
 /// `update_meta` addressed to a key with no stored object: the
 /// distinguishable error FRE-COMPLIANCE.METAABSENT-01 requires.

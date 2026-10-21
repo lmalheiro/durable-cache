@@ -12,21 +12,20 @@
 //! The update is visible to lookups when `update_meta` returns, which is
 //! when `HttpCache` releases the key's write lock.
 
-use crate::error::{refuse_read_only, Op, KEY_NOT_FOUND};
-use crate::format;
-#[cfg(test)]
-use crate::hooks::{FaultPoint, PausePoint};
-use crate::key_codec;
-use crate::metrics;
-use crate::record::{self, ParsedRecord, ReadError, RecordKind};
-use crate::FsCache;
-use pingora_cache::{CacheKey, CacheMeta};
-use pingora_error::{Error, ErrorType, OrErr, Result};
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::time::SystemTime;
+
+use pingora_cache::{CacheKey, CacheMeta};
+use pingora_error::{Error, ErrorType, OrErr, Result};
 use zerocopy::IntoBytes;
+
+use crate::error::{refuse_read_only, Op, KEY_NOT_FOUND};
+#[cfg(test)]
+use crate::hooks::{FaultPoint, PausePoint};
+use crate::record::{self, ParsedRecord, ReadError, RecordKind};
+use crate::{format, key_codec, metrics, FsCache};
 
 // IMP-STORAGE.METAUPDATE-01: satisfy FDS-STORAGE.METAUPDATE-01
 // IMP-OBSERVABILITY.HEADROOM-01: satisfy FDS-OBSERVABILITY.HEADROOM-01

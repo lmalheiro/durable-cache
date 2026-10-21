@@ -9,11 +9,11 @@
 //! cancellation (the handler simply dropped), a write failure, or a backend
 //! made read-only.
 
-use super::support;
-
 use bytes::Bytes;
 use durable_cache::hooks::FaultPoint;
 use pingora_cache::storage::Storage;
+
+use super::support;
 
 // IMP-TC.COMPAT.ABORTSPACE-01: satisfy TC-COMPAT.ABORTSPACE-01
 
@@ -200,8 +200,9 @@ async fn tc_compat_abortspace_01_a_store_that_fails_while_opening_leaves_nothing
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_aborted_store_frees_its_temporary_off_the_dropping_thread() {
-    use durable_cache::hooks::PausePoint;
     use std::time::{Duration, Instant};
+
+    use durable_cache::hooks::PausePoint;
 
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/abortspace-closed-off-thread");

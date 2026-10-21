@@ -12,14 +12,15 @@
 //! and start again: a "restart" inside one process only re-reads the same
 //! directory with the same page cache behind it.
 
-use durable_cache_harness::fixture_proxy::{FixtureProxyHandle, FixtureProxyOptions};
-use durable_cache_harness::process::free_port;
-use durable_cache_mock_origin::script::Scenario;
-use durable_cache_mock_origin::MockOrigin;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
+
+use durable_cache_harness::fixture_proxy::{FixtureProxyHandle, FixtureProxyOptions};
+use durable_cache_harness::process::free_port;
+use durable_cache_mock_origin::script::Scenario;
+use durable_cache_mock_origin::MockOrigin;
 
 // IMP-TC.PERSISTENCE.RESTART-01: satisfy TC-PERSISTENCE.RESTART-01
 

@@ -4,11 +4,12 @@
 //! The example end to end: `caching-proxy` in front of the mock origin, asked
 //! for the same URL twice, answers the second request from its cache.
 
+use std::process::Command;
+use std::time::Duration;
+
 use durable_cache_harness::process::{free_port, ManagedChild};
 use durable_cache_mock_origin::script::Scenario;
 use durable_cache_mock_origin::MockOrigin;
-use std::process::Command;
-use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_second_request_is_answered_from_the_cache() {

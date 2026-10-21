@@ -9,10 +9,10 @@
 //! withdrawal made in parallel in the same process would be
 //! indistinguishable from this one's.
 
-use super::support;
-
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::Storage;
+
+use super::support;
 
 // IMP-TC.COMPLIANCE.REVALIDATION-02: satisfy TC-COMPLIANCE.REVALIDATION-01
 // -- the observability half; compat_revalidation.rs covers the rest.

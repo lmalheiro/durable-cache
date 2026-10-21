@@ -12,12 +12,13 @@
 //! below, closing the TC (jointly with `compat_incomplete.rs`'s coverage
 //! of every other leg).
 
+use std::time::Duration;
+
 use durable_cache_harness::fixture_proxy::{FixtureProxyHandle, FixtureProxyOptions};
 use durable_cache_harness::process::free_port;
 use durable_cache_mock_origin::script::{Chunk, Scenario};
 use durable_cache_mock_origin::MockOrigin;
 use futures_util::StreamExt;
-use std::time::Duration;
 
 // IMP-TC.COMPLIANCE.INCOMPLETE-01: satisfy TC-COMPLIANCE.INCOMPLETE-01
 

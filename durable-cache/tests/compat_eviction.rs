@@ -14,13 +14,14 @@
 //! one is FRE-COMPAT.EVICTION-01 (the functional requirement) rather than
 //! FDS-EVICTION.STARTUP-01 (the design).
 
-use super::support;
+use std::time::{Duration, SystemTime};
 
 use durable_cache::recovery::recover;
 use pingora_cache::eviction::simple_lru::Manager;
 use pingora_cache::eviction::EvictionManager;
 use pingora_cache::storage::Storage;
-use std::time::{Duration, SystemTime};
+
+use super::support;
 
 // IMP-TC.COMPAT.EVICTION-01: satisfy TC-COMPAT.EVICTION-01
 

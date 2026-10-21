@@ -13,12 +13,12 @@
 //! `storage_reclaim.rs`'s variant cases already established -- no HTTP
 //! needed.
 
-use super::support;
-
 use bytes::Bytes;
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
 use pingora_cache::{CacheKey, CacheMeta};
+
+use super::support;
 
 // IMP-TC.COMPLIANCE.VARY-01: satisfy TC-COMPLIANCE.VARY-01
 

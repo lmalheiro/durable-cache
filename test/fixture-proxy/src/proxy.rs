@@ -22,12 +22,11 @@
 //! purge module needed on this side, unlike the plan originally assumed.
 
 use async_trait::async_trait;
+use pingora_cache::cache_control::CacheControl;
 use pingora_cache::eviction::simple_lru::Manager as EvictionManager;
 use pingora_cache::filters::{request_cacheable, resp_cacheable};
 use pingora_cache::key::HashBinary;
-use pingora_cache::{
-    cache_control::CacheControl, CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable,
-};
+use pingora_cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
 use pingora_core::prelude::HttpPeer;
 use pingora_error::Result;
 use pingora_http::{RequestHeader, ResponseHeader};

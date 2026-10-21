@@ -34,10 +34,11 @@
 //! (`/proc/sys/vm/drop_caches`); without it the cold pass is skipped and
 //! said so, rather than reported as if it had been cold.
 
-use super::support;
+use std::time::{Duration, Instant};
 
 use pingora_cache::storage::Storage;
-use std::time::{Duration, Instant};
+
+use super::support;
 
 // IMP-TC.PERSISTENCE.CAPACITY-01: satisfy TC-PERSISTENCE.CAPACITY-01
 // IMP-TC.EFFICIENCY.SPACE-01: satisfy TC-EFFICIENCY.SPACE-01

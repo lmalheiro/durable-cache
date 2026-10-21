@@ -11,12 +11,14 @@
 //! directory, once created, is never removed, so nothing here is ever
 //! cleared or re-checked against disk.
 
-use crate::sharding::{self, FIRST_LEVEL_COUNT, SHARD_COUNT};
-use pingora_error::{Error, ErrorType, OrErr, Result};
 use std::io;
 use std::mem::size_of;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use pingora_error::{Error, ErrorType, OrErr, Result};
+
+use crate::sharding::{self, FIRST_LEVEL_COUNT, SHARD_COUNT};
 
 /// Bits per word of the bitset.
 const WORD_BITS: usize = u64::BITS as usize;
@@ -122,8 +124,9 @@ impl ShardDirCache {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::{Arc, Barrier};
+
+    use super::*;
 
     /// Construction creates every first-level directory, so a store only
     /// ever has to create a second-level one.

@@ -20,12 +20,14 @@
 //! not per syscall — so the synchronous code below stays exactly as it was
 //! and the worker is free again immediately.
 
-#[cfg(test)]
-use crate::FsCache;
-use pingora_error::{Error, ErrorType, Result};
 use std::fs::File;
 #[cfg(test)]
 use std::path::PathBuf;
+
+use pingora_error::{Error, ErrorType, Result};
+
+#[cfg(test)]
+use crate::FsCache;
 
 // IMP-STORAGE.EXECUTOR-01: satisfy FDS-STORAGE.EXECUTOR-01
 

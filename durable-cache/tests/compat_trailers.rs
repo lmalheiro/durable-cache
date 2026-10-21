@@ -18,12 +18,12 @@
 //! published record's on-disk length is exactly the body's end offset, with
 //! no further section a trailer could occupy or be confused with.
 
-use super::support;
-
 use bytes::Bytes;
 use durable_cache::sharding::shard_path;
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::Storage;
+
+use super::support;
 
 // IMP-TC.COMPLIANCE.TRAILERS-01: satisfy TC-COMPLIANCE.TRAILERS-01
 

@@ -9,10 +9,10 @@
 //! file adds the mid-flight-lookup leg (step 2) that TC-COMPAT.CONCURRENT-01
 //! specifically calls for.
 
-use super::support;
-
 use bytes::Bytes;
 use pingora_cache::storage::Storage;
+
+use super::support;
 
 // IMP-TC.COMPAT.CONCURRENT-01: satisfy TC-COMPAT.CONCURRENT-01
 

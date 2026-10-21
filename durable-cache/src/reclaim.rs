@@ -8,14 +8,13 @@
 //! `crate::recovery::recover`'s, the same pass FDS-EVICTION.STARTUP-01
 //! already needs.
 
+use std::fs::File;
+use std::path::Path;
+
 #[cfg(test)]
 use crate::hooks::PausePoint;
 use crate::record::FileIdentity;
-use crate::sharding;
-use crate::writerid;
-use crate::FsCache;
-use std::fs::File;
-use std::path::Path;
+use crate::{sharding, writerid, FsCache};
 
 // IMP-STORAGE.RECLAIM-01: satisfy FDS-STORAGE.RECLAIM-01
 

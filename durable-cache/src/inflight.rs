@@ -19,6 +19,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
 use tokio::sync::Notify;
 
 /// One in-flight store.
@@ -233,8 +234,9 @@ impl InFlightWriter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     fn begin(r: &InFlightRegistry, key: &str) -> Arc<InFlightWriter> {
         r.begin(key, format!("{key}.tmp").into(), vec![], vec![])
