@@ -85,6 +85,11 @@ hotupgrade::install(&mut server, cache, eviction, None);
 session.cache.enable(cache, Some(eviction), None, None, None);
 ```
 
+The same setup as a complete program is
+[`examples/caching-proxy`](examples/caching-proxy): a reverse proxy that
+caches on disk, survives restarts and supports hot upgrades, with a smoke
+test.
+
 Without a Pingora server, call `recover(cache, eviction).await?` once at
 start yourself: it rebuilds the eviction view and reclaims what earlier runs
 left behind. It is safe to run before serving or concurrently with it, and
@@ -156,8 +161,8 @@ not API and is exempt from semver: do not enable it.
 
 ## Repository layout
 
-Only `durable-cache/` ships. Everything else is specification, test
-scaffolding, or tooling.
+Only `durable-cache/` ships. Everything else is specification, an example,
+test scaffolding, or tooling.
 
 ```
 .
@@ -211,6 +216,9 @@ scaffolding, or tooling.
 │   ├── compat/                  end-to-end tests driving a real proxy process
 │   └── cache-tests-baseline.json  triaged allowlist for the RFC suite (below)
 │
+├── examples/caching-proxy/    a runnable reverse proxy that caches with the
+│                              crate, and its smoke test; publish = false
+│
 ├── docs/                      ← the specification this code implements
 │   ├── durable-cache.tex      master document; *-hlr/-refine/-design/-tc/… are
 │   │                            its chapters (stakeholder reqs → ADRs → design →
@@ -250,6 +258,7 @@ cargo test -p durable-cache --features metrics   # the same, with metrics
 cargo test -p durable-cache --no-default-features       # without the body CRC
 cargo test -p durable-cache --features body-crc-verify  # with the read-time check
 cargo test -p compat                  # end-to-end through a real fixture-proxy
+cargo test -p caching-proxy           # the example, in front of a mock origin
 cargo xtask trace-report              # every test case has a test fn or IMP marker
 cargo xtask cache-tests               # the RFC 9111 suite (needs Node + submodule)
 cargo deny --manifest-path durable-cache/Cargo.toml --exclude-dev check
@@ -310,7 +319,7 @@ cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 
 | Workflow          | Runs on                                   | What it does |
 |-------------------|-------------------------------------------|--------------|
-| `ci.yml`          | pushes to `main`, pull requests           | fmt, SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, and the library built with its minimum Rust (1.85) |
+| `ci.yml`          | pushes to `main`, pull requests           | fmt, SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, and the library built with its minimum Rust (1.85) |
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 

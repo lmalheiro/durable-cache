@@ -6,12 +6,13 @@ members = [
     "test/mock-origin",
     "test/harness",
     "test/compat",
+    "examples/caching-proxy",
     "xtask",
 ]
 
 # `durable-cache` is the only published member; every other member
-# carries `publish = false` in its own manifest: they are test fixtures and
-# tooling, not deliverables.
+# carries `publish = false` in its own manifest: they are an example, test
+# fixtures and tooling, not deliverables.
 
 [workspace.package]
 edition = "2021"
