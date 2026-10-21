@@ -18,12 +18,12 @@
 
 use super::support;
 
-// IMP-TC.STORAGE.EXECUTOR-01: satisfy TC-STORAGE.EXECUTOR-01
-
 use pingora_cache::storage::Storage;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+// IMP-TC.STORAGE.EXECUTOR-01: satisfy TC-STORAGE.EXECUTOR-01
 
 /// The longest a single `Storage` call may keep the worker to itself.
 ///

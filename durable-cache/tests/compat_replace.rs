@@ -8,11 +8,12 @@
 //! scenario under a different TC ID); that TC's own IMP marker is in
 //! `storage_publish.rs`.
 
-// IMP-TC.COMPLIANCE.REPLACE-01: satisfy TC-COMPLIANCE.REPLACE-01
 use super::support;
 
 use bytes::Bytes;
 use pingora_cache::storage::Storage;
+
+// IMP-TC.COMPLIANCE.REPLACE-01: satisfy TC-COMPLIANCE.REPLACE-01
 
 #[tokio::test]
 async fn tc_compliance_replace_01_reader_of_old_object_undisturbed_during_replacement() {

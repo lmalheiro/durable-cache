@@ -9,11 +9,12 @@
 //! file adds the mid-flight-lookup leg (step 2) that TC-COMPAT.CONCURRENT-01
 //! specifically calls for.
 
-// IMP-TC.COMPAT.CONCURRENT-01: satisfy TC-COMPAT.CONCURRENT-01
 use super::support;
 
 use bytes::Bytes;
 use pingora_cache::storage::Storage;
+
+// IMP-TC.COMPAT.CONCURRENT-01: satisfy TC-COMPAT.CONCURRENT-01
 
 #[tokio::test]
 async fn tc_compat_concurrent_01_lookups_during_concurrent_writes_never_see_a_torn_result() {

@@ -26,13 +26,14 @@
 
 #![cfg(target_os = "linux")]
 
-// IMP-TC.COMPAT.HOTUPGRADE-01: satisfy TC-COMPAT.HOTUPGRADE-01
 use durable_cache_harness::hotupgrade::HotUpgradePair;
 use durable_cache_harness::process::free_port;
 use durable_cache_mock_origin::script::{Chunk, Scenario};
 use durable_cache_mock_origin::MockOrigin;
 use futures_util::StreamExt;
 use std::time::Duration;
+
+// IMP-TC.COMPAT.HOTUPGRADE-01: satisfy TC-COMPAT.HOTUPGRADE-01
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "needs Linux (the pingora-core fd transfer is Linux-only) and two real processes -- see compliance.yml"]

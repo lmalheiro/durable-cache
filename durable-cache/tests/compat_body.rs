@@ -8,12 +8,13 @@
 //! SDS-LAYOUT.OBJECTFILE-01) are covered directly against
 //! `Storage::get_miss_handler`/`lookup` -- no HTTP needed.
 
-// IMP-TC.COMPLIANCE.BODY-01: satisfy TC-COMPLIANCE.BODY-01
 use super::support;
 
 use bytes::Bytes;
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
+
+// IMP-TC.COMPLIANCE.BODY-01: satisfy TC-COMPLIANCE.BODY-01
 
 async fn store_and_read_back(cache: &'static FsCache, name: &str, body: &[u8]) -> Vec<u8> {
     let key = support::key(name);

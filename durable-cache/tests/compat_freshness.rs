@@ -15,7 +15,6 @@
 //! (`compat_headers.rs`'s concern) alongside them -- both covered here,
 //! directly against `Storage`, no HTTP needed.
 
-// IMP-TC.COMPLIANCE.FRESHNESS-01: satisfy TC-COMPLIANCE.FRESHNESS-01
 use super::support;
 
 use bytes::Bytes;
@@ -24,6 +23,8 @@ use pingora_cache::storage::Storage;
 use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
 use std::time::{Duration, SystemTime};
+
+// IMP-TC.COMPLIANCE.FRESHNESS-01: satisfy TC-COMPLIANCE.FRESHNESS-01
 
 struct FreshnessInputs {
     fresh_until: SystemTime,

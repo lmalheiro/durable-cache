@@ -8,7 +8,6 @@
 //! `crate::recovery::recover`'s, the same pass FDS-EVICTION.STARTUP-01
 //! already needs.
 
-// IMP-STORAGE.RECLAIM-01: satisfy FDS-STORAGE.RECLAIM-01
 #[cfg(test)]
 use crate::hooks::PausePoint;
 use crate::record::FileIdentity;
@@ -17,6 +16,8 @@ use crate::writerid;
 use crate::FsCache;
 use std::fs::File;
 use std::path::Path;
+
+// IMP-STORAGE.RECLAIM-01: satisfy FDS-STORAGE.RECLAIM-01
 
 /// The class of a file the restart scan reclaims: what `RecoveryReport`
 /// counts by, and the label on the reclaim counters

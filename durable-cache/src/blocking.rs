@@ -20,13 +20,14 @@
 //! not per syscall — so the synchronous code below stays exactly as it was
 //! and the worker is free again immediately.
 
-// IMP-STORAGE.EXECUTOR-01: satisfy FDS-STORAGE.EXECUTOR-01
 #[cfg(test)]
 use crate::FsCache;
 use pingora_error::{Error, ErrorType, Result};
 use std::fs::File;
 #[cfg(test)]
 use std::path::PathBuf;
+
+// IMP-STORAGE.EXECUTOR-01: satisfy FDS-STORAGE.EXECUTOR-01
 
 /// Run one storage operation's blocking work on Tokio's blocking pool.
 ///

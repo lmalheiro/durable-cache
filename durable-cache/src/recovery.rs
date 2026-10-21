@@ -13,7 +13,6 @@
 //! rename also takes, and a ghost pass after enumeration drops entries
 //! whose file has gone.
 
-// IMP-EVICTION.STARTUP-01: satisfy FDS-EVICTION.STARTUP-01
 use crate::blocking;
 use crate::format::HeaderError;
 #[cfg(test)]
@@ -31,6 +30,8 @@ use pingora_cache::storage::{PurgeTarget, PurgeType};
 use std::fs::{DirEntry, File, FileType, ReadDir};
 use std::io;
 use std::path::Path;
+
+// IMP-EVICTION.STARTUP-01: satisfy FDS-EVICTION.STARTUP-01
 
 /// What one recovery pass did, for logging and tests. Fields may be added
 /// in later versions; so that this breaks no integrator, code outside this

@@ -12,7 +12,6 @@
 //! and start again: a "restart" inside one process only re-reads the same
 //! directory with the same page cache behind it.
 
-// IMP-TC.PERSISTENCE.RESTART-01: satisfy TC-PERSISTENCE.RESTART-01
 use durable_cache_harness::fixture_proxy::{FixtureProxyHandle, FixtureProxyOptions};
 use durable_cache_harness::process::free_port;
 use durable_cache_mock_origin::script::Scenario;
@@ -21,6 +20,8 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
+
+// IMP-TC.PERSISTENCE.RESTART-01: satisfy TC-PERSISTENCE.RESTART-01
 
 /// The objects the first run caches: varied body sizes, two `Vary`
 /// variants of one path, and one whose metadata a revalidation updates.

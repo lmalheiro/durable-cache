@@ -13,13 +13,14 @@
 //! `storage_reclaim.rs`'s variant cases already established -- no HTTP
 //! needed.
 
-// IMP-TC.COMPLIANCE.VARY-01: satisfy TC-COMPLIANCE.VARY-01
 use super::support;
 
 use bytes::Bytes;
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
 use pingora_cache::{CacheKey, CacheMeta};
+
+// IMP-TC.COMPLIANCE.VARY-01: satisfy TC-COMPLIANCE.VARY-01
 
 fn variant_key(base: &CacheKey, variance: [u8; 16]) -> CacheKey {
     let mut k = base.clone();

@@ -25,7 +25,6 @@
 //! neither gets two independent writers during the upgrade window, which
 //! FRE-COMPAT.EVICTION-01 rules out.
 
-// IMP-COMPAT.READONLY-01: satisfy FDS-COMPAT.READONLY-01
 use crate::recovery;
 use crate::FsCache;
 use async_trait::async_trait;
@@ -37,6 +36,8 @@ use pingora_core::services::background::{
 use pingora_core::services::ServiceHandle;
 use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
+
+// IMP-COMPAT.READONLY-01: satisfy FDS-COMPAT.READONLY-01
 
 /// How long the incoming process of a hot upgrade waits, once it holds the
 /// listening sockets, before its restart scan: until the outgoing process's

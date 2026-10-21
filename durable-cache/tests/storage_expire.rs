@@ -13,8 +13,6 @@
 
 use super::support;
 
-// IMP-TC.STORAGE.EXPIRE-01: satisfy TC-STORAGE.EXPIRE-01
-
 use durable_cache::format;
 use durable_cache::hooks::PausePoint;
 use pingora_cache::eviction::{CacheEntryId, CacheEntryKey};
@@ -23,6 +21,8 @@ use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
 use std::os::unix::fs::MetadataExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+// IMP-TC.STORAGE.EXPIRE-01: satisfy TC-STORAGE.EXPIRE-01
 
 /// Metadata that is fresh well into the future, so "no longer fresh" after
 /// an expiry is unambiguous rather than a timing accident.

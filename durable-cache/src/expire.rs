@@ -18,7 +18,6 @@
 //! anything the caller holds, because the caller of an expiry holds no
 //! `CacheMeta` at all: it arrives with a key and nothing else.
 
-// IMP-STORAGE.EXPIRE-01: satisfy FDS-STORAGE.EXPIRE-01
 use crate::error::{refuse_read_only, Op};
 use crate::key_codec;
 use crate::metaupdate;
@@ -30,6 +29,8 @@ use pingora_cache::CacheMeta;
 use pingora_error::{Error, ErrorType, OrErr, Result};
 use std::fs::{File, OpenOptions};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+// IMP-STORAGE.EXPIRE-01: satisfy FDS-STORAGE.EXPIRE-01
 
 /// Expire the record at `key`'s canonical path. The caller resolves the
 /// `PurgeTarget` (an `Identified` one names a generation this backend never

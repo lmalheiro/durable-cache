@@ -12,13 +12,14 @@
 //! below, closing the TC (jointly with `compat_incomplete.rs`'s coverage
 //! of every other leg).
 
-// IMP-TC.COMPLIANCE.INCOMPLETE-01: satisfy TC-COMPLIANCE.INCOMPLETE-01
 use durable_cache_harness::fixture_proxy::{FixtureProxyHandle, FixtureProxyOptions};
 use durable_cache_harness::process::free_port;
 use durable_cache_mock_origin::script::{Chunk, Scenario};
 use durable_cache_mock_origin::MockOrigin;
 use futures_util::StreamExt;
 use std::time::Duration;
+
+// IMP-TC.COMPLIANCE.INCOMPLETE-01: satisfy TC-COMPLIANCE.INCOMPLETE-01
 
 /// Walk the two-level shard tree for any file whose name ends in the
 /// temporaries' extension (`durable_cache::test_support::TEMP_SUFFIX`), as

@@ -14,10 +14,6 @@
 //! reclaims it. The exception is a damaged temporary that a tagged lookup
 //! names, which is an error (see `lookup`).
 
-// IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-01 -- the read
-// protocol (validation order, retry, optional body check, seek); miss.rs's
-// IMP-STORAGE.PUBLISH-01 covers the writer half.
-// IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
 use crate::blocking;
 use crate::inflight::{InFlightWriter, WriteOutcome};
 use crate::key_codec;
@@ -37,6 +33,11 @@ use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+
+// IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-01 -- the read
+// protocol (validation order, retry, optional body check, seek); miss.rs's
+// IMP-STORAGE.PUBLISH-01 covers the writer half.
+// IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
 
 const CHUNK_SIZE: u64 = 64 * 1024;
 

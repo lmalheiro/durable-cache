@@ -13,13 +13,14 @@
 //! it fully. `test/compat`'s `unsized_body.rs` is a redundant end-to-end
 //! HTTP-level check of the same property.
 
-// IMP-TC.COMPAT.UNSIZED-01: satisfy TC-COMPAT.UNSIZED-01
 use super::support;
 
 use bytes::Bytes;
 use durable_cache::sharding::shard_path;
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::Storage;
+
+// IMP-TC.COMPAT.UNSIZED-01: satisfy TC-COMPAT.UNSIZED-01
 
 async fn store_and_verify(name: &str, chunks: &[&[u8]]) {
     let (cache, _tmp) = support::leaked_cache();
