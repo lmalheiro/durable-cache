@@ -22,7 +22,10 @@ instead of being served.
 
 **Specification:** [PDF][spec-pdf], committed alongside its LaTeX sources.
 
-[spec-pdf]: docs/durable-cache.pdf
+<!-- Links to repository files are absolute: crates.io, which shows this
+README too, resolves relative links against the crate's own directory,
+durable-cache/, not against the repository root. -->
+[spec-pdf]: https://github.com/lmalheiro/durable-cache/blob/main/docs/durable-cache.pdf
 
 ## Status
 
@@ -85,7 +88,7 @@ session.cache.enable(cache, Some(eviction), None, None, None);
 ```
 
 The same setup as a complete program is
-[`examples/caching-proxy`](examples/caching-proxy): a reverse proxy that
+[`examples/caching-proxy`](https://github.com/lmalheiro/durable-cache/tree/main/examples/caching-proxy): a reverse proxy that
 caches on disk, survives restarts and supports hot upgrades, with a smoke
 test.
 
@@ -535,13 +538,13 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
 
 ## Security
 
-Please report a vulnerability privately, as [SECURITY.md](SECURITY.md)
+Please report a vulnerability privately, as [SECURITY.md](https://github.com/lmalheiro/durable-cache/blob/main/SECURITY.md)
 describes, not in a public issue.
 
 ## Authors
 
 The code was written with AI assistance (Anthropic's Claude), directed and
-reviewed by the human authors listed in [AUTHORS](AUTHORS), who hold its
+reviewed by the human authors listed in [AUTHORS](https://github.com/lmalheiro/durable-cache/blob/main/AUTHORS), who hold its
 copyright. Before the first release, the crate's own source had a
 file-by-file human review; the review of its tests and tooling continues in
 [#14](https://github.com/lmalheiro/durable-cache/issues/14). Every source
@@ -550,7 +553,7 @@ file carries an SPDX header naming the authors and the licence;
 
 ## Licence
 
-Apache-2.0; see [LICENSE](LICENSE).
+Apache-2.0; see [LICENSE](https://github.com/lmalheiro/durable-cache/blob/main/LICENSE).
 
 ## Trademarks
 
