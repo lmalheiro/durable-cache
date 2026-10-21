@@ -72,6 +72,17 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
+    /// Point the README's links to repository files at `v<version>`, the tag
+    /// of the durable-cache version in its Cargo.toml. crates.io shows the
+    /// README each version was published with, so its links name that
+    /// version's files; on main they name the latest release's. The release
+    /// workflow runs this on every release pull request.
+    ReadmeLinks {
+        /// Report links that name another ref instead of rewriting them, as
+        /// CI does.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn workspace_root() -> Result<PathBuf> {
@@ -93,6 +104,7 @@ fn main() -> Result<()> {
         Cmd::TraceReport => trace_report(),
         Cmd::Headers => check_headers(),
         Cmd::Fmt { check } => fmt(check),
+        Cmd::ReadmeLinks { check } => readme_links(check),
     }
 }
 
@@ -770,4 +782,76 @@ fn fmt(check: bool) -> Result<()> {
         bail!("the workspace is not formatted: run `cargo xtask fmt`");
     }
     bail!("cargo fmt failed");
+}
+
+/// The README's links to repository files, each followed by the ref it names
+/// and the path: `blob/<ref>/<file>` and `tree/<ref>/<directory>`.
+const REPO_FILE_LINKS: [&str; 2] = [
+    "https://github.com/lmalheiro/durable-cache/blob/",
+    "https://github.com/lmalheiro/durable-cache/tree/",
+];
+
+fn readme_links(check: bool) -> Result<()> {
+    let root = workspace_root()?;
+    let metadata = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(&root)
+        .output()
+        .context("failed to run cargo metadata")?;
+    if !metadata.status.success() {
+        bail!("cargo metadata failed");
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout)?;
+    let version = metadata["packages"]
+        .as_array()
+        .and_then(|packages| packages.iter().find(|p| p["name"] == "durable-cache"))
+        .and_then(|package| package["version"].as_str())
+        .context("cargo metadata lists no version of durable-cache")?;
+    let tag = format!("v{version}");
+
+    let path = root.join("README.md");
+    let readme = std::fs::read_to_string(&path).context("failed to read README.md")?;
+    let mut rewritten = String::with_capacity(readme.len());
+    let mut stale = Vec::new();
+    let mut rest = readme.as_str();
+    while let Some((at, prefix)) = REPO_FILE_LINKS
+        .iter()
+        .filter_map(|prefix| rest.find(prefix).map(|at| (at, *prefix)))
+        .min()
+    {
+        let ref_start = at + prefix.len();
+        let ref_len = rest[ref_start..]
+            .find('/')
+            .with_context(|| format!("a README link at `{prefix}` names no path"))?;
+        let named = &rest[ref_start..ref_start + ref_len];
+        if named != tag {
+            stale.push(format!("{prefix}{named}/"));
+        }
+        rewritten.push_str(&rest[..ref_start]);
+        rewritten.push_str(&tag);
+        rest = &rest[ref_start + ref_len..];
+    }
+    rewritten.push_str(rest);
+    stale.sort();
+    stale.dedup();
+
+    if check {
+        if !stale.is_empty() {
+            bail!(
+                "README.md links name another ref than {tag}, the version in \
+                 durable-cache/Cargo.toml: {}. Run `cargo xtask readme-links`.",
+                stale.join(", ")
+            );
+        }
+        println!("README.md links name {tag}");
+    } else if stale.is_empty() {
+        println!("README.md links already name {tag}");
+    } else {
+        std::fs::write(&path, rewritten).context("failed to write README.md")?;
+        println!(
+            "README.md links now name {tag}, instead of: {}",
+            stale.join(", ")
+        );
+    }
+    Ok(())
 }

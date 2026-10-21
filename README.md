@@ -24,8 +24,12 @@ instead of being served.
 
 <!-- Links to repository files are absolute: crates.io, which shows this
 README too, resolves relative links against the crate's own directory,
-durable-cache/, not against the repository root. -->
-[spec-pdf]: https://github.com/lmalheiro/durable-cache/blob/main/docs/durable-cache.pdf
+durable-cache/, not against the repository root. They name the tag of the
+version in durable-cache/Cargo.toml, so each version's README on crates.io
+links to that version's files; on main, those of the latest release. The
+release workflow moves them in each release pull request, and CI checks
+them (`cargo xtask readme-links --check`). -->
+[spec-pdf]: https://github.com/lmalheiro/durable-cache/blob/v0.1.0/docs/durable-cache.pdf
 
 ## Status
 
@@ -88,7 +92,7 @@ session.cache.enable(cache, Some(eviction), None, None, None);
 ```
 
 The same setup as a complete program is
-[`examples/caching-proxy`](https://github.com/lmalheiro/durable-cache/tree/main/examples/caching-proxy): a reverse proxy that
+[`examples/caching-proxy`](https://github.com/lmalheiro/durable-cache/tree/v0.1.0/examples/caching-proxy): a reverse proxy that
 caches on disk, survives restarts and supports hot upgrades, with a smoke
 test.
 
@@ -346,11 +350,11 @@ cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 
 | Workflow          | Runs on                                   | What it does |
 |-------------------|-------------------------------------------|--------------|
-| `ci.yml`          | pushes to `main`, pull requests           | rustfmt (the pinned nightly), SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, the library built with its minimum Rust (1.85), and `cargo publish --dry-run` |
+| `ci.yml`          | pushes to `main`, pull requests           | rustfmt (the pinned nightly), SPDX headers, the README's links naming this version's tag, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, the library built with its minimum Rust (1.85), and `cargo publish --dry-run` |
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 | `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
-| `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date; when one is merged, tags the version, publishes it with the token in the `crates-io` environment and creates the GitHub release (see below) |
+| `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date, its README's links naming the new version's tag; when one is merged, tags the version, publishes it with the token in the `crates-io` environment and creates the GitHub release (see below) |
 
 ### Releasing
 
@@ -367,13 +371,14 @@ releases nothing. To release:
 1. Merge everything else the release should include first. When `main`
    moves after you edit the release pull request, release-plz closes it and
    opens a fresh one without your edits.
-2. On the release pull request's branch, edit `durable-cache/CHANGELOG.md` as
-   needed, and rebuild the specification with the version's tag, so its source
-   links point at that release:
+2. On the release pull request's branch, rebuild the specification with the
+   version's tag, so its source links point at that release, and edit
+   `durable-cache/CHANGELOG.md` if needed:
    `cd docs && REQMAN_SOURCE_REF=v<version> latexmk -g -pdf durable-cache`.
-   Commit and push: your push runs CI on the pull request. The workflow's own
-   pushes do not, so a release pull request you leave as it is needs closing
-   and reopening for CI to run.
+   The workflow has already pointed the README's links at that tag. Commit
+   and push: your push runs CI on the pull request. The workflow's own pushes
+   do not, so a release pull request you leave as it is needs closing and
+   reopening for CI to run.
 3. Merge it.
 
 Publishing reads a crates.io token from the repository's `crates-io`
@@ -538,13 +543,13 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
 
 ## Security
 
-Please report a vulnerability privately, as [SECURITY.md](https://github.com/lmalheiro/durable-cache/blob/main/SECURITY.md)
+Please report a vulnerability privately, as [SECURITY.md](https://github.com/lmalheiro/durable-cache/blob/v0.1.0/SECURITY.md)
 describes, not in a public issue.
 
 ## Authors
 
 The code was written with AI assistance (Anthropic's Claude), directed and
-reviewed by the human authors listed in [AUTHORS](https://github.com/lmalheiro/durable-cache/blob/main/AUTHORS), who hold its
+reviewed by the human authors listed in [AUTHORS](https://github.com/lmalheiro/durable-cache/blob/v0.1.0/AUTHORS), who hold its
 copyright. Before the first release, the crate's own source had a
 file-by-file human review; the review of its tests and tooling continues in
 [#14](https://github.com/lmalheiro/durable-cache/issues/14). Every source
@@ -553,7 +558,7 @@ file carries an SPDX header naming the authors and the licence;
 
 ## Licence
 
-Apache-2.0; see [LICENSE](https://github.com/lmalheiro/durable-cache/blob/main/LICENSE).
+Apache-2.0; see [LICENSE](https://github.com/lmalheiro/durable-cache/blob/v0.1.0/LICENSE).
 
 ## Trademarks
 

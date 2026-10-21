@@ -67,9 +67,10 @@ jobs:
           # gets `id-token: write` and the token goes.
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  # Opens or updates the release PR. Pushes this workflow makes start no
-  # other workflow, so CI runs on the release PR once a maintainer pushes to
-  # it, or closes and reopens it.
+  # Opens or updates the release PR, and points its README's links at the
+  # version it releases. Pushes this workflow makes start no other workflow,
+  # so CI runs on the release PR once a maintainer pushes to it, or closes
+  # and reopens it.
   release-plz-pr:
     name: Release-plz PR
     if: github.repository_owner == 'lmalheiro'
@@ -85,9 +86,45 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: Swatinem/rust-cache@v2
       - name: Run release-plz
+        id: release-plz
         uses: release-plz/action@v0.5
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The README on main links to the files of the latest release; the
+      # release PR's README must link to those of the version it releases,
+      # which crates.io will show with it. `cargo xtask readme-links` makes
+      # that change on the PR's branch, committed there through the API as
+      # this workflow: a signed commit, with no credentials on disk. The PR
+      # still holds bot commits only, so release-plz keeps updating it, and
+      # this step runs again after each update.
+      - name: Point the release PR's README links at its version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          branch=$(jq -r '.head_branch // empty' <<< "${PR:-null}")
+          if [ -z "$branch" ]; then
+            branch=$(gh api "repos/$REPO/pulls?state=open" \
+              --jq '[.[] | select(.head.ref | startswith("release-plz-"))][0].head.ref // empty')
+          fi
+          if [ -z "$branch" ]; then
+            echo "no release PR"
+            exit 0
+          fi
+          git fetch --no-tags origin "$branch"
+          git checkout --force --detach FETCH_HEAD
+          cargo xtask readme-links
+          if git diff --quiet -- README.md; then
+            exit 0
+          fi
+          gh api --method PUT "repos/$REPO/contents/README.md" \
+            -f branch="$branch" \
+            -f sha="$(git rev-parse FETCH_HEAD:README.md)" \
+            -f message="docs: point the README's links at the version this PR releases" \
+            -f content="$(base64 -w0 README.md)" \
+            --silent
