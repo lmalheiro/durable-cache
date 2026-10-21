@@ -14,6 +14,7 @@ all-features = true
 # ones do, unless they are listed here with the reason they are accepted.
 ignore = [
     { id = "RUSTSEC-2024-0388", reason = "derivative is unmaintained: a compile-time proc-macro that pingora-core 0.9.0 depends on, with no upgrade available. Remove this entry once Pingora stops using it." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained: serde_yaml, which pingora-core 0.9.0 uses to parse the YAML configuration file an operator passes with -c, depends on it, with no upgrade available. Remove this entry once Pingora stops using serde_yaml." },
 ]
 
 [licenses]
