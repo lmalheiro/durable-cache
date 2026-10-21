@@ -35,6 +35,9 @@ jobs:
       - name: SPDX headers
         run: nix develop -c cargo xtask headers
 
+      - name: The README links to the files of this version's tag
+        run: nix develop -c cargo xtask readme-links --check
+
       - name: cargo clippy
         run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
 
