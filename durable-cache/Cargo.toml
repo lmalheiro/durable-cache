@@ -1,6 +1,6 @@
 [package]
 name = "durable-cache"
-version = "0.1.0"
+version = "0.1.1"
 description = "A file-system-backed, durable storage backend for Pingora®, implementing the pingora-cache Storage trait"
 # Both live at the workspace root: `readme` is copied into the package from
 # there, and LICENSE in this directory is a symlink to the root copy.
