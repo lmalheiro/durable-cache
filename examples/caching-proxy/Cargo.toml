@@ -1,0 +1,25 @@
+[package]
+name = "caching-proxy"
+version = "0.1.0"
+description = "Example: a reverse proxy that caches on disk with durable-cache — not a deliverable"
+publish = false
+edition.workspace = true
+
+[dependencies]
+durable-cache.workspace = true
+pingora-cache.workspace = true
+# No TLS backend: the example talks plain HTTP to its upstream (see README.md).
+pingora-core.workspace = true
+pingora-proxy.workspace = true
+pingora-error.workspace = true
+pingora-http.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+env_logger.workspace = true
+
+[dev-dependencies]
+durable-cache-harness.workspace = true
+durable-cache-mock-origin.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

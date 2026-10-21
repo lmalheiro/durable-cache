@@ -65,11 +65,12 @@ jobs:
       - name: clippy with the body-crc-verify feature
         run: nix develop -c cargo clippy -p durable-cache --features body-crc-verify --all-targets -- -D warnings
 
-      - name: Build workspace (fixture-proxy, mock-origin, harness, compat)
+      - name: Build workspace (fixture-proxy, mock-origin, harness, compat, caching-proxy)
         run: nix develop -c cargo build --workspace
 
-      - name: Group B/D — compat tests (excluding hot-upgrade, which needs two processes)
-        run: nix develop -c cargo nextest run --profile ci -p compat
+      # One run, so the JUnit report below covers both packages.
+      - name: Group B/D — compat tests (excluding hot-upgrade, which needs two processes) and the example's smoke test
+        run: nix develop -c cargo nextest run --profile ci -p compat -p caching-proxy
 
       - name: Upload JUnit results
         if: always()
