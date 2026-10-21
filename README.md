@@ -26,12 +26,12 @@ instead of being served.
 
 ## Status
 
-**Work in progress.** Nothing has been released yet: the first version,
-0.1.0, is being prepared. The crate has not run in production, and its API
-may change before 1.0. Every artifact of the specification is still `draft`,
-pending the authors' review; the human review of the tests and tooling
-continues in [#14](https://github.com/lmalheiro/durable-cache/issues/14), and
-the known gaps are [open issues](https://github.com/lmalheiro/durable-cache/issues).
+**Work in progress.** 0.1.0 is the first release. The crate has not run in
+production yet, and its API may change before 1.0. Every artifact of the
+specification is still `draft`, pending the authors' review; the human review
+of the tests and tooling continues in
+[#14](https://github.com/lmalheiro/durable-cache/issues/14), and the known
+gaps are [open issues](https://github.com/lmalheiro/durable-cache/issues).
 
 The crate implements the full `Storage` surface — `lookup`, `get_miss_handler`,
 `purge`, `update_meta`, plus streaming partial hits and `expire`,
@@ -54,8 +54,7 @@ root, a scratch device, or a scale a laptop cannot reach.
 
 ```toml
 [dependencies]
-# Not on crates.io yet.
-durable-cache = { git = "https://github.com/lmalheiro/durable-cache" }
+durable-cache = "0.1"
 ```
 
 ```rust
