@@ -13,7 +13,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - durable-cache, a durable file-system storage backend for Pingora
 
-### Documentation
 
-- *(examples)* add caching-proxy, a reverse proxy that caches on disk ([#16](https://github.com/lmalheiro/durable-cache/pull/16))
-- correct and complete the README after a deep review ([#15](https://github.com/lmalheiro/durable-cache/pull/15))
