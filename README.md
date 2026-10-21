@@ -231,7 +231,7 @@ test scaffolding, or tooling.
 │
 ├── xtask/                     cargo xtask cache-tests | trace-report | headers
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
-├── .github/workflows/         ci.yml, compliance.yml and deny.yml (see below)
+├── .github/workflows/         ci.yml, compliance.yml, deny.yml and pr-title.yml (see below)
 ├── .githooks/pre-push         opt-in check that the specification still builds
 ├── .claude/skills/            AI-assistant skills for writing and querying the
 │                              specification (reqman-context is used below)
@@ -322,6 +322,7 @@ cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 | `ci.yml`          | pushes to `main`, pull requests           | fmt, SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, the library built with its minimum Rust (1.85), and `cargo publish --dry-run` |
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
+| `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
 
 ## The specification
 
