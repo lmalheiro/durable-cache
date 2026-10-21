@@ -1,0 +1,188 @@
+\begin{requirement}{HLR-SCOPE.V1-01}[draft][stakeholderRequirement]{First Functional Version}
+
+  \localreqdiagram*{hlr05}{\reqid}{\reqdesc}
+
+  WHEN two or more alternatives each satisfy the requirements an architecture
+  decision must meet, the decision shall adopt the alternative that requires
+  this project to build the fewest mechanisms of its own --- counted as
+  components, public interfaces, background tasks, and on-disk structures
+  built rather than adopted --- even at the cost of peak space or I/O
+  efficiency.
+
+  This specification targets a \emph{first functional version}: proven
+  components doing the heavy lifting are preferred to bespoke ones. The
+  requirement is verified by inspection --- each architecture decision
+  record's \emph{Alternatives considered} section states what an alternative
+  rejected on these grounds would have required the project to build. A later
+  version of this specification may replace this requirement.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{ADR}
+\end{requirement}
+
+\begin{requirement}{HLR-PERSISTENCE.DURABLE-01}[draft][stakeholderRequirement]{Durable Persistence}
+
+  \localreqdiagram*{hlr01}{\reqid}{\reqdesc}
+
+  WHEN the cache process exits --- in an orderly way or by crashing --- the
+  cache shall serve, from the process that starts next, every cached HTTP
+  object whose storage had completed before the exit.
+
+  A process exit leaves the host's own state intact; what the cache owes
+  after the host itself crashes or loses power is stated separately in
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-01}, and the size of the cache it can
+  hold in \reqref{HLR-PERSISTENCE.CAPACITY-01}.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{satisfy}{ADR-PERSISTENCE.MECHANISM-01}{Establish the storage
+  substrate and mechanism that persists cached objects across an exit of the
+  cache process.}
+  \reqcover{verify}{TC}
+\end{requirement}
+
+\begin{requirement}{HLR-PERSISTENCE.CAPACITY-01}[draft][stakeholderRequirement]{Capacity beyond RAM}
+
+  \localreqdiagram*{hlr06}{\reqid}{\reqdesc}
+
+  The cache shall hold a set of cached HTTP objects whose total size exceeds
+  the RAM installed on its host.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{satisfy}{ADR-PERSISTENCE.MECHANISM-01}{Choose a storage
+  substrate whose capacity is bounded by persistent storage rather than by
+  process RAM.}
+  \reqcover{verify}{TC}
+\end{requirement}
+
+\begin{requirement}{HLR-PERSISTENCE.CRASHSAFE-01}[draft][stakeholderRequirement]{Host-crash safety}
+
+  \localreqdiagram*{hlr07}{\reqid}{\reqdesc}
+
+  IF the cache's host crashes or loses power, THEN the cache, once running
+  again, shall serve no object whose content differs from what was stored
+  and no object whose purge it had acknowledged before the crash.
+
+  Cached objects can be fetched again from their origin, so losing some of
+  them in a host crash --- each then simply a cache miss --- is acceptable;
+  serving wrong or purged content is not.
+
+  This assumes a storage stack that honours flush requests --- what it
+  acknowledges as flushed is on stable storage --- and that returns the data
+  written to it or an error. Detecting data corrupted at rest, or lost by a
+  device that acknowledges flushes it has not made, is the storage layer's
+  responsibility, not the cache's.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{satisfy}{ADR-PERSISTENCE.DURABILITY-01}{Decide which writes are
+  synchronised to stable storage, and what integrity check detects the rest,
+  so that a host crash can lose objects but never make the cache serve
+  corrupted or purged content.}
+  \reqcover{verify}{TC}
+\end{requirement}
+
+\begin{requirement}{HLR-EFFICIENCY.SPACE-01}[draft][stakeholderRequirement]{Space Efficiency}
+
+  \localreqdiagram*{hlr02}{\reqid}{\reqdesc}
+
+  The cache shall hold the objects it caches in operation with an on-disk
+  space overhead of no more than 25\,\% of those objects' own metadata and
+  body bytes.
+
+  The overhead is the storage the cache's directory tree occupies on disk ---
+  allocated blocks, not file lengths --- minus the metadata and body bytes of
+  the objects it holds, so it counts record headers, reserved headroom,
+  block rounding, per-file and per-directory costs, and leftover files alike.
+  It is measured over what the deployment actually caches, because overhead
+  depends strongly on object sizes: a 500-byte object in a 4~KiB block carries
+  roughly 700\,\% overhead, a 1~MiB object well under 1\,\%. The first
+  functional version knowingly does not meet this requirement for workloads
+  dominated by small objects: \reqref{ADR-EFFICIENCY.COMPACTION-01} defers the
+  machinery that would, and declares the conflict.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{deriveReqt}{REQ}
+  \reqcover{verify}{TC}
+\end{requirement}
+
+\begin{requirement}{HLR-PERFORMANCE.LOOKUP-01}[draft][stakeholderRequirement]{Lookup latency flat with size}
+
+  \localreqdiagram*{hlr08}{\reqid}{\reqdesc}
+
+  WHILE the cache holds up to $10^7$ cached HTTP objects, the cache shall
+  keep its 99th-percentile lookup latency no more than 25\,\% above the
+  99th-percentile lookup latency it has while holding $10^4$ objects, on the
+  same host under the same conditions.
+
+  \emph{Lookup latency} is the time from the start of a cache lookup until
+  the cache knows whether the request is a hit --- with the stored response
+  head in hand --- or a miss; delivering the body is not part of it. ``The
+  same conditions'' means the same storage device and file system, the same
+  page-cache state, and the same mix of hits and misses over uniformly chosen
+  keys. The bound is relative rather than absolute because absolute lookup
+  latency depends mostly on the host's storage device and memory, which the
+  deployment chooses; what the cache itself owes is that growing towards its
+  capacity does not make every request slower. $10^7$ objects is a size a
+  test host can hold; derived design targets may reach further.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{deriveReqt}{REQ}
+  \reqcover{verify}{TC}
+\end{requirement}
+
+\begin{requirement}{HLR-COMPAT.PINGORA-01}[draft][stakeholderRequirement]{Compatible with Pingora}
+
+  \localreqdiagram*{hlr03}{\reqid}{\reqdesc}
+
+  The cache shall integrate with the \texttt{pingora-cache} 0.9 release line
+  --- version 0.9.0 and its patch releases --- through only the extension
+  points those releases expose publicly, without modification of the Pingora
+  source.
+
+  The \texttt{Storage} backend is the primary integration point, but
+  preserving cache semantics across restarts may require additional,
+  separately-configured components --- for example eviction-state coordination
+  (\reqref{FRE-COMPAT.EVICTION-01}) --- which meet this requirement as long as
+  they, too, use only public extension points. Verification is by inspection
+  of the deliverable's dependency manifest (Pingora crates constrained to
+  0.9.x, none patched or vendored) and of the interfaces it uses. A patch
+  release of the 0.9 line is taken as it comes; adopting a later minor
+  release is a revision of this requirement, not an implicit obligation.
+  What the persisted cache owes across any Pingora change is stated in
+  \reqref{FRE-COMPAT.FORMATUPGRADE-01}. This version is such a revision: it
+  moves the target from 0.8.1 to the 0.9 line, whose \texttt{Storage} and
+  \texttt{EvictionManager} surfaces differ in ways the requirements below name
+  explicitly.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{deriveReqt}{FRE}
+\end{requirement}
+
+\begin{requirement}{HLR-COMPLIANCE.RFC-01}[draft][stakeholderRequirement]{No added RFC 9111/9110 deviation}
+
+  \localreqdiagrams*{hlr04}{\reqid}{4}{\reqdesc}
+
+  The cache's observable HTTP caching behaviour shall match that of the same
+  proxy configured with the stock \texttt{MemCache} backend of
+  \texttt{pingora-cache}, in every respect governed by RFC~9111 (\emph{HTTP Caching}) and
+  RFC~9110 (\emph{HTTP Semantics}).
+
+  \texttt{pingora-cache} applies these semantics --- freshness calculation,
+  conditional revalidation, \texttt{Cache-Control} handling --- without
+  claiming full conformance. This requirement therefore asks the backend to
+  add no deviation of its own, not to remove the framework's. Behaviour
+  observed across a process restart, which \texttt{MemCache} cannot exhibit,
+  is compared against the behaviour \texttt{MemCache} shows within a single
+  process run.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{deriveReqt}{FRE}
+  \reqcover{verify}{TC}
+\end{requirement}

@@ -1,0 +1,98 @@
+name: Compliance
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * *" # nightly
+  workflow_dispatch:
+
+env:
+  # Line tables keep file:line in backtraces at a fraction of full debug
+  # info's size, which otherwise fills the runner's disk.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  cache-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true # third_party/cache-tests, pinned to commit b55b8bd
+
+      - name: Free disk space
+        # The workspace's debug builds outgrow the runner's free disk; drop
+        # preinstalled toolchains no job here uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: third_party/cache-tests/node_modules
+          key: cache-tests-node-modules-${{ github.event.pull_request.base.sha || github.sha }}
+
+      - name: TC-COMPLIANCE.RFC-01 — cache-tests CLI against fixture-proxy
+        run: nix develop -c cargo xtask cache-tests --verbose --results-out cache-tests-results.json
+        # A differential run: the suite runs against the MemCache backend of
+        # pingora-cache and against this backend, and the step fails when a
+        # test ranks lower on this backend (HLR-COMPLIANCE.RFC-01's
+        # non-regression). It also fails on a required failure of this
+        # backend's that test/cache-tests-baseline.json does not record as a
+        # failure of pingora-cache itself; triage any such failure before
+        # attributing it to this crate.
+
+      - name: Upload cache-tests results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-tests-results
+          path: cache-tests-results.json
+
+  privileged:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        # The workspace's debug builds outgrow the runner's free disk; drop
+        # preinstalled toolchains no job here uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+
+      - name: TC-COMPAT.HOTUPGRADE-01
+        # Two concurrently running fixture-proxy processes, without root.
+        # The tests are #[ignore]d, so they are selected explicitly:
+        # `--run-ignored only` plus a binary filter runs exactly the two
+        # hot-upgrade tests -- never the other ignored compat tests, which
+        # are deliberate unimplemented!() stubs that panic.
+        run: |
+          nix develop -c cargo nextest run --profile ci -p compat \
+            --run-ignored only -E 'binary(hotupgrade)'
+
+      - name: Measuring test cases (capacity, space, lookup latency)
+        # TC-PERSISTENCE.CAPACITY-01, TC-EFFICIENCY.SPACE-01 and
+        # TC-PERFORMANCE.LOOKUP-01 are #[ignore]d measurements that take
+        # their scale from the environment. A CI runner cannot reach the
+        # test cases' own figures (a 1 GiB VM, 10^5 and 10^7 objects), so
+        # this run exercises the harness and records the numbers; root
+        # lets the latency run drop the page cache for its cold pass.
+        run: |
+          sudo -E env "PATH=$PATH" \
+            nix develop -c cargo nextest run --profile ci --release -p durable-cache \
+              --run-ignored only -E 'test(/^integration_tests::measurements::/)' --no-capture
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-privileged
+          path: target/nextest/ci/junit.xml

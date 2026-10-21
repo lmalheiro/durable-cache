@@ -1,0 +1,230 @@
+\documentclass[a4paper]{report}
+
+\usepackage{tools/reqman}
+\reqmanoutdir{build}  % must match $gendir in latexmkrc
+\usepackage{titlesec}
+% Sequence diagrams: pgf-umlsd, from the TeX distribution (texlive-pictures).
+% It has no operand separators for combined fragments, so `sdalt' wraps its
+% sdblock and draws them: \sdpart{[guard]} ends one operand and starts the
+% next, and at the end of the block a dashed line crosses the whole frame
+% at each such point, with the operand's guard beneath it. Each separator
+% belongs to the block it was declared in, so a block that encloses another
+% never redraws the inner block's separators.
+\usepackage[underline=false]{pgf-umlsd}
+\newcounter{sdpart}
+\newenvironment{sdalt}[2]{%
+  \begin{sdblock}{#1}{#2}%
+  \expandafter\xdef\csname sdaltfirst\theblocklevel\endcsname{\the\numexpr\value{sdpart}+1\relax}%
+}{%
+  \xdef\sdaltfirst{\csname sdaltfirst\theblocklevel\endcsname}%
+  \xdef\sdaltlast{\thesdpart}%
+  \xdef\sdaltlevel{\theblocklevel}%
+  \end{sdblock}%
+  \ifnum\sdaltfirst>\sdaltlast\relax\else
+    \foreach \sdi in {\sdaltfirst,...,\sdaltlast}{%
+      \ifnum\csname sdpartlevel\sdi\endcsname=\sdaltlevel\relax
+        \draw[dashed] (nw |- sdpart\sdi) -- (se |- sdpart\sdi);
+        \node[anchor=north west, font=\small, xshift=6pt, fill=white, inner sep=1pt] at (nw |- sdpart\sdi)
+          {\csname sdpartlabel\sdi\endcsname};
+      \fi
+    }%
+  \fi
+}
+\newcommand{\sdpart}[1]{%
+  \stepcounter{sdpart}%
+  \stepcounter{seqlevel}%
+  \coordinate (sdpart\thesdpart) at (0,-\theseqlevel*\unitfactor-0.4*\unitfactor);%
+  \expandafter\gdef\csname sdpartlabel\thesdpart\endcsname{#1}%
+  \expandafter\xdef\csname sdpartlevel\thesdpart\endcsname{\theblocklevel}%
+  \stepcounter{seqlevel}%
+}
+\usepackage{float}
+% pass = keep the class's A4 layout untouched; loaded only so \newgeometry/
+% \restoregeometry can build the single oversized (A1) page at the end.
+\usepackage[pass]{geometry}
+ % Necessary for subfigures; supports \ContinuedFloat
+\usepackage{subcaption}
+
+\renewcommand{\familydefault}{\sfdefault}
+
+% Convenience: link to a file (and line) in the Pingora source at the v0.9.0 tag.
+% #1 = repo-relative path, #2 = line number, #3 = link text.
+\newcommand{\pgsrc}[3]{\href{https://github.com/cloudflare/pingora/blob/0.9.0/#1\#L#2}{#3}}
+
+% Object Management Group names, with their copyright mark. Both swallow a
+% following space: write \sysml{} before a word.
+\newcommand{\omg}{OMG\textsuperscript{\copyright}}
+\newcommand{\sysml}{SysML\textsuperscript{\copyright}}
+
+\titleformat{\chapter}[hang]{\Large\bfseries}{\thechapter.}{0.5em}{}
+\titlespacing*{\chapter}{0pt}{1.5ex}{1ex}
+
+\title{A Durable Cache for Pingora\textsuperscript{\textregistered}%
+  \thanks{\emph{Cloudflare} and \emph{Pingora} are trademarks or registered
+    trademarks of Cloudflare, Inc. The Pingora framework is open-source
+    software, \textcopyright{} Cloudflare, Inc., released under the Apache
+    License, Version 2.0. This document is an independent requirements
+    specification; it is not affiliated with, endorsed by, or sponsored by
+    Cloudflare, Inc. All other trademarks are the property of their respective
+    owners.}\\[0.4em]\large Requirements Specification}
+\author{Luis Malheiro}
+\date{2026\\[1.5em]{\footnotesize\textcopyright{} 2026 Luis Malheiro. Licensed under
+  \href{https://creativecommons.org/licenses/by/4.0/}{CC~BY~4.0}.}}
+
+\begin{document}
+
+% Declare all type prefixes used in this document.
+% Any prefix not listed here will be flagged in the traceability report.
+% The optional [terminal] flag marks a type that ends the refinement chain
+% (test cases, implementations): its artifacts are never listed as
+% unaccounted for lacking coverage obligations. A terminal artifact may still
+% declare some, and they are checked like any other -- every TC here
+% declares \reqcover{satisfy}{IMP} for the code that implements it.
+% Coverage obligations themselves name both the relationship and the type at
+% the demand site, e.g. \reqcover{verify}{TC}.
+%
+%| Subtype                  | Keyword                    | Purpose                                               |
+%|--------------------------|----------------------------|-------------------------------------------------------|
+%| Base requirement         | `requirement`              | Any textual statement of needed capability or constraint |
+%| Functional requirement   | `functionalRequirement`    | Describes a function the system must perform          |
+%| Interface requirement    | `interfaceRequirement`     | Specifies interactions between system entities        |
+%| Performance requirement  | `performanceRequirement`   | Quantified measure of effectiveness or efficiency     |
+%| Physical/Structural req. | `structuralRequirement`    | Physical characteristic or constraint on the system   |
+%| Design constraint        | `designConstraint`         | Limitation on design freedom (e.g. "must use COTS")   |
+%| Use case                 | `useCase`                  | Behavioural scenario expressing a stakeholder goal    |
+%| Stakeholder requirement  | `stakeholderRequirement`   | Need or expectation expressed by a stakeholder        |
+%
+%| Stereotype        | Line Style        | Arrowhead        | Direction                   |
+%|-------------------|-------------------|------------------|-----------------------------|
+%| `«deriveReqt»`    | Dashed            | Open (empty)     | Derived → Source            |
+%| `«satisfy»`       | Solid             | Open (empty)     | Element → Requirement       |
+%| `«verify»`        | Solid             | Open (empty)     | Test case → Requirement     |
+%| `«refine»`        | Dashed            | Open (empty)     | Element → Requirement       |
+%| `«trace»`         | Dashed            | Open (empty)     | Any → Any                   |
+%| `«copy»`          | Dashed            | Open (empty)     | Copy → Master               |
+%
+% The prefixes are ordered by their typical position in the flow of refinement
+% (see "The Refinement Model" section in the Introduction chapter): high-level
+% requirements first, then their refinements, then the architecture/design
+% decisions, then concrete designs, then test cases.
+\reqmantype{HLR}{stakeholderRequirement}{High-Level Requirement: a stakeholder need or expectation, stated without commitment to a solution.}
+\reqmantype{UC}{useCase}{Use Case: a behavioural scenario elaborating a stakeholder goal.}
+\reqmantype{REQ}{requirement}{Base Requirement: a solution-neutral statement of capability or constraint --- here, chiefly the derived constraints a foundational decision generates.}
+\reqmantype{FRE}{functionalRequirement}{Functional Requirement: a solution-neutral statement of a verifiable function the backend must perform --- the explicitly functional counterpart to the unbranded Base Requirement (REQ).}
+\reqmantype{ADR}{designConstraint}{Architecture Decision Record: a choice among alternatives, closing design freedom; argued by context, alternatives, and consequences --- ranging from the foundational, solution-shaping decision for a domain down to a single focused mechanism.}
+\reqmantype{SDS}{structuralRequirement}{Structural Design: the static aspect of a design --- the shape realising the decisions above it (layouts, modules, deployment); it specifies rather than decides.}
+\reqmantype{FDS}{functionalRequirement}{Functional Design: the dynamic aspect of a design --- the behaviour realising the decisions above it (flows, sequence diagrams); it specifies rather than decides.}
+\reqmantype{TC}{verify}{Test Case: verifies that a requirement, decision, or design holds.}[terminal]
+\reqmantype{IMP}{requirement}{Implementation: source code satisfying a requirement or design.}[terminal]
+
+% Show test-case nodes (sysml reqtype "verify") with a readable stereotype.
+\reqmanlabel{verify}{test case}
+
+
+\pagenumbering{roman}
+\maketitle
+\tableofcontents
+\pagenumbering{arabic}
+
+\chapter{Introduction}
+\input{durable-cache-intro}
+
+\chapter{System Context}
+\input{durable-cache-context}
+
+\chapter{High-Level Requirements}
+\input{durable-cache-hlr}
+
+% Use cases elaborating the stakeholder goals (placeholder -- none authored yet).
+\input{durable-cache-uc}
+
+\chapter{High-Level Refinement}
+\input{durable-cache-hlref}
+
+\chapter{Detailed Refinement}
+\input{durable-cache-refine}
+
+\chapter{Structural and Functional Design}
+\input{durable-cache-design}
+
+\chapter{Test Case Specifications}
+\input{durable-cache-tc}
+
+\chapter{Traceability Analysis}
+
+At this stage of the specification some coverage obligations are intentionally
+open. Each \textsf{IMP} obligation --- on the functional designs, the
+structural designs, and the test cases alike --- awaits the implementation
+itself, and closes automatically once that implementation exists:
+\texttt{reqman-report.py} scans the source tree for
+\texttt{// IMP-<SLUG>-<NN>: satisfy <TARGET-ID>} marker comments at every build
+and links each one back to the requirement it satisfies, alongside a pointer to
+the exact file and line. \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s satisfy
+obligation stays open for this version by the conflict
+\reqref{ADR-EFFICIENCY.COMPACTION-01} declares. Forward-declared expectations on
+artifacts not yet written, when there are any, are tracked in
+\textbf{Planned Requirements} below.
+
+The retarget of this document from Pingora 0.8.1 to 0.9.0 --- the revision of
+\reqref{HLR-COMPAT.PINGORA-01} that release calls for --- landed one revision
+ahead of the implementation, and the implementation has since followed. The
+artifacts that retarget added --- \reqref{FRE-COMPAT.EXPIRE-01},
+\reqref{ADR-COMPAT.ENTRYID-01}, \reqref{ADR-STORAGE.EXPIRE-01},
+\reqref{FDS-STORAGE.EXPIRE-01} and \reqref{TC-STORAGE.EXPIRE-01} --- are
+closed by code built against 0.9.0, as are the ones it rewrote to match that
+release's interfaces, chiefly \reqref{FDS-STORAGE.PURGE-01},
+\reqref{FDS-EVICTION.STARTUP-01} and \reqref{ADR-OBSERVABILITY.METRICS-01}.
+No \textsf{IMP} link in the report below is stale on that account, and the one
+gap it reports is \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s, deliberately
+left open by \reqref{ADR-EFFICIENCY.COMPACTION-01}'s declared conflict.
+
+\includetracingreport
+
+% \chapter{Requirements Diagram}
+
+% Figure~\ref{fig:reqdiagram-full} shows the complete requirements graph. 
+
+% % --- Full requirements graph on one oversized A1-landscape page (its
+% % natural size is ~61in x 17in; here it renders at ~52% scale). ---
+% % \newgeometry cannot change the paper size on its own: it begins by
+% % restoring the load-time (A4) paper dimensions and rejects papersize
+% % options. So the A1 dimensions are set directly and that restore
+% % (\Gm@restore@org) is neutralised for this one call. The physical PDF page
+% % (\pdfpagewidth/\pdfpageheight) must be set separately: geometry only
+% % touches it at \begin{document}, never from \newgeometry. The [p] float
+% % lands alone on the A1 page, vertically centred by the float-page glue.
+% \clearpage
+% \makeatletter
+% \paperwidth=841mm
+% \paperheight=594mm
+% \let\reqman@saved@Gm@restore@org\Gm@restore@org
+% \let\Gm@restore@org\relax
+% \newgeometry{margin=15mm}
+% \let\Gm@restore@org\reqman@saved@Gm@restore@org
+% \makeatother
+% \pdfpagewidth=\paperwidth
+% \pdfpageheight=\paperheight
+% \begin{figure}[p]%
+%     \centering%
+%     \resizebox{\textwidth}{!}{\reqdiagram{global}{}}%
+%     \caption{Requirements Diagram --- Full Graph}%
+%     \label{fig:reqdiagram-full}%
+% \end{figure}
+% \clearpage
+% % \restoregeometry brings back the A4 layout and paper dimensions but does
+% % not touch the physical PDF page size, so reset that from them.
+% \restoregeometry
+% \pdfpagewidth=\paperwidth
+% \pdfpageheight=\paperheight
+
+\appendix
+
+\chapter{Storage Backend Alternatives}
+\label{app:alternatives}
+\input{durable-cache-alternatives}
+
+\chapter{The \texttt{http-tests/cache-tests} Test Suite}
+\label{app:cache-tests}
+\input{durable-cache-cachetests}
+
+\end{document}

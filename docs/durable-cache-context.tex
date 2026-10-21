@@ -1,0 +1,454 @@
+% =====================================================================
+% System Context.
+%
+% The pingora-cache environment this backend must fit into, documented
+% non-normatively: the Storage abstraction and the components HttpCache
+% coordinates around it. The requirements chapters cite this material as
+% their basis.
+% =====================================================================
+
+This chapter documents the environment the specified backend must fit into: the
+\texttt{pingora-cache} caching layer of Pingora v0.9.0 --- its \texttt{Storage}
+abstraction and the components that \texttt{HttpCache} coordinates around it.
+The requirements chapters cite this material as the \emph{basis} of their
+artifacts; nothing in it is normative on its own.
+
+\section{HTTP Caching in \texttt{pingora-cache}}
+
+The \texttt{pingora-cache} crate provides a standards-aware HTTP caching layer
+for proxies built on Pingora.\footnote{\href{https://github.com/cloudflare/pingora/tree/0.9.0/pingora-cache}{cloudflare/pingora: the \texttt{pingora-cache} crate (v0.9.0)}}
+Its central component, \texttt{HttpCache}, is the state machine that drives
+the caching lifecycle, advancing a request through the phases tracked by
+\texttt{CachePhase} (cache key, miss, stale, expired, hit, revalidated, and so on).
+Although it does not claim full RFC~9111 conformance, the crate applies HTTP
+caching semantics defined by RFC~9111 (\emph{HTTP Caching}) and RFC~9110
+(\emph{HTTP Semantics}) --- parsing \texttt{Cache-Control} directives,
+computing freshness, and performing conditional revalidation --- so that cache
+behaviour follows the HTTP standards rather than being ad hoc.
+
+Crucially for this specification, \texttt{pingora-cache} decouples the caching
+\emph{policy} from the caching \emph{storage} through the \texttt{Storage}
+trait. \texttt{Storage} is a backend-agnostic interface: an implementation is
+responsible for reading cached objects (returning a \texttt{HitHandler}), for
+writing new ones (returning a \texttt{MissHandler}), and for removing them ---
+either deleting an object outright (\texttt{purge}) or, since v0.9.0, keeping it
+but marking it stale so it revalidates against the origin rather than being
+refetched (\texttt{expire}) --- keyed by \texttt{CacheKey}. Cached responses are identified by a \texttt{CacheKey} that,
+together with \texttt{VarianceBuilder}, supports multiple variants of the same
+URL (e.g.\ content negotiated by \texttt{Vary}). Around this core the crate
+adds a cache lock to prevent cache stampedes, an eviction module for capacity
+management, and a predictor for cacheability decisions.
+
+The crate ships with \texttt{MemCache}, a hash-map-based, in-memory
+implementation of \texttt{Storage}. While convenient, an in-memory store does
+not survive process restarts and is bounded by available RAM, which makes it
+unsuitable as the system of record for a large, long-lived cache.
+
+\section{How \texttt{HttpCache} Coordinates the \texttt{CacheLock}, \texttt{Storage}, and the \texttt{EvictionManager}}
+
+Four components cooperate on every cached request, and their division of labour
+underpins the requirements that follow. \texttt{HttpCache} is the
+\emph{orchestrator} --- the per-request state machine that decides what to do at
+each \texttt{CachePhase}. The \texttt{Storage} backend, the subject of this
+document, is a largely passive \emph{object store} that reads and writes cached
+representations on demand. The \texttt{EvictionManager} is the \emph{capacity
+policy}: an in-memory index of which objects exist, their sizes, and their
+recency, from which it selects victims when space must be reclaimed. The
+\texttt{CacheLock} is the \emph{concurrency coordinator}: an in-memory
+table of in-flight cache keys that serialises the work of populating or
+revalidating any one object, so a burst of simultaneous requests for the same
+uncached URL does not become a stampede of identical upstream fetches and
+\texttt{Storage} writes.\footnote{Source references in this section are to Pingora
+  v0.9.0. The lock lives in
+  \pgsrc{pingora-cache/src/lock.rs}{61}{\texttt{pingora-cache/src/lock.rs}}: a
+  per-key \texttt{CacheLock} table with
+  \pgsrc{pingora-cache/src/lock.rs}{110}{\texttt{lock}} /
+  \pgsrc{pingora-cache/src/lock.rs}{148}{\texttt{release}} operations and a
+  \pgsrc{pingora-cache/src/lock.rs}{176}{\texttt{LockStatus}} returned to waiters.}
+
+These collaborators are handed to \texttt{HttpCache} when the proxy configures
+it --- the \texttt{enable} call set up in the proxy's \texttt{ProxyHttp} hooks takes the
+\texttt{Storage} backend (the only mandatory collaborator) together with the
+\texttt{EvictionManager}, the cacheability predictor, and the \texttt{CacheLock}, each
+\emph{optional}\footnote{\pgsrc{pingora-cache/src/lib.rs}{571}{\texttt{HttpCache::enable}}
+  takes all four collaborators; only the \texttt{Storage} backend is mandatory --- the
+  eviction manager, the predictor, and the cache lock are each an \texttt{Option}.} --- and from
+then on each is invoked through \texttt{HttpCache} rather than by the backend. The
+three are \emph{siblings}: \texttt{Storage}, the \texttt{EvictionManager}, and the
+\texttt{CacheLock} never call one another directly.
+It is the proxy that drives \texttt{HttpCache} through these phases --- calling
+\texttt{cache\_lookup}, \texttt{cache\_miss}, \texttt{set\_miss\_handler},
+\texttt{finish\_miss\_handler}, and (for waiters) \texttt{cache\_lock\_wait} in a
+lookup loop --- while \texttt{HttpCache} in turn acquires and releases the lock and
+calls \texttt{Storage} and the \texttt{EvictionManager}. So the lock's
+\emph{wait-and-retry} (block on a lock another request holds, then retry the lookup)
+is the proxy's loop, not \texttt{HttpCache}'s own.\footnote{The proxy's cache loop
+  lives in
+  \pgsrc{pingora-proxy/src/proxy_cache.rs}{35}{\texttt{HttpProxy::proxy\_cache}}: it
+  calls \pgsrc{pingora-proxy/src/proxy_cache.rs}{88}{\texttt{cache\_lookup}},
+  \pgsrc{pingora-proxy/src/proxy_cache.rs}{177}{\texttt{cache\_lock\_wait}} and
+  retries; the body-write path calls
+  \pgsrc{pingora-proxy/src/proxy_cache.rs}{689}{\texttt{set\_miss\_handler}} and
+  \pgsrc{pingora-proxy/src/proxy_cache.rs}{576}{\texttt{finish\_miss\_handler}}.}
+(Figures~\ref{fig:cache-wiring}, \ref{fig:cache-miss-seq}
+and~\ref{fig:cache-lock-seq}).
+
+\begin{figure}[H]
+  \centering
+  \begin{adjustbox}{max width=\textwidth}
+  \begin{tikzpicture}[
+      font=\small,
+      box/.style={draw, rounded corners, align=center, inner sep=5pt},
+      call/.style={-{Latex[length=2mm]}, draw},
+    ]
+    \node[box, fill=green!10, minimum width=54mm] (proxy)   at (0,3.4)   {Proxy application (\texttt{ProxyHttp})\\[1pt]{\scriptsize configures the cache per request}};
+    \node[box, fill=green!18, minimum width=60mm] (cache)   at (0,1.6)   {\texttt{HttpCache}\\[1pt]{\scriptsize cache state machine --- the orchestrator}};
+    \node[box, fill=orange!12, minimum width=40mm] (lock)   at (-5.7,-1.9) {\texttt{CacheLock}\\[1pt]{\scriptsize stampede coordinator}\\{\scriptsize (in-memory, per process)}};
+    \node[box, fill=blue!8,   minimum width=40mm] (storage) at (0,-1.9)    {\texttt{Storage}\\[1pt]{\scriptsize object backend (this work)}};
+    \node[box, fill=blue!8,   minimum width=40mm] (evict)   at ( 5.7,-1.9) {\texttt{EvictionManager}\\[1pt]{\scriptsize capacity policy}};
+
+    \draw[call] (proxy) -- node[midway, right, font=\scriptsize]{configures \& drives} (cache);
+    \draw[call] (cache.south) -- node[pos=0.62, above left, font=\scriptsize, align=center]{\texttt{lock}, \texttt{release}\\ (wait on read permit)} (lock.north);
+    \draw[call] (cache.south) -- node[pos=0.5, right=1pt, font=\scriptsize, align=left]{\texttt{lookup}, \texttt{get\_miss\_handler}\\ \texttt{update\_meta}, \texttt{purge}, \texttt{expire}} (storage.north);
+    \draw[call] (cache.south) -- node[pos=0.62, above right, font=\scriptsize, align=center]{\texttt{admit}, \texttt{access}\\ \texttt{remove}} (evict.north);
+    \draw[dashed, gray] ([yshift=-3mm]lock.south) -- node[midway, below, font=\scriptsize, fill=white]{\itshape siblings --- no direct calls} ([yshift=-3mm]evict.south);
+  \end{tikzpicture}
+  \end{adjustbox}
+  \caption{The proxy configures and drives \texttt{HttpCache}, which in turn drives the \texttt{CacheLock}, the \texttt{Storage} backend, and the \texttt{EvictionManager} --- handed to it, already constructed, by the proxy's \texttt{enable} call; the three are siblings and never call one another directly.}\label{fig:cache-wiring}
+\end{figure}
+
+The interactions follow the cache lifecycle:
+\begin{itemize}
+  \item \textbf{Hit.} \texttt{HttpCache} asks \texttt{Storage} to \texttt{lookup}
+    the key;\footnote{\pgsrc{pingora-cache/src/lib.rs}{1508}{\texttt{HttpCache::cache\_lookup}}
+    calls \texttt{storage.lookup(key, \&span.handle())} directly; the lock is only taken
+    when \pgsrc{pingora-cache/src/lib.rs}{1536}{the result is \texttt{None}} ---
+    a hit never reaches that branch.} on a hit it receives a \texttt{HitHandler} to stream the stored body
+    and records the touch against the eviction manager
+    (\texttt{access})\footnote{\pgsrc{pingora-cache/src/lib.rs}{880}{\texttt{eviction.access(\&cache\_key,
+    size, meta.0.internal.fresh\_until)}} runs inside
+    \pgsrc{pingora-cache/src/lib.rs}{834}{\texttt{HttpCache::cache\_found}} ---
+    the separate call the proxy makes once it decides the lookup is a genuine,
+    non-stale hit --- and only when
+    \pgsrc{pingora-cache/src/lib.rs}{876}{\texttt{hit\_handler.should\_count\_access()}}.} so that
+    recency ordering stays current. A hit does not engage the lock
+    (Figure~\ref{fig:cache-hit-seq}).
+  \item \textbf{Miss (under the lock).} A \texttt{lookup} that finds nothing acquires
+    the \texttt{CacheLock} for the
+    key.\footnote{\pgsrc{pingora-cache/src/lib.rs}{1539}{\texttt{HttpCache::cache\_lookup}}
+      takes the lock when storage returns nothing; the stale/treated-as-miss path
+      does so in \pgsrc{pingora-cache/src/lib.rs}{862}{\texttt{cache\_found}}.}
+    Exactly one request receives the write permit
+    and becomes the \emph{leader} and fetches upstream; a concurrent request for the
+    same key does \emph{not} re-fetch. A streaming-capable backend's \texttt{lookup} ---
+    such as the stock \texttt{MemCache}'s --- prefers a
+    \emph{partial} read, so once the leader's write is open a concurrent request gets a
+    streaming reader and serves the body \emph{as the leader writes it}; only a request
+    that looks up \emph{before} the write target exists takes a read lock and waits ---
+    and then only until the leader opens the
+    write.\footnote{\pgsrc{pingora-cache/src/memory.rs}{313}{\texttt{MemCache::lookup}}
+      ``always prefer[s] partial read'', returning a reader that streams the in-progress
+      write; a partial read does not count an eviction \texttt{access}
+      (\pgsrc{pingora-cache/src/memory.rs}{211}{\texttt{should\_count\_access}}).} The
+    leader calls \texttt{get\_miss\_handler} on \texttt{Storage} and writes the upstream
+    response through it. The lock is released \emph{as soon as the object is readable} --- after
+    the write finishes, or, for a backend that supports streaming partial writes, as
+    early as right after the miss handler opens, so followers can stream the partial
+    body while it is still being
+    written.\footnote{Non-streaming backends release in
+      \pgsrc{pingora-cache/src/lib.rs}{1102}{\texttt{finish\_miss\_handler}} once the
+      body is written; streaming backends release right after opening the miss
+      handler (\pgsrc{pingora-cache/src/lib.rs}{1019}{\texttt{lib.rs} L896}).}
+    Crucially the \texttt{EvictionManager} is
+    updated \emph{after} the lock is released and outside it: \texttt{admit} records the
+    new entry and returns the victims to evict, which \texttt{HttpCache} then
+    \texttt{purge}s from \texttt{Storage} asynchronously
+    (Figure~\ref{fig:cache-miss-seq}).\footnote{In
+      \pgsrc{pingora-cache/src/lib.rs}{1073}{\texttt{finish\_miss\_handler}} the order
+      is \texttt{finish} $\rightarrow$ \texttt{release} $\rightarrow$ \texttt{admit}
+      $\rightarrow$ spawn \texttt{purge}; eviction runs after, and outside, the lock.
+      A store that created a new object \texttt{admit}s it; one that only appended to
+      an object already admitted --- a streaming partial write completing ---
+      \pgsrc{pingora-cache/src/lib.rs}{1121}{\texttt{increment\_weight}}s it instead
+      (the two arms of \pgsrc{pingora-cache/src/storage.rs}{346}{\texttt{MissFinishType}}).}
+    What the manager is told is not the bare cache key but a
+    \texttt{CacheEntryKey}\footnote{\pgsrc{pingora-cache/src/eviction/mod.rs}{53}{\texttt{enum CacheEntryKey}}
+      is either \texttt{KeyOnly(CompactCacheKey)} or an \texttt{Identified} pair of
+      that key and a storage-defined \texttt{CacheEntryId}; \texttt{HttpCache} builds
+      it from \pgsrc{pingora-cache/src/storage.rs}{393}{\texttt{HandleMiss::entry\_id}},
+      which defaults to \texttt{None}.} --- the cache key, optionally paired with an
+    identifier the backend assigns to the particular stored generation --- so that a
+    backend retaining several generations of one key can have eviction account for
+    the exact one. A backend that publishes a single object per key, as the backend
+    specified by this document does (\reqref{ADR-COMPAT.ENTRYID-01}), returns no
+    identifier and the entry key is the cache key alone.
+    Releasing the lock wakes the waiters with a
+    status\footnote{\pgsrc{pingora-cache/src/lib.rs}{1097}{\texttt{finish\_miss\_handler}}
+      chooses \texttt{LockStatus::Done} or \texttt{LockStatus::TransientError} according
+      to whether \texttt{finish()} succeeded.}: normally \emph{done}, so each re-runs \texttt{lookup} and now hits
+    (Figure~\ref{fig:cache-lock-seq}); if the leader failed, or held the lock past its
+    age limit, the waiters recompete and one becomes the new leader; if the asset
+    proved uncacheable --- or a waiter's own wait timed out --- the affected waiters
+    fetch independently with caching disabled.\footnote{The waiter's next move is chosen from the
+      \pgsrc{pingora-cache/src/lock.rs}{420}{\texttt{LockWaitOutcome}} its wait
+      returned, by
+      \pgsrc{pingora-proxy/src/proxy_cache.rs}{951}{\texttt{handle\_lock\_wait\_outcome}}:
+      \texttt{Done} re-looks up; \texttt{TransientError}/\texttt{Dangling} elect a new
+      writer; \texttt{AgeTimeout} lets waiters recompete for the write permit;
+      \texttt{GiveUp}, \texttt{WaitTimeout} and \texttt{Abandoned} --- the last
+      carrying the reason a fill this waiter cannot use was abandoned --- fetch
+      independently with caching disabled. The retry loop around that choice is
+      bounded: a waiter that has re-looked up more than
+      \pgsrc{pingora-cache/src/lib.rs}{1630}{\texttt{cache\_lock\_max\_retries}} times
+      gives up and goes to the origin
+      (\pgsrc{pingora-proxy/src/proxy_cache.rs}{1004}{\texttt{cache\_lock\_retry\_limit\_exceeded}}).} In the normal case the upstream fetch and the \texttt{Storage} write
+    thus happen once, not once per waiter (a timed-out or given-up waiter fetches for
+    itself, bypassing the cache).
+  \item \textbf{Purge.} An explicit purge --- e.g.\ a purge request the proxy
+    accepts --- removes the object. The proxy chooses between two actions: a
+    \emph{delete}, which makes the next lookup a miss, and an \emph{expire}, which
+    keeps the object stored but marks it stale so it revalidates against the origin
+    and reuses the stored body on a \texttt{304}.\footnote{\pgsrc{pingora-proxy/src/proxy_trait.rs}{732}{\texttt{ProxyHttp::purge\_action}}
+      returns \pgsrc{pingora-cache/src/storage.rs}{41}{\texttt{PurgeAction}}, defaulting
+      to \texttt{Delete}; \pgsrc{pingora-proxy/src/proxy_purge.rs}{78}{\texttt{proxy\_purge}}
+      dispatches to \texttt{HttpCache::purge} or \texttt{HttpCache::expire}
+      accordingly.} \texttt{HttpCache} asks \texttt{Storage} to \texttt{purge} the
+    key, marked as an \emph{invalidation} to distinguish it from the purges that
+    capacity eviction issues, or to \texttt{expire} it. The backend answers with a
+    \texttt{PurgeOutcome} rather than a bare boolean, and only the
+    \texttt{Purged} outcome --- the entry is gone --- also \texttt{remove}s the
+    entry from the eviction manager; an \texttt{Expired} entry is still stored, so
+    the manager keeps tracking it, and \texttt{NotFound} changes nothing.\footnote{\pgsrc{pingora-cache/src/storage.rs}{128}{\texttt{PurgeOutcome}}
+      is \texttt{NotFound}, \texttt{Purged(Option<CacheEntryId>)} or \texttt{Expired};
+      \pgsrc{pingora-cache/src/lib.rs}{1894}{\texttt{purge\_impl}} calls
+      \texttt{eviction.remove} only on \texttt{Purged}.} The two purge kinds also
+    address the backend differently: an invalidation names the logical key
+    (\texttt{PurgeTarget::Active}), leaving a backend that retains several
+    generations free to pick one, while an eviction victim names the exact entry
+    the manager admitted (\texttt{PurgeTarget::Exact}).\footnote{\pgsrc{pingora-cache/src/storage.rs}{51}{\texttt{PurgeTarget}};
+      \pgsrc{pingora-cache/src/lib.rs}{1883}{\texttt{purge\_impl}} targets
+      \texttt{Active}, while \pgsrc{pingora-cache/src/lib.rs}{1130}{the eviction loop}
+      targets \texttt{Exact}.} A
+    purge engages no cache lock: it is keyed directly off the cache key, with
+    no lookup and no lock (Figure~\ref{fig:purge-seq}).\footnote{\pgsrc{pingora-proxy/src/proxy_purge.rs}{67}{\texttt{HttpProxy::proxy\_purge}}
+      answers a purge request by calling
+      \pgsrc{pingora-cache/src/lib.rs}{1813}{\texttt{HttpCache::purge}}, whose
+      \pgsrc{pingora-cache/src/lib.rs}{1876}{\texttt{purge\_impl}} passes the
+      backend
+      \pgsrc{pingora-cache/src/lib.rs}{1887}{\texttt{PurgeType::Invalidation}}
+      (eviction victims instead get
+      \pgsrc{pingora-cache/src/lib.rs}{1132}{\texttt{PurgeType::Eviction}}) and,
+      only when the backend reports an asset removed, calls
+      \pgsrc{pingora-cache/src/lib.rs}{1896}{\texttt{eviction.remove}}.}
+  \item \textbf{Revalidation.} A stale entry is revalidated under the lock in
+    the same way as a miss, so a single leader revalidates upstream while
+    followers wait. On a \texttt{304 (Not Modified)} the proxy merges the
+    response into the stored header and \texttt{HttpCache} issues
+    \texttt{update\_meta} to \texttt{Storage} --- the metadata is replaced,
+    with the original admission time preserved, while the stored body stays
+    untouched --- and then releases the lock whether or not the update
+    succeeded. A metadata update involves no eviction bookkeeping: the object's
+    identity and body are
+    unchanged.\footnote{On an upstream \texttt{304},
+      \pgsrc{pingora-proxy/src/proxy_cache.rs}{774}{\texttt{HttpProxy::revalidate\_or\_stale}}
+      merges the response into the cached header
+      (\pgsrc{pingora-proxy/src/proxy_cache.rs}{808}{\texttt{revalidate\_merge\_header}})
+      and calls
+      \pgsrc{pingora-proxy/src/proxy_cache.rs}{825}{\texttt{revalidate\_cache\_meta}};
+      \pgsrc{pingora-cache/src/lib.rs}{1187}{\texttt{HttpCache::revalidate\_cache\_meta}}
+      preserves the original admission time --- both the \texttt{created} timestamp and
+      the \texttt{provenance} the stale entry carried
+      (\pgsrc{pingora-cache/src/lib.rs}{1201}{L1201}) --- calls
+      \pgsrc{pingora-cache/src/lib.rs}{1218}{\texttt{update\_meta}}, and
+      releases the lock regardless of the result
+      (\pgsrc{pingora-cache/src/lib.rs}{1230}{L1230}); it makes no eviction
+      call. The stale path takes the lock in
+      \pgsrc{pingora-cache/src/lib.rs}{862}{\texttt{cache\_found}}.}
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \begin{adjustbox}{max width=0.75\textwidth}
+  \begin{sequencediagram}
+    \newinst[0.0]{HttpProxy}{HttpProxy}
+    \newinst[4.7]{HttpCache}{HttpCache}
+    \newinst[2.5]{Storage}{Storage}
+    \newinst[0.5]{EvictionManager}{EvictionManager}
+    \begin{call}{HttpProxy}{cache\_lookup()}{HttpCache}{(CacheMeta, HitHandler)}
+      \begin{call}{HttpCache}{lookup(key)}{Storage}{(CacheMeta, HitHandler)}
+      \end{call}
+    \end{call}
+    \begin{call}{HttpProxy}{cache\_found(meta, hit\_handler, Fresh)}{HttpCache}{}
+      \begin{call}{HttpCache}{access(key, size, fresh\_until)}{EvictionManager}{}
+      \end{call}
+    \end{call}
+    \begin{call}{HttpProxy}{read body via HitHandler}{Storage}{}
+    \end{call}
+  \end{sequencediagram}
+  \end{adjustbox}
+  \caption{A plain hit: no lock, no writer to race. \texttt{cache\_lookup}
+  finds the object already published and returns it to \texttt{HttpProxy},
+  which calls \texttt{cache\_found} to accept the hit --- recording the
+  touch against the \texttt{EvictionManager} so recency ordering stays
+  current --- before reading the body straight from \texttt{Storage}, the
+  same direct-read pattern Figure~\ref{fig:cache-lock-seq}'s concurrent
+  follower uses once its own wait resolves.}\label{fig:cache-hit-seq}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  % max totalheight keeps the diagram plus its long caption on one page
+  \begin{adjustbox}{max width=\textwidth, max totalheight=0.64\textheight}
+  \begin{sequencediagram}
+    \newinst[0.0]{HttpProxy}{HttpProxy}
+    \newinst[2.7]{HttpCache}{HttpCache}
+    \newinst[2.0]{CacheLock}{CacheLock}
+    \newinst[0.5]{Storage}{Storage}
+    \newinst[0.5]{EvictionManager}{EvictionManager}
+    \begin{call}{HttpProxy}{cache\_lookup()}{HttpCache}{}
+      \begin{call}{HttpCache}{lookup(key)}{Storage}{miss}
+      \end{call}
+      \begin{call}{HttpCache}{lock(key)}{CacheLock}{leader (write permit)}
+      \end{call}
+    \end{call}
+    \begin{call}{HttpProxy}{cache\_miss()}{HttpCache}{}
+    \end{call}
+    \postlevel
+    \begin{callself}{HttpProxy}{fetch upstream response}{}
+    \end{callself}
+    \begin{call}{HttpProxy}{set\_miss\_handler()}{HttpCache}{}
+      \begin{call}{HttpCache}{get\_miss\_handler(key)}{Storage}{MissHandler}
+      \end{call}
+      \begin{sdalt}{opt}{[streaming partial write]}
+        \begin{call}{HttpCache}{release(key)}{CacheLock}{}
+        \end{call}
+      \end{sdalt}
+    \end{call}
+    \begin{call}{HttpProxy}{miss\_handler: write body}{HttpCache}{}
+      \begin{call}{HttpCache}{write body (eof on last chunk)}{Storage}{}
+      \end{call}
+    \end{call}
+    \begin{call}{HttpProxy}{finish\_miss\_handler()}{HttpCache}{}
+      \begin{call}{HttpCache}{finish()}{Storage}{size}
+      \end{call}
+      \begin{sdalt}{opt}{[lock still held]}
+        \begin{call}{HttpCache}{release(key)}{CacheLock}{}
+        \end{call}
+      \end{sdalt}
+      \begin{sdalt}{alt}{[Created]}
+        \begin{call}{HttpCache}{admit(entry key, size, fresh\_until)}{EvictionManager}{victims}
+        \end{call}
+      \sdpart{[Appended]}
+        \begin{call}{HttpCache}{increment\_weight(entry key, size, max)}{EvictionManager}{victims}
+        \end{call}
+      \end{sdalt}
+      \begin{sdalt}{loop}{[for each victim (async)]}
+        \begin{call}{HttpCache}{purge(Exact(victim), Eviction)}{Storage}{}
+        \end{call}
+      \end{sdalt}
+    \end{call}
+  \end{sequencediagram}
+  \end{adjustbox}
+  \caption{A cache miss, driven by \texttt{HttpProxy} and mediated by \texttt{HttpCache}, which alone hands out access
+  to the backends (the body bytes actually flow through the \texttt{MissHandler} object the proxy obtains from
+  \texttt{HttpCache} --- shown here as calls through \texttt{HttpCache} for simplicity). \texttt{cache\_lookup} reads
+  \texttt{Storage} and takes the \texttt{CacheLock}; here the request wins the write permit and becomes the
+  \emph{leader}. After fetching upstream, \texttt{set\_miss\_handler}/\texttt{finish\_miss\_handler} write the body
+  through \texttt{Storage} and release the lock as soon as the object is readable; eviction then runs \emph{after} and
+  outside the lock --- a store that created the object \texttt{admit}s it, one that only appended to an object already
+  admitted \texttt{increment\_weight}s it, and either returns the victims, \texttt{purge}d asynchronously and named
+  as exact entries rather than as logical keys. The two \emph{opt} fragments
+  are two ends of the same choice: a backend supporting streaming partial writes --- as the backend specified by this
+  document does, \reqref{FRE-COMPAT.STREAMFLAG-01} --- releases the lock early, right after \texttt{get\_miss\_handler},
+  letting followers stream the body as it is written, and \texttt{finish\_miss\_handler} then finds the lock already
+  released and skips its own \texttt{release}.}\label{fig:cache-miss-seq}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{adjustbox}{max width=\textwidth}
+  \begin{sequencediagram}
+    \newinst[0.0]{HttpProxy}{HttpProxy}
+    \newinst[2.3]{HttpCache}{HttpCache}
+    \newinst[0.6]{CacheLock}{CacheLock}
+    \newinst[0.6]{Storage}{Storage}
+    \begin{call}{HttpProxy}{cache\_lookup()}{HttpCache}{HitHandler / locked}
+      \begin{call}{HttpCache}{lookup(key)}{Storage}{}
+      \end{call}
+    \end{call}
+    \begin{sdalt}{alt}{[write open]}
+      \begin{call}{HttpProxy}{read body via HitHandler --- streams as the leader writes}{Storage}{}
+      \end{call}
+    \sdpart{[no write yet]}
+      \begin{call}{HttpProxy}{cache\_lock\_wait()}{HttpCache}{}
+        \begin{call}{HttpCache}{wait()}{CacheLock}{done}
+        \end{call}
+      \end{call}
+      \begin{call}{HttpProxy}{cache\_lookup() (retry)}{HttpCache}{HitHandler}
+        \begin{call}{HttpCache}{lookup(key)}{Storage}{}
+        \end{call}
+      \end{call}
+      \begin{call}{HttpProxy}{read body via HitHandler}{Storage}{}
+      \end{call}
+    \end{sdalt}
+  \end{sequencediagram}
+  \end{adjustbox}
+  \caption{A concurrent request (\emph{follower}). \texttt{Storage}'s \texttt{lookup} prefers a partial read, so the outcome depends
+  on whether the leader's write is already open. \textbf{If it is}, \texttt{cache\_lookup} returns a \texttt{HitHandler} at once and
+  the follower streams the body \emph{as the leader writes it} --- no lock, no wait. \textbf{If not}, the request instead holds a read
+  lock and blocks in \texttt{cache\_lock\_wait}, but only until the leader \emph{opens} the write (in streaming mode the lock is released
+  right after \texttt{get\_miss\_handler}, not when the body is done); it then retries \texttt{cache\_lookup}, gets its \texttt{HitHandler},
+  and streams the same way. The backend specified by this document is of that streaming kind (\reqref{FRE-COMPAT.STREAMFLAG-01}, \reqref{FRE-COMPAT.STREAMING-01}):
+  it registers the leader's write when the miss handler opens and notifies partial readers of each chunk appended to the per-writer
+  temporary; the atomic rename that publishes the canonical, durable name still happens only once the object is complete
+  (\reqref{FDS-STORAGE.PUBLISH-01}). (Only a non-streaming backend, having no partial read, would hold its followers for
+  the complete object.) Either way the upstream fetch and the \texttt{Storage} write happen once, on the leader
+  (Figure~\ref{fig:cache-miss-seq}).}\label{fig:cache-lock-seq}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{adjustbox}{max width=0.75\textwidth}
+  \begin{sequencediagram}
+    \newinst[0.0]{HttpProxy}{HttpProxy}
+    \newinst[1.5]{HttpCache}{HttpCache}
+    \newinst[4.1]{Storage}{Storage}
+    \newinst[0.5]{EvictionManager}{EvictionManager}
+    \begin{call}{HttpProxy}{purge() / expire()}{HttpCache}{}
+      \begin{sdalt}{alt}{[Delete]}
+        \begin{call}{HttpCache}{purge(Active(key), Invalidation)}{Storage}{PurgeOutcome}
+        \end{call}
+      \sdpart{[Expire]}
+        \begin{call}{HttpCache}{expire(Active(key))}{Storage}{PurgeOutcome}
+        \end{call}
+      \end{sdalt}
+      \begin{sdalt}{opt}{[Purged]}
+        \begin{call}{HttpCache}{remove(entry key)}{EvictionManager}{}
+        \end{call}
+      \end{sdalt}
+    \end{call}
+  \end{sequencediagram}
+  \end{adjustbox}
+  \caption{A purge, driven directly off the cache key: no lookup, no
+  \texttt{CacheLock}. The proxy's \texttt{purge\_action} hook chooses between
+  deleting the object and expiring it --- two different \texttt{Storage} calls,
+  \texttt{purge} and \texttt{expire}, both naming the logical key as a
+  \texttt{PurgeTarget::Active}. \texttt{purge} is additionally told which kind of
+  purge this is (\texttt{Invalidation}, distinct from the \texttt{Eviction} kind
+  capacity-driven purges use, which instead name the exact entry as a
+  \texttt{PurgeTarget::Exact}). The backend reports a \texttt{PurgeOutcome}, and
+  only \texttt{Purged} --- the entry is gone --- makes \texttt{HttpCache} drop it
+  from the \texttt{EvictionManager}'s own bookkeeping; an \texttt{Expired} entry
+  is still stored and stays tracked.}\label{fig:purge-seq}
+\end{figure}
+
+This structure --- \texttt{HttpCache} owning the eviction calls while the backend
+merely serves object reads, writes, and purges --- is why persistence is not a
+pure \texttt{Storage} concern. Because the eviction manager's in-memory index does
+not survive a restart, a persistent backend must arrange for that index to be
+rebuilt, and (as the framework, not the backend, owns the eviction calls) it
+cannot do so in isolation. The \texttt{CacheLock} is in-memory and per-process in
+the same way: it bounds same-key write concurrency \emph{within} a process, but two
+processes sharing the cache during a hot upgrade hold independent locks, so the
+backend must still tolerate concurrent same-key writes from a peer. The
+requirements chapters return to both points.

@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Line tables keep file:line in backtraces at a fraction of full debug
+  # info's size, which otherwise fills the runner's disk.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false # cache-tests only needed by compliance.yml
+
+      - name: Free disk space
+        # The workspace's debug builds outgrow the runner's free disk; drop
+        # preinstalled toolchains no job here uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: nix develop -c cargo fmt --all -- --check
+
+      - name: SPDX headers
+        run: nix develop -c cargo xtask headers
+
+      - name: cargo clippy
+        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Group C — crate-internal tests (no fixture-proxy needed)
+        # The default build, without the metrics feature.
+        # FDS-OBSERVABILITY.REWRITE-01 and FDS-STORAGE.RECLAIM-01 each
+        # require the log to carry what the counters would have reported
+        # when `metrics` is off, so both builds are tested.
+        run: nix develop -c cargo nextest run --profile ci -p durable-cache
+
+      - name: Group C with the metrics feature
+        run: nix develop -c cargo nextest run --profile ci -p durable-cache --features metrics
+
+      - name: clippy with the metrics feature
+        run: nix develop -c cargo clippy -p durable-cache --features metrics --all-targets -- -D warnings
+
+      # The body CRC's two optional builds (ADR-PERSISTENCE.DURABILITY-01):
+      # without it at all, and with the read-time check available.
+      - name: Group C without default features (no body CRC)
+        run: nix develop -c cargo nextest run --profile ci -p durable-cache --no-default-features
+
+      - name: clippy without default features
+        run: nix develop -c cargo clippy -p durable-cache --no-default-features --all-targets -- -D warnings
+
+      - name: Group C with the body-crc-verify feature
+        run: nix develop -c cargo nextest run --profile ci -p durable-cache --features body-crc-verify
+
+      - name: clippy with the body-crc-verify feature
+        run: nix develop -c cargo clippy -p durable-cache --features body-crc-verify --all-targets -- -D warnings
+
+      - name: Build workspace (fixture-proxy, mock-origin, harness, compat)
+        run: nix develop -c cargo build --workspace
+
+      - name: Group B/D — compat tests (excluding hot-upgrade, which needs two processes)
+        run: nix develop -c cargo nextest run --profile ci -p compat
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-fast
+          path: target/nextest/ci/junit.xml
+
+  msrv:
+    # durable-cache declares rust-version = "1.85", Pingora 0.9.0's own
+    # minimum: building the library with that compiler keeps the claim true.
+    # `+1.85.0` because rust-toolchain.toml would otherwise select its pin.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - name: The library builds on its declared minimum Rust
+        run: |
+          cargo +1.85.0 check --locked -p durable-cache --lib
+          cargo +1.85.0 check --locked -p durable-cache --lib --features metrics
+          cargo +1.85.0 check --locked -p durable-cache --lib --no-default-features
+          cargo +1.85.0 check --locked -p durable-cache --lib --features body-crc-verify

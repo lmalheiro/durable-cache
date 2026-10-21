@@ -1,0 +1,4 @@
+[alias]
+# `cargo xtask <cmd>` -- the repo-local dev tooling in xtask/ (trace-report,
+# cache-tests), as the CI workflows and README invoke it.
+xtask = "run --package xtask --"

@@ -1,0 +1,22 @@
+[package]
+name = "fixture-proxy"
+version = "0.1.0"
+description = "Disposable Pingora proxy hosting FsCache for tests only — not a deliverable"
+publish = false
+edition.workspace = true
+
+[dependencies]
+durable-cache = { workspace = true, features = ["test-support"] }
+pingora-cache.workspace = true
+# openssl: the TLS backend behind --upstream-tls. OpenSSL rather than
+# BoringSSL, whose build from source needs cmake and Go (see flake.nix).
+pingora-core = { workspace = true, features = ["openssl"] }
+pingora-proxy = { workspace = true, features = ["openssl"] }
+pingora-error.workspace = true
+pingora-http.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+log.workspace = true
+env_logger.workspace = true
+tokio = { workspace = true, features = ["full"] }
+http = "1"

@@ -1,0 +1,201 @@
+% =====================================================================
+% Introduction.
+%
+% The Pingora framework this backend integrates with, why this document
+% exists, the artifact types and the relationships between them, and the
+% flow-of-refinement organisation the rest of the chapters follow.
+% =====================================================================
+
+\section{The Pingora Framework}
+
+Pingora is an open-source Rust framework, developed and open-sourced by
+Cloudflare, for building fast, reliable, and programmable networked
+systems.\footnote{\href{https://github.com/cloudflare/pingora}{cloudflare/pingora on GitHub}}\textsuperscript{,}\footnote{\href{https://blog.cloudflare.com/pingora-open-source/}{Cloudflare blog: ``Open sourcing Pingora''}}%
+\textsuperscript{,}\footnote{\href{https://developers.cloudflare.com/changelog/post/2026-05-04-pingora-powers-cache/}{Cloudflare changelog, 4~May 2026}}
+It was created as a modern, memory-safe alternative to C/C++-based proxies and has been
+battle-tested in production at Cloudflare, where it serves more than
+40~million Internet requests per second. Pingora is built entirely in Rust on
+top of an asynchronous runtime, and provides the building blocks for HTTP/1
+and HTTP/2 proxies, gRPC and WebSocket proxying, load balancing, graceful
+reloads, and rich observability.
+
+The framework is organised as a collection of crates, each addressing a
+distinct concern. The most relevant to this specification are:
+
+\begin{itemize}
+    \item \texttt{pingora-core} --- transport protocols and the core traits
+          that define server and service behaviour.
+    \item \texttt{pingora-proxy} --- the HTTP proxy state machine and the
+          \texttt{ProxyHttp} extension points used to customise proxy logic.
+    \item \texttt{pingora-cache} --- the HTTP caching layer, including the
+          storage backend abstraction that this work targets.
+\end{itemize}
+
+\section{Purpose of This Document}
+
+This document specifies the requirements for a \emph{file-system-backed}
+implementation of the \texttt{pingora-cache} \texttt{Storage} trait. By
+persisting cached objects on disk rather than solely in memory, the cache can
+retain entries across process restarts and scale well beyond the limits of
+main memory, while remaining a drop-in backend behind the existing
+\texttt{HttpCache} state machine. The driving goals are:
+
+\begin{itemize}
+    \item \textbf{Persistent storage} --- use the file system as a durable
+          medium for cached HTTP objects so that the cache survives restarts
+          and grows beyond RAM capacity.
+    \item \textbf{Standards compliance} --- preserve the RFC~9111 and HTTP
+          caching semantics already enforced by \texttt{pingora-cache}, so
+          persistence does not compromise correctness.
+    \item \textbf{Efficient use of space} --- store and reclaim cached objects
+          economically, supporting eviction and avoiding unnecessary disk
+          overhead.
+\end{itemize}
+
+\section{The Refinement Model}
+
+\subsection*{Artifacts and Relationships}\label{sec:artifacts}
+
+The artifact types and the relationships between artifacts take inspiration
+from \sysml, the Object Management Group's Systems Modeling
+Language,%
+\footnote{\href{https://www.omg.org/}{\omg}}%
+\footnote{\href{https://www.omg.org/sysml/}{\sysml}}%
+\footnote{P.~Roques,\href{https://re-magazine.ireb.org/articles/modeling-requirements-with-sysml}{``Modeling
+Requirements with \sysml''}, \emph{Requirements Engineering Magazine}, IREB,
+April~2015, section ``Requirement Relationships''.}%
+without aiming to follow it
+strictly.
+
+Every artifact has a type, given by the prefix of its ID, and every type carries
+a \emph{stereotype}: a label written between guillemets, such as
+<<stakeholder requirement>> or <<design constraint>>, that names the type's
+category. Table~\ref{tab:sysml-requirement-stereotypes} lists every artifact
+type with its prefix and stereotype. Two types
+can share a stereotype --- functional designs (\textsf{FDS}) and functional
+requirements (\textsf{FRE}) are both <<functional requirement>> --- so it is the
+prefix that tells an artifact's kind. The diagrams draw each artifact as a card
+headed by its stereotype, and each relationship as an arrow labelled with the
+relationship's name, pointing from the artifact that depends to the one it
+depends on.
+
+\includereqstereotypes
+
+Each relationship has one job in this model:
+\begin{itemize}
+  \item \emph{Satisfies} (<<satisfy>>): a decision or a design satisfies the
+    requirements it answers.
+  \item \emph{Derives} (<<deriveReqt>>): a requirement derives from the
+    artifact it comes from. Usually that is a broader requirement it breaks
+    down, as a functional requirement breaks down a stakeholder need. It can
+    also be a decision: choosing a mechanism creates constraints of its own
+    that no stakeholder asked for, and those derive from the decision that
+    created them (for example, choosing a plain file system,
+    \reqref{ADR-PERSISTENCE.MECHANISM-01}, is what makes the number of entries
+    in one directory matter, so \reqref{REQ-EFFICIENCY.DIRSCALE-01} derives
+    from that decision). A requirement can have both kinds of parent.
+  \item \emph{Refines} (<<refine>>): a decision or a design refines the broader one it works
+    out in more detail. A design normally refines the decision it carries out.
+    It may instead refine another design, when it builds on terms that design
+    defines and no decision of its own lies between the two (for example, the
+    design that logs and counts metadata that outgrew its record,
+    \reqref{FDS-OBSERVABILITY.HEADROOM-01}, refines the design that defines when
+    that happens, \reqref{FDS-STORAGE.METAUPDATE-01}). The link to the decision is not
+    lost: the other design refines its own decision in turn.
+  \item \emph{Verifies} (<<verify>>): a test case verifies the requirement,
+    decision, or design it checks.
+  \item \emph{Traces} (<<trace>>): records any other dependency that none of the
+    above fits.
+  \item \emph{Conflicts with} (<<conflicts with>>): marks
+    two artifacts that cannot both be met as stated; the artifact that declares
+    the conflict also states how it is to be resolved.
+\end{itemize}
+Tied together this way, the artifacts form a chain that can be read forwards
+(goal to test) or traced
+backwards (test to goal); the Traceability Analysis chapter renders it
+explicitly. Table~\ref{tab:sysml-relationship-types} summarises the
+relationships and the direction of their arrows.
+
+% A float rather than a page-breaking xltabular: the table is short, and
+% splitting it strands its last rows on the next page. [tb], like the
+% generated stereotype table, so neither is set alone on a float page.
+\begin{table}[tb]
+\centering\small\renewcommand{\arraystretch}{1.3}%
+\caption{Relationships between artifacts}\label{tab:sysml-relationship-types}
+\begin{tabularx}{\linewidth}{|l|>{\raggedright\arraybackslash}p{0.3\linewidth}|X|}
+\hline
+\textbf{Relationship} & \textbf{Arrow (from $\rightarrow$ to)} & \textbf{Meaning} \\
+\hline
+\textit{<<satisfy>>} & Decision, design, or implementation $\rightarrow$ requirement & Fulfils the requirement \\
+\hline
+\textit{<<deriveReqt>>} & Derived requirement $\rightarrow$ its source & Follows from the source --- a broader requirement it breaks down, or a decision whose choice created it \\
+\hline
+\textit{<<refine>>} & Detailed artifact $\rightarrow$ broader artifact & Works the broader artifact out in more detail \\
+\hline
+\textit{<<verify>>} & Test case $\rightarrow$ artifact & Checks that the artifact holds \\
+\hline
+\textit{<<trace>>} & Any $\rightarrow$ any & A dependency no more specific relationship describes \\
+\hline
+\textit{<<conflicts with>>} & Either way & The two cannot both be met as stated; the declaring artifact states how the conflict is to be resolved \\
+\hline
+\end{tabularx}
+\end{table}
+
+\subsection*{Flow of Refinement}
+
+Rather than grouping its contents by artifact type --- all requirements in one
+chapter, all architecture decisions in another --- this document is organised to
+follow the \emph{flow of refinement}: the order in which the artifacts are
+discovered as a need is progressively elaborated from an abstract goal down to a
+verifiable design. Each chapter is one stage in that flow, and any stage may
+contain artifacts of \emph{any} type; what a chapter groups is a \emph{degree of
+refinement}, not a kind of artifact. The stages are preceded by a \emph{System
+Context} chapter that documents, non-normatively, the \texttt{pingora-cache}
+behaviour the artifacts cite as their basis.
+
+The stages, and the artifact types that typically appear in each, are:
+\begin{enumerate}
+  \item \textbf{High-Level Requirements} (\textsf{HLR}, and use cases
+        \textsf{UC}) --- the stakeholder needs the cache must meet, stated without
+        commitment to a solution.
+  \item \textbf{High-Level Refinement} --- the first elaboration of those needs:
+        the foundational architecture decision that shapes the whole solution
+        (an \textsf{ADR}, \emph{Architecture Decision Record}, at its broadest
+        scope). A decision, here or later, \emph{generates} requirements of its
+        own --- stated as base requirements (\textsf{REQ}) when left unbranded,
+        or as functional requirements (\textsf{FRE}) when they state, in
+        verifiable terms, \emph{what} the backend must do; either kind may
+        instead derive directly from the stakeholder need itself. The later,
+        more detailed decisions must satisfy whichever of these the earlier
+        ones generated.
+  \item \textbf{Detailed Refinement} --- the decisions that follow from the
+        high-level one: further architecture decisions (\textsf{ADR}) at a
+        narrower scope, down to a single mechanism.
+  \item \textbf{Structural and Functional Design} --- concrete designs realising
+        those decisions: structural designs (\textsf{SDS}, e.g.\ the on-disk
+        layout) and functional designs (\textsf{FDS}, e.g.\ sequence diagrams).
+  \item \textbf{Test Case Specifications} (\textsf{TC}) --- the checks that verify
+        the requirements and designs of the preceding stages.
+\end{enumerate}
+Table~\ref{tab:sysml-requirement-stereotypes} in Section~\ref{sec:artifacts}
+lists the artifact types in this same order.
+
+The stages order the artifacts; two further axes tell them apart. The first is
+\emph{altitude}: an \textsf{ADR} can sit anywhere from the foundational choice
+of storage medium down to a single mechanism.
+The second is \emph{kind}: a \emph{requirement} (\textsf{HLR}, \textsf{REQ},
+\textsf{FRE}) states a need without choosing a solution; a \emph{decision}
+(\textsf{ADR}) argues a choice among alternatives
+--- recorded as context, alternatives, and consequences --- and closes design
+freedom; a \emph{design} specifies the chosen result --- \textsf{SDS} its
+static shape, \textsf{FDS} its dynamic behaviour --- and no longer decides
+anything; and a \emph{test case} (\textsf{TC}) verifies that what was
+required, decided, or designed actually holds.
+
+Two tests keep the kinds apart in practice. The \emph{deletion test}: if
+removing an artifact would force a trade-off to be argued again, it is a
+decision; if the trade-off would stay settled but the implementer would lose
+the blueprint, it is a design. The \emph{change-trigger test}: a decision is
+reopened when its forces change --- a new constraint, a new alternative, a
+shifted trade-off --- while a design is revised when the decision stands but
+its realisation needs adjustment.

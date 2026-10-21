@@ -1,0 +1,3172 @@
+% =====================================================================
+% Stage 3 -- Detailed Refinement.
+%
+% The decisions and verifiable requirements that follow from the
+% high-level refinement: further architecture decisions (ADR) at a
+% narrower scope than the foundational one, down to the one that fixes
+% the eviction-reconstruction mechanism, and the concrete,
+% testable storage requirements (FRE) derived from the
+% standards-compliance goal into what the storage
+% layer must guarantee across a store -> retrieve cycle.
+% =====================================================================
+
+% ---------------------------------------------------------------------
+% Persistence & space efficiency: architecture decisions derived from
+% the plain-file-system ADR, each satisfying the derived constraints
+% (REQ-EFFICIENCY.*) and framework constraints (FRE-COMPAT.*)
+% stated in the high-level refinement.
+% ---------------------------------------------------------------------
+\begin{requirement}{ADR-STORAGE.OBJECTFILE-01}[draft][designConstraint]{Combined metadata and body file}
+
+  \localreqdiagram*{adr2}{\reqid}{\reqdesc}
+
+  \textbf{Context:} Each cached object has a small block of metadata and a body
+  of arbitrary length, unknown when writing begins
+  (\reqref{FRE-COMPAT.UNSIZED-01}), persisted on a plain file system
+  (\reqref{ADR-PERSISTENCE.MECHANISM-01}). Block-granular allocation means a
+  separate file holding only the small metadata would waste most of a block
+  per object (\reqref{REQ-EFFICIENCY.FRAGMENTATION-01}).
+
+  \textbf{Decision:} Store each object's metadata and body together in a
+  single growable file, in file order: the metadata written ahead of the
+  body content, the body appended as its chunks arrive. A metadata update
+  that later outgrows the space reserved ahead of the body withdraws the
+  record, and the object is fetched again
+  (\reqref{FDS-STORAGE.METAUPDATE-01}); moving that metadata after the body
+  instead is deferred to a later version (\reqref{ADR-STORAGE.METAMOVE-01}).
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{A separate file holding only the object's metadata}, body
+      kept in its own file: keeps each region independently sized and
+      simple to read in isolation, but the small, mostly-empty metadata
+      file wastes most of a block per object regardless of the body's
+      size (\reqref{REQ-EFFICIENCY.FRAGMENTATION-01}). Committing the two
+      files as one atomic unit also loses the single-rename publication
+      this design enables (\reqref{FDS-STORAGE.PUBLISH-01}): a plain
+      rename is atomic per path, not across two, so publishing both
+      together would need a per-object subdirectory renamed as a whole
+      --- an extra inode and directory entry per object, working against
+      the same efficiency goal --- or a separate commit marker. Nor does
+      splitting the files cleanly avoid in-place metadata updates
+      (\reqref{FDS-STORAGE.METAUPDATE-01}): replacing the metadata file
+      wholesale on every revalidation avoids mutating it in place, but
+      pays a fresh inode and directory entry each time, so a design that
+      cares about that cost would still want to reserve headroom and
+      update it in place --- the same capacity accounting and
+      mid-write-race handling this design already needs, just for a
+      smaller file.
+    \item \emph{Metadata in the body file's extended attributes}: no second
+      file, and a small attribute can live inside the inode itself, costing
+      no extra block. Rejected: a header set has no size cap
+      (\reqref{FRE-COMPLIANCE.HEADERS-01}), while attribute space is
+      capped\footnote{\href{https://man7.org/linux/man-pages/man7/xattr.7.html}{Linux
+      manual page: \texttt{xattr(7)}}: ``The VFS-imposed limits on attribute
+      names and values are 255 bytes and 64 kB, respectively'', and on ext2,
+      ext3, and ext4 ``the total bytes used by the names and values of all of
+      a file's extended attributes must fit in a single filesystem block''.}
+      --- so large header sets could not be stored at all, and typical
+      header segments overflow the in-inode space into a block anyway;
+      attribute writes are also separate from the file's data, adding a
+      second update channel to keep consistent with the body.
+    \item \emph{Metadata as a trailer after the body}: the metadata's size
+      no longer has to be reserved ahead of a body of unknown length, and a
+      growing update simply rewrites the tail. Rejected: every update
+      changes the file's length while readers may be streaming the body's
+      final bytes and validating the length they were promised, and every
+      lookup must locate the trailer through a fixed footer before it can
+      read anything; a header-first record confines updates to a
+      fixed-position region instead.
+    \item \emph{A sidecar index} --- one embedded key-value store holding
+      every object's metadata, with bodies in their own files: small
+      metadata records pack tightly, and updates become transactional.
+      Rejected: publishing an object then spans two stores, the body file
+      and the index entry, which can no longer be made visible by a single
+      rename and need an ordering and recovery protocol of their own; and it
+      reintroduces the embedded engine, with its cross-process locking,
+      that \reqref{ADR-PERSISTENCE.MECHANISM-01} declined.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] No block is wasted on a separate, mostly-empty metadata file.
+    \item[+] One growable file naturally holds a body whose size is not
+      known when writing begins, and a streaming partial reader can follow
+      the same file the leader is still writing
+      (\reqref{FRE-COMPAT.STREAMING-01}).
+    \item[--] Metadata and body share a single file, so reading the metadata
+      requires opening the object file rather than a smaller dedicated one.
+    \item[--] The on-disk format must encode the metadata length or body offset
+      so the two regions can be told apart on read.
+    \item[--] Metadata that outgrows the region ahead of the body costs a
+      fetch of the whole object from the origin
+      (\reqref{ADR-STORAGE.METAMOVE-01}).
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-01}{Specify how object publication is
+  made atomic under concurrent same-key writes and process crashes.}
+  \reqexpect{refine}{FDS-STORAGE.METAUPDATE-01}{Specify how a metadata update
+  that grows past its record's reserved capacity is handled.}
+  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-01}{Specify the concrete on-disk
+  record format --- header, key, metadata region, and body placement ---
+  that realises the combined metadata-and-body file.}
+
+  \refine{ADR-PERSISTENCE.MECHANISM-01}
+  \trace{FRE-COMPAT.STREAMING-01}
+  \trace{REQ-EFFICIENCY.FRAGMENTATION-01}
+\end{requirement}
+
+\begin{requirement}{ADR-PERSISTENCE.DURABILITY-01}[draft][designConstraint]{Host-crash safety via sync and CRC}
+
+  \localreqdiagram*{adrdurability01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} After the host crashes or loses power, the cache may lose
+  objects but must never serve content that differs from what was stored,
+  nor an object whose purge it acknowledged
+  (\reqref{HLR-PERSISTENCE.CRASHSAFE-01}); the same bar applies to incomplete
+  stores (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}), acknowledged purges
+  (\reqref{FRE-COMPLIANCE.PURGEDURABLE-01}), and applied metadata updates
+  (\reqref{FRE-COMPLIANCE.METAPERSIST-01}). A plain file system
+  (\reqref{ADR-PERSISTENCE.MECHANISM-01}) gives none of this for free. A
+  \texttt{write} returns while the bytes are still only in the page cache;
+  syncing a file does not persist the directory entry that names
+  it;\footnote{\href{https://man7.org/linux/man-pages/man2/fsync.2.html}{Linux
+  manual page: \texttt{fsync(2)}}: ``Calling \texttt{fsync()} does not
+  necessarily ensure that the entry in the directory containing the file has
+  also reached disk. For that an explicit \texttt{fsync()} on a file
+  descriptor for the directory is also needed.''} and a rename can reach the
+  journal before the renamed file's data does. ext4 guards only the
+  \emph{replace}-via-rename pattern against that, forcing the new file's data
+  out before such a rename commits;\footnote{\href{https://www.kernel.org/doc/html/latest/admin-guide/ext4.html}{Linux
+  kernel documentation: ``ext4 General Information''}, \texttt{auto\_da\_alloc}:
+  the replace-via-rename pattern is detected so that ``the data blocks of the
+  new file are forced to disk before the \texttt{rename()} operation is
+  committed'', avoiding the ``zero-length'' problem.} a first-time publication
+  under a new name gets no such help. A synchronous flush costs roughly
+  1--5~ms on consumer SSDs and under 0.1~ms on drives with power-loss
+  protection.\footnote{\href{https://smalldatum.blogspot.com/2026/01/ssds-power-loss-protection-and-fsync.html}{Mark
+  Callaghan, ``Small Datum'': ``SSDs, power loss protection and fsync
+  latency''}.}
+
+  \textbf{Decision:} Synchronise exactly the writes whose loss could make the
+  cache serve wrong or purged content, and detect the rest.
+  \begin{itemize}
+    \item \emph{Publication:} \texttt{fdatasync} a store's temporary ---
+      after its last body byte and its patched header --- before renaming it
+      to the canonical name. The directory is not synced after the rename,
+      so a host crash may lose a just-published object (the key then keeps
+      its previous record, or misses), but the name can never refer to
+      data that is not on stable storage.
+    \item \emph{Invalidating purge:} \texttt{fsync} the shard directory
+      after the \texttt{unlink}, or after finding nothing to unlink, before
+      reporting the outcome. A purge made to evict is not synchronised: a
+      host crash that undoes it brings back a valid object the cache chose
+      to drop.
+    \item \emph{Metadata update, in place or a withdrawal:} not synced.
+      After a host crash the region holds the old metadata, the new, or a
+      torn mixture, and a withdrawn record may be back as it was; the
+      metadata checksum rejects the mixture, so the object is either served
+      with one complete version or reported as a miss.
+    \item \emph{Body checksum:} each record carries a CRC-32C of its body,
+      computed while the body streams in and recorded at completion. Serving
+      a hit does not check it. A build can leave it out (the Cargo feature
+      \texttt{body-crc}, on by default; without it a record carries zero),
+      and a build with the \texttt{body-crc-verify} feature can switch on, in
+      its configuration, a read-time check that logs a mismatch once a read
+      has delivered the whole body, and still ends the read normally.
+  \end{itemize}
+  With synchronised publication, on a storage stack that honours flush
+  requests as \reqref{HLR-PERSISTENCE.CRASHSAFE-01} assumes, a host crash
+  cannot leave a published name over wrong bytes. Integrity at rest --- media
+  corruption, or a device that acknowledges a flush it has not made --- is
+  the storage layer's: a data-checksumming file system (ZFS, btrfs,
+  bcachefs) or \texttt{dm-integrity} turns a corrupted block into a read
+  error, which ends the read with an error in place of the corrupted bytes.
+  The header and metadata checksums stay: they detect a torn in-place
+  metadata update, and a lookup racing one, which no storage layer can.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Process-crash safety only} (no synchronisation): cheapest,
+      and sufficient for \reqref{HLR-PERSISTENCE.DURABLE-01}, since a process
+      crash leaves the page cache intact. Rejected: after a host crash a
+      first-time rename can commit ahead of its data, leaving a canonical name
+      over a zero-filled or short body whose header still passes validation,
+      and an unsynced purge \texttt{unlink} can be lost, bringing a purged
+      object back --- both forbidden by \reqref{HLR-PERSISTENCE.CRASHSAFE-01}.
+    \item \emph{Checksum only, without synchronisation}: detects a corrupted
+      body, but only once a reader reaches its end, after the corrupted bytes
+      have already gone to the client; and it does nothing for a lost purge.
+      Rejected.
+    \item \emph{Check the body checksum on every whole-body read}, ending a
+      read whose body does not match with an error instead of a clean end of
+      body. Rejected: the check can only run after the last byte, and
+      \texttt{pingora-cache} sends each chunk downstream as the backend
+      returns it, so a client given a \texttt{Content-Length} has the whole
+      corrupted body by then and the error can only cut the connection. On
+      the storage stack \reqref{HLR-PERSISTENCE.CRASHSAFE-01} assumes it never
+      fires, yet it costs a CRC-32C pass per read, about as much CPU as the
+      read itself when the body is in the page cache (13.3 against 12.3
+      microseconds per 64~KiB chunk, measured on an 8-core host).
+    \item \emph{Full host-crash durability}: additionally sync the directory
+      after every rename and sync every in-place metadata update, so no
+      completed store or update is ever lost. Rejected: it roughly doubles the
+      synchronous cost of a store and adds one to every revalidation, to
+      prevent only losses \reqref{HLR-PERSISTENCE.CRASHSAFE-01} explicitly
+      accepts --- the kind of cost \reqref{HLR-SCOPE.V1-01} asks not to pay
+      without a requirement behind it.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] A host crash can lose recently stored objects or recent metadata
+      updates, but can neither corrupt what is served nor resurrect an object
+      an invalidation removed; an eviction it undoes brings back a valid
+      object.
+    \item[+] Process crashes and orderly restarts lose nothing that had been
+      published (\reqref{HLR-PERSISTENCE.DURABLE-01}).
+    \item[--] One \texttt{fdatasync} per completed store, paid when the store
+      finishes, and one directory \texttt{fsync} per invalidating purge;
+      evictions pay none.
+    \item[+] Serving a hit computes no checksum over the body.
+    \item[--] The record header carries a body-checksum field, and every
+      store computes a CRC-32C over its body, unless the build leaves it out.
+    \item[--] Serving a hit does not detect a body corrupted at rest. That
+      takes a storage layer that verifies data as it reads it, or the
+      optional read-time check, which only logs the mismatch after the bytes
+      have been sent.
+    \item[--] The guarantees assume the storage stack honours flush requests.
+      A device or virtualisation layer that acknowledges a flush it has not
+      made can lose a purge, or leave a published name over wrong bytes,
+      undetected.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-01}{Specify the fdatasync of the
+  temporary before its rename, and how a failed sync is surfaced.}
+  \reqexpect{refine}{FDS-STORAGE.PURGE-01}{Specify the fsync of the shard
+  directory before an invalidating purge is reported, and that a purge made
+  to evict is not synchronised.}
+  \reqexpect{refine}{FDS-STORAGE.METAUPDATE-01}{Specify that a metadata
+  update, written in place or withdrawing the record, is not synced.}
+  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-01}{Add the body CRC-32C field
+  and how it is computed and recorded, and specify the optional read-time
+  check that logs a mismatch at the end of a whole-body read.}
+
+  \refine{ADR-PERSISTENCE.MECHANISM-01}
+  \satisfy{HLR-PERSISTENCE.CRASHSAFE-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPLIANCE.PURGEDURABLE-01}
+  \trace{FRE-COMPLIANCE.METAPERSIST-01}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.ATOMICPUBLISH-01}[draft][designConstraint]{Publish by same-directory rename}
+
+  \localreqdiagram*{adratomicpublish01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} A store's record grows over time
+  (\reqref{FRE-COMPAT.UNSIZED-01}) in a single file
+  (\reqref{ADR-STORAGE.OBJECTFILE-01}), yet every write must be durably
+  published as a complete object or not at all, including when several
+  same-key writers race (\reqref{FRE-COMPAT.CONCURRENT-01}), a store is
+  abandoned half-way (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}), or a new
+  response replaces an old one that readers still hold
+  (\reqref{FRE-COMPLIANCE.REPLACE-01},
+  \reqref{FRE-COMPLIANCE.READERISOLATION-01}). The question is how a completed
+  record becomes visible by name --- to a scan, a restart, or a peer process
+  --- in one indivisible step.
+
+  \textbf{Decision:} Write each store to its own temporary file in the
+  \emph{same directory} as the object's canonical name, and publish it with a
+  single POSIX \texttt{rename} over that name once the store is complete.
+  POSIX makes \texttt{rename} atomic between two paths on the same file
+  system, replacing any existing target in the same step, while a descriptor
+  already open on the old file keeps reading it. Keeping the temporary in the
+  canonical name's directory makes that precondition structural rather than a
+  deployment convention. The guarantee assumes POSIX \texttt{rename}
+  semantics, matching the platform focus of \texttt{pingora} itself: Linux is its
+  tier-1 environment, and Windows support is preliminary, community
+  best-effort only.\footnote{The \texttt{pingora} README states this
+  directly: \pgsrc{README.md}{53}{``Linux is our tier 1 environment and main
+  focus.''}, and \pgsrc{README.md}{57}{``Windows support is preliminary by
+  community's best effort only.''}} Windows is out of scope for this
+  guarantee.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Write in place under the canonical name, with a ``complete''
+      flag in the header}: no temporary name and nothing to rename. Rejected:
+      a peer process or a restart sees the partial record under the real
+      name and must trust the flag; a replacement overwrites the old object
+      in place while readers may still be streaming it; and a crash mid-write
+      leaves a torn record where a complete one used to be.
+    \item \emph{Stage the temporary in a separate scratch directory}:
+      simpler cleanup, since every leftover sits in one place. Rejected:
+      \texttt{rename} is atomic only within one file system, and one attempted
+      across devices fails outright (\texttt{EXDEV}); a copy-then-delete
+      fallback would reopen exactly the incomplete-publication window this
+      decision exists to close.
+    \item \emph{An unnamed temporary (\texttt{O\_TMPFILE}) published with
+      \texttt{linkat}}: the kernel discards an unlinked temporary when its last
+      descriptor closes, so a crash leaves no leftovers at
+      all.\footnote{\href{https://man7.org/linux/man-pages/man2/open.2.html}{Linux
+      manual page: \texttt{open(2)}}, \texttt{O\_TMPFILE}: ``Anything written
+      to the resulting file will be lost when the last file descriptor is
+      closed, unless the file is given a name.''} Rejected for this version:
+      it is Linux-specific and depends on file-system support, and a link
+      never replaces an existing
+      name,\footnote{\href{https://man7.org/linux/man-pages/man2/link.2.html}{Linux
+      manual page: \texttt{link(2)}}: ``If \emph{newpath} exists, it will not
+      be overwritten.''} so a replacement would still need a named
+      intermediate and a rename. The leftovers it would avoid are already
+      reclaimed by a scan the backend runs anyway
+      (\reqref{ADR-STORAGE.RECLAIM-01}).
+    \item \emph{Windows \texttt{MoveFileEx}}: by default it refuses to
+      overwrite an existing destination, and even with
+      \texttt{MOVEFILE\_REPLACE\_EXISTING} the replace can fail with a sharing
+      violation while another handle holds the destination open --- a failure
+      mode POSIX \texttt{rename} does not have. Out of scope with Windows.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] Publication, replacement, and the concurrent-writer race all
+      reduce to one atomic step: the last rename wins, and readers of the old
+      object are undisturbed.
+    \item[+] Atomicity follows from placement alone; no deployment setting
+      can break it.
+    \item[--] A crash leaves named temporaries behind, which a later scan must
+      reclaim (\reqref{ADR-STORAGE.RECLAIM-01}), and those temporaries share a
+      directory with canonical names (\reqref{SDS-LAYOUT.SHARDING-01}).
+    \item[--] POSIX-only.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-01}{Specify the temporary's naming
+  and placement, and the completion sequence that ends in the rename.}
+
+  \refine{ADR-STORAGE.OBJECTFILE-01}
+  \satisfy{FRE-COMPAT.CONCURRENT-01}
+  \satisfy{FRE-COMPLIANCE.INCOMPLETE-01}
+  \satisfy{FRE-COMPLIANCE.REPLACE-01}
+  \satisfy{FRE-COMPLIANCE.READERISOLATION-01}
+  \trace{ADR-STORAGE.RECLAIM-01}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.WRITERID-01}[draft][designConstraint]{Writer identity in temp names}
+
+  \localreqdiagram*{adrwriterid01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} Each store writes a named temporary
+  (\reqref{ADR-STORAGE.ATOMICPUBLISH-01}) that must never collide with
+  another writer's, even across a restart, and a crash's leftover
+  temporaries must be reclaimed by the first process start after their writer
+  stopped (\reqref{FRE-COMPAT.STARTRECLAIM-01}) --- without ever removing
+  one a live writer, such as a hot-upgrade peer
+  (\reqref{FRE-COMPAT.HOTUPGRADE-01}), still depends on. A reclaiming scan
+  therefore has to tell, from a temporary's name alone, whether its writer
+  could still be running. A process ID alone cannot: IDs are reused, and a
+  cache process running as PID~1 in a container gets the same ID on every
+  start.
+
+  \textbf{Decision:} Give each backend instance a \emph{lease}: a file under
+  the cache root, \texttt{writers/<pid>-<nonce>.lock}, locked with
+  \texttt{flock} for as long as the instance lives, where \texttt{<nonce>} is
+  a random 64-bit value. Name each temporary after it: the object's hash, the
+  lease's identity \texttt{<pid>-<nonce>}, the instance's own store counter,
+  then the transient extension. A temporary's writer is considered possibly running
+  exactly when its lease exists and its lock is held; the kernel releases a
+  lock when its holder's descriptors close, a crash
+  included.\footnote{\href{https://man7.org/linux/man-pages/man2/flock.2.html}{Linux
+  manual page: \texttt{flock(2)}}: a lock created by \texttt{flock} is
+  associated with an open file description, and is released by an explicit
+  unlock ``or when all such file descriptors have been closed''.} The nonce
+  makes the identity unique; the PID only tells an operator which process
+  holds the lease. A lease is created under a staging name, locked, and only
+  then renamed into place, so a scan never finds an unlocked lease under its
+  final name while its writer lives; the restart-time scan removes the
+  leases of writers that have stopped. A temporary is created exclusively,
+  so a name collision is detected rather than silently reusing another
+  writer's file. All processes sharing one cache directory must run on one
+  host, with the directory on a local file system, so that each sees the
+  others' locks; this is a deployment constraint the deliverable documents.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{PID only, tested with \texttt{kill(pid, 0)}}: the earliest
+      design. Rejected: a reused PID makes a stopped writer look alive, and
+      with PID~1 in containers every crash leftover looks alive forever and
+      collides with the next process's temporaries once its counter restarts;
+      \texttt{EPERM} also leaves liveness ambiguous.
+    \item \emph{The writer's process instance}: a token of the host's boot
+      identifier, the PID, and the process's start time, which a scan
+      compares with the process's \texttt{/proc} entry. The previous
+      decision. Rejected: it depends on Linux's \texttt{/proc} and boot
+      identifier, and every process sharing a directory must run in one PID
+      namespace, which excludes containers on one host sharing a volume.
+    \item \emph{A lock on each temporary}: the writer locks its temporary for
+      the life of the store and the scan tests that lock --- no new on-disk
+      structure. Rejected: a temporary exists unlocked between its creation
+      and its lock, which only a minimum-age rule could cover, and every
+      store pays for one more lock; a lease is locked once, before its
+      instance creates any temporary.
+    \item \emph{A random name, reclaimed once older than a threshold}:
+      rejected --- it ties correctness to a timeout that a long, slow upstream
+      body can always exceed.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] A stopped writer's leftovers --- a crash's, a killed process's, or
+      an earlier boot's --- are recognised at the first scan, and no reused
+      PID can make a stopped writer look alive.
+    \item[+] Two writers can never share a temporary name.
+    \item[+] No dependency on \texttt{/proc}, a boot identifier, or a PID
+      namespace: processes in separate PID namespaces on one host may share a
+      cache directory.
+    \item[--] A new on-disk structure (\reqref{HLR-SCOPE.V1-01}): one empty
+      lease per running instance, in a directory of its own, which the
+      restart-time scan cleans up.
+    \item[--] A lease outlives its instance until the next restart-time scan.
+    \item[--] The cache directory must be on a local file system. On NFS,
+      Linux emulates \texttt{flock} with POSIX record locks, which never
+      conflict within one process and are all released when the process
+      closes any descriptor of the file: a scan would take its own
+      process's lease for a stopped writer's.
+    \item[--] Temporary names grow longer.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-01}{Specify the temporary name
+  format and exclusive creation, including what happens on a collision.}
+  \reqexpect{refine}{FDS-STORAGE.RECLAIM-01}{Specify the liveness test the
+  scan applies to a temporary's writer (its lease's lock), the removal of
+  stopped writers' leases, and the deployment constraint.}
+
+  \refine{ADR-STORAGE.ATOMICPUBLISH-01}
+  \satisfy{FRE-COMPAT.STARTRECLAIM-01}
+  \trace{FRE-COMPAT.CONCURRENT-01}
+  \trace{FRE-COMPAT.HOTUPGRADE-01}
+  \trace{ADR-STORAGE.RECLAIM-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.PUBLISH-01}[draft][functionalRequirement]{Atomic publication via rename}
+
+  \localreqdiagram*{fdspublish01}{\reqid}{\reqdesc}
+
+  \textbf{The writer's lease.} When the backend is constructed, it shall
+  create its lease (\reqref{ADR-STORAGE.WRITERID-01}) under the cache root
+  as \texttt{writers/<pid>-<nonce>.lock.new}, exclusively, take an exclusive
+  \texttt{flock} on it, and rename it to \texttt{writers/<pid>-<nonce>.lock},
+  choosing a new nonce if the rename finds the file gone. It holds the lock,
+  with the file open, for as long as it lives.
+
+  \textbf{Opening a store.} When a store begins, the backend shall create the
+  store's \emph{per-writer temporary} exclusively --- failing rather than
+  opening an existing file --- in the same directory as the object's
+  canonical name (\reqref{SDS-LAYOUT.SHARDING-01}), so the final rename is
+  atomic by construction (\reqref{ADR-STORAGE.ATOMICPUBLISH-01}). The
+  canonical name is the object's name as \reqref{SDS-LAYOUT.SHARDING-01}
+  defines it: the hex-encoded combined hash of the cache
+  key,\footnote{\pgsrc{pingora-cache/src/key.rs}{90}{\texttt{CacheHashKey::combined}}.}
+  or, for a key with a user tag, a hash of that hash and the tag. The
+  temporary's name appends the writer identity
+  \reqref{ADR-STORAGE.WRITERID-01} decides, the instance's own write
+  counter, and the transient extension:
+  \texttt{<hash>.<pid>-<nonce>.<counter>.tmp}. Here
+  \texttt{<pid>-<nonce>} names the lease of the backend instance writing it
+  --- its process ID in decimal and a random 64-bit value in sixteen
+  hexadecimal digits --- and \texttt{<counter>}, in decimal, is incremented
+  for every store the instance opens. Each instance's identity keeps its
+  names apart from every other instance's, and the counter keeps the
+  instance's own writers of one key apart --- the cache lock is optional, and
+  its age timeout lets a new writer start while a previous one may still be
+  writing (\reqref{FRE-COMPAT.CONCURRENT-01}) --- just as the stock
+  \texttt{MemCache} keys its in-flight writes by a per-writer
+  identifier.\footnote{\pgsrc{pingora-cache/src/memory.rs}{364}{\texttt{MemCache::get\_miss\_handler}}
+  assigns each new write its own incrementing id and inserts it into the
+  per-key map alongside any other writes already in flight.} If exclusive
+  creation reports that the name exists, the backend shall advance the
+  counter and retry.
+
+  The backend shall then write the record header, key, and metadata region
+  (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and append each body chunk as
+  \texttt{write\_body} delivers it, folding it into a running CRC-32C unless
+  the build leaves out the \texttt{body-crc} feature
+  (\reqref{ADR-PERSISTENCE.DURABILITY-01}). While the temporary grows it is
+  also the read source for streaming partial hits, as
+  \reqref{FDS-STORAGE.PARTIAL-01} specifies.
+
+  \textbf{Write-through.} The backend shall write each chunk to the
+  temporary before its \texttt{write\_body} call returns, holding no body
+  bytes beyond the chunk being written (\reqref{FRE-COMPAT.UNSIZED-01}).
+  Only then does the valid length advance, so a partial-hit reader, which
+  sees only bytes already in the file, is woken as soon as the chunk is
+  there (\reqref{FDS-STORAGE.PARTIAL-01}).
+
+  \textbf{Publishing.} WHEN a store completes, \texttt{finish} shall, in
+  order: patch \texttt{body\_len} and \texttt{body\_crc}, recompute
+  \texttt{header\_crc}, synchronise the temporary's data to stable storage
+  (\reqref{ADR-PERSISTENCE.DURABILITY-01}), and rename the temporary over the
+  canonical name, dropping the suffix, while holding the key's publication
+  lock (\reqref{FDS-STORAGE.METAUPDATE-01}). The shard directory is not
+  synchronised afterwards. The record the rename replaces is held open
+  across it and closed last, once the lock is released: closing it frees
+  its storage, which can take a long time for a large record.
+  \texttt{finish} shall report the record size --- the published
+  file's full length --- as the created
+  size,\footnote{\pgsrc{pingora-cache/src/storage.rs}{363}{\texttt{HandleMiss::finish}}
+  returns a \pgsrc{pingora-cache/src/storage.rs}{346}{\texttt{MissFinishType}}.}
+  which \texttt{HttpCache} admits to the eviction manager
+  (\reqref{FRE-COMPAT.EVICTION-01}). The rename is the object's \emph{durable
+  publication} --- the point at which it becomes visible by name to a scan, a
+  restart, or a peer process --- not the first moment it can be read, and an
+  incomplete store therefore never becomes visible under the canonical name
+  (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}). Once the backend is read-only
+  (\reqref{FDS-COMPAT.READONLY-01}), \texttt{finish} instead removes the
+  temporary rather than renaming it, while still reporting success, so the
+  draining process's request completes normally. WHEN an invalidating purge
+  has ended the store (\reqref{FDS-STORAGE.PURGE-01}), \texttt{finish}
+  shall likewise remove the temporary rather than rename it, deciding under
+  the publication lock the purge marked the store under, and shall report
+  an error, so that \texttt{HttpCache} admits nothing to its eviction
+  manager and lets the requests waiting on its cache lock
+  retry.\footnote{\pgsrc{pingora-cache/src/lib.rs}{1097}{\texttt{HttpCache::finish\_miss\_handler}}
+  releases its cache lock as a transient error when \texttt{finish} fails,
+  and returns before admitting the entry
+  (\pgsrc{pingora-cache/src/lib.rs}{1105}{L1105}).}
+
+  \textbf{Failure and abort.} IF a write, the synchronisation, or the rename
+  fails during a store, THEN the \texttt{write\_body} or \texttt{finish} call
+  in progress shall return that error (\reqref{FRE-COMPAT.WRITEFAIL-01}), and
+  the store is treated as aborted from then on. WHEN a store ends without
+  being published --- after such an error, after an upstream failure or
+  cancellation in which \texttt{HttpCache} drops the miss handler, once the
+  backend is read-only, or once a purge has ended the store --- the backend
+  shall unlink the temporary no later than when the
+  miss handler is dropped (\reqref{FRE-COMPAT.ABORTSPACE-01}). Its own handle
+  on the temporary stays open across the unlink, so the unlink removes only
+  the name, and it closes that handle on the blocking pool
+  (\reqref{FDS-STORAGE.EXECUTOR-01}): the close frees the storage, which
+  can take a long time for a large temporary. A partial-hit
+  reader still holding the temporary open is unaffected by the unlink; how its
+  stream ends is specified by \reqref{FDS-STORAGE.PARTIAL-01}.
+
+  \textbf{Isolation and replacement.} Same-key writers stay isolated under
+  this scheme: each has its own temporary, so no writer's bytes are ever
+  interleaved with another's (\reqref{FRE-COMPAT.CONCURRENT-01}), and a
+  temporary abandoned by a crash is identifiable by its extension, never
+  served or promoted, and is reclaimed by the restart-time scan
+  (\reqref{FDS-STORAGE.RECLAIM-01}, \reqref{FRE-COMPAT.STARTRECLAIM-01}). A
+  replacement store (\reqref{FRE-COMPLIANCE.REPLACE-01}) is just another
+  per-writer temporary racing to publish under the same canonical name;
+  convergence on a single winner falls out of last-rename-wins, and a reader
+  that already opened the outgoing object keeps reading it to completion
+  undisturbed, since a rename never invalidates a file descriptor already
+  open on the old name. A peer process observes an object only at its
+  durable publication.
+
+  Figure~\ref{fig:fds-publish-seq} drills into the \texttt{get\_miss\_handler}
+  / \texttt{write\_body} / \texttt{finish} calls that Figure~\ref{fig:cache-miss-seq}
+  shows as opaque calls to \texttt{Storage}, detailing what this backend does
+  inside each one.
+
+  \begin{figure}[H]
+    \centering
+    \begin{adjustbox}{max width=\textwidth}
+    \begin{sequencediagram}
+      \newinst[0.0]{HttpCache}{HttpCache}
+      \newinst[3.2]{Storage}{Storage}
+      \newinst[5.1]{Follower}{Follower}
+      \begin{call}{HttpCache}{get\_miss\_handler(key, meta)}{Storage}{MissHandler}
+        \postlevel
+        \postlevel
+        \postlevel
+        \begin{callself}{Storage}{{\small \shortstack{create per-writer temporary exclusively;\\write header + key + metadata region;\\register the in-flight write}}}{}
+        \end{callself}
+      \end{call}
+      \begin{sdalt}{loop}{[for each chunk]}
+        \begin{call}{HttpCache}{write\_body(chunk, eof)}{Storage}{}
+          \postlevel
+          \postlevel
+          \begin{callself}{Storage}{{\small \shortstack{append to temporary; update body CRC;\\advance valid length; wake readers}}}{}
+          \end{callself}
+        \end{call}
+        \begin{call}{Follower}{read\_body() (concurrent partial hit)}{Storage}{chunk}
+        \end{call}
+      \end{sdalt}
+      \begin{call}{HttpCache}{finish()}{Storage}{record size}
+        \postlevel
+        \postlevel
+        \postlevel
+        \begin{callself}{Storage}{{\small \shortstack{patch body\_len, body\_crc, header\_crc;\\fdatasync temporary;\\rename over canonical name}}}{}
+        \end{callself}
+      \end{call}
+    \end{sequencediagram}
+    \end{adjustbox}
+    \caption{Publication sequence, drilling into the calls
+    Figure~\ref{fig:cache-miss-seq} shows opaque: \texttt{get\_miss\_handler}
+    creates the per-writer temporary, writes its header, key, and metadata
+    region, and registers the write for partial hits
+    (\reqref{FDS-STORAGE.PARTIAL-01}); each \texttt{write\_body} call appends
+    a chunk and advances the valid length a concurrent \texttt{Follower}
+    streams from; and \texttt{finish} patches the header, synchronises the
+    temporary, and renames it over the canonical name --- the object's
+    durable publication --- returning the record size.}\label{fig:fds-publish-seq}
+  \end{figure}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{IMP}
+
+  \refine{ADR-STORAGE.OBJECTFILE-01}
+  \refine{ADR-STORAGE.ATOMICPUBLISH-01}
+  \refine{ADR-STORAGE.WRITERID-01}
+  \refine{ADR-PERSISTENCE.DURABILITY-01}
+  \satisfy{FRE-COMPAT.CONCURRENT-01}
+  \satisfy{FRE-COMPLIANCE.INCOMPLETE-01}
+  \satisfy{FRE-COMPLIANCE.REPLACE-01}
+  \satisfy{FRE-COMPLIANCE.READERISOLATION-01}
+  \satisfy{FRE-COMPAT.WRITEFAIL-01}
+  \satisfy{FRE-COMPAT.ABORTSPACE-01}
+  \satisfy{FRE-COMPAT.UNSIZED-01}
+  \trace{FDS-STORAGE.PARTIAL-01}
+  \trace{SDS-LAYOUT.SHARDING-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.PARTIAL-01}[draft][functionalRequirement]{Streaming partial hits}
+
+  \localreqdiagram*{fdspartial01}{\reqid}{\reqdesc}
+
+  \textbf{In-flight registry.} The file system does not signal appends, so
+  partial hits need coordination beside the file. The backend shall keep, in
+  process memory, a registry of the stores in flight, keyed by the object's
+  combined hash; for each store it holds the temporary's path, the object's
+  \texttt{CacheMeta}, the valid body length written so far, a notification
+  channel, and the order in which the store opened. A store enters the
+  registry when \texttt{get\_miss\_handler} opens its temporary
+  (\reqref{FDS-STORAGE.PUBLISH-01}), and
+  leaves it when the store completes
+  --- published, or removed once the backend is read-only or an invalidating
+  purge has ended it --- or aborts. An invalidating purge marks the key's
+  stores in flight as ended (\reqref{FDS-STORAGE.PURGE-01}); they stay in the
+  registry until they complete or abort. The
+  backend's \texttt{support\_streaming\_partial\_write}
+  shall return \texttt{true} (\reqref{FRE-COMPAT.STREAMFLAG-01}).
+
+  \textbf{Lookup order.} WHEN \texttt{lookup} is called, the backend shall
+  first consult the registry. If one or more stores of the key that no
+  invalidating purge has ended are in flight, it shall return a partial hit
+  backed by the most recently opened of them; otherwise it shall look up the
+  published record as \reqref{SDS-LAYOUT.OBJECTFILE-01} specifies. The
+  request writing a store reads its body back through a lookup that names
+  the store by its streaming write
+  tag;\footnote{\pgsrc{pingora-cache/src/storage.rs}{166}{\texttt{Storage::lookup\_streaming\_write}},
+  which \pgsrc{pingora-cache/src/lib.rs}{1031}{\texttt{HttpCache::set\_miss\_handler}}
+  calls with the tag of the store it has just opened.} that lookup shall be
+  answered with the store it names, or with nothing, and with the store even
+  once a purge has ended it.
+
+  \textbf{Partial-hit readers.} A partial hit's reader opens its own
+  descriptor on the store's temporary and delivers the bytes up to the valid
+  length, then waits on the store's notification channel. WHEN
+  \texttt{write\_body} appends a chunk, the backend shall advance the valid
+  length and wake every reader of that store before \texttt{write\_body}
+  returns, so that each reader can deliver the chunk within the latency bound
+  \reqref{FRE-COMPAT.STREAMDELIVERY-01} sets. WHEN the store completes ---
+  whether it is published, or removed once the backend is read-only or a
+  purge has ended it --- each
+  reader shall
+  deliver the remaining bytes and end normally
+  (\reqref{FRE-COMPAT.STREAMEND-01}); its descriptor stays valid across the
+  rename and across the removal. WHEN the store aborts, each reader shall end
+  its stream with an error, never a clean end of body
+  (\reqref{FRE-COMPLIANCE.PARTIALABORT-01}). A partial hit does not support
+  seeking and, like the stock backend's, counts no eviction
+  access.\footnote{\pgsrc{pingora-cache/src/memory.rs}{211}{\texttt{should\_count\_access}}
+  returns \texttt{false} for the stock backend's partial reads.}
+
+  \textbf{Scope.} The registry belongs to one process. A peer process ---
+  such as the other side of a hot upgrade --- observes an object only at its
+  durable publication (\reqref{ADR-STORAGE.ATOMICPUBLISH-01}).
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{IMP}
+
+  \refine{ADR-STORAGE.OBJECTFILE-01}
+  \satisfy{FRE-COMPAT.STREAMFLAG-01}
+  \satisfy{FRE-COMPAT.STREAMING-01}
+  \satisfy{FRE-COMPAT.STREAMDELIVERY-01}
+  \satisfy{FRE-COMPAT.STREAMEND-01}
+  \satisfy{FRE-COMPLIANCE.PARTIALABORT-01}
+  \trace{FDS-STORAGE.PUBLISH-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.METAUPDATE-01}[draft][functionalRequirement]{Metadata update: in place or withdrawn}
+
+  \localreqdiagram*{fdsmetaupdate01}{\reqid}{\reqdesc}
+
+  Each object's metadata sits in a region of its record, right after the key
+  and ahead of the body (\reqref{ADR-STORAGE.OBJECTFILE-01}), whose capacity
+  the record's header holds (\reqref{SDS-LAYOUT.OBJECTFILE-01}). Unlike the body, whose length is
+  unknown until the stream ends (\reqref{FRE-COMPAT.UNSIZED-01}), the
+  metadata's exact size is already known when the record is created ---
+  \texttt{CacheMeta} is fully serialised at that point --- so the region
+  reserves exactly that size plus a \emph{configurable} amount of growth
+  headroom beyond it --- 512 bytes by default
+  (\reqref{SDS-LAYOUT.OBJECTFILE-01}) --- to anticipate a later metadata
+  update. How much
+  headroom to reserve is deployment-tunable, trading reserved-but-possibly-unused
+  space against how often a later update fits in place; a
+  deployment configured with zero headroom simply withdraws the record, as
+  described below, on every metadata change that grows it, rather than
+  needing a separate mechanism for it.
+
+  A metadata update (\reqref{FRE-COMPLIANCE.REVALIDATION-01}) whose new
+  segments still fit the region shall be applied
+  in place: the segments are rewritten within the region and the record's recorded
+  lengths and checksums updated, without touching the body and without
+  synchronising to stable storage (\reqref{ADR-PERSISTENCE.DURABILITY-01}).
+
+  The backend shall open and read the stored record, decide which of the two
+  paths applies, and write the new metadata in place or withdraw the record,
+  as described below, all while holding the key's
+  \emph{publication lock}. Every change that replaces
+  or removes the key's record --- a store's rename, a purge's
+  or the reclaim scan's unlink --- holds that lock too, so the update works on
+  the record the key holds once the lock is taken. A record opened before the
+  lock could lose its name in between, and the update would change a file no
+  lookup reads any more, yet report success. Reading outside that lock would
+  let one update observe another's region write half-done. An update that
+  read a torn region could not distinguish a racing writer from a damaged
+  record, and would report a perfectly healthy object as absent
+  (\reqref{FRE-COMPLIANCE.METAABSENT-01}) rather than updating it. A
+  \emph{reader} re-reads instead, and takes the lock only for a last read of
+  a record whose checksums kept failing, which then finds it whole
+  (\reqref{SDS-LAYOUT.OBJECTFILE-01}).
+
+  Before either path, still holding the lock, the backend shall check that
+  the record holds the response the update freshens. \texttt{pingora-cache}
+  gives the new metadata the creation time of the response its \texttt{304}
+  validated,\footnote{\pgsrc{pingora-cache/src/lib.rs}{1200}{\texttt{HttpCache::revalidate\_cache\_meta}}
+  copies the stale response's \texttt{created} into the new metadata.} so a
+  stored response created at another time has replaced that one since the
+  lookup that began the revalidation. \texttt{pingora-cache} permits that
+  once a writer outlives its cache lock,\footnote{\pgsrc{pingora-cache/src/lock.rs}{110}{\texttt{CacheLock::lock}}
+  hands a new write permit to a waiter once the holder's lock has passed its
+  age timeout.} or when no cache lock is configured. The update shall then not
+  be applied: \texttt{update\_meta} reports \texttt{false}, and the newer
+  response stands whole (\reqref{FRE-COMPLIANCE.REPLACE-01}). Applied, it
+  would pair the validated response's header fields with the newer response's
+  body, which \rfcsec{9111}{4.3.4} rules out: a \texttt{304} whose strong
+  validators no stored response shares must not update any.
+
+  When an update's new segments no longer fit the region's capacity ---
+  whether because the growth is unusually large or because no headroom was
+  configured --- the backend shall withdraw the record instead, so that the
+  next request fetches the object again: it rewrites only the record's
+  header, marked withdrawn (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and reports
+  the update not applied. Every lookup then misses, and Pingora fetches the
+  object from the origin and stores it, through a store whose region is
+  sized for the new metadata and whose rename replaces the file
+  (\reqref{FDS-STORAGE.PUBLISH-01}). The response that triggered the update
+  is still served, from the record its hit handler holds open. Until the
+  store replaces it, the withdrawn file keeps its length, so the eviction
+  manager, which the backend never calls (\reqref{FRE-COMPAT.EVICTION-01}),
+  keeps counting the space it takes; an eviction or a purge removes it as it
+  removes any record, and the restart procedure reclaims it
+  (\reqref{FDS-STORAGE.RECLAIM-01}). The body is neither read nor moved. A
+  withdrawal whose header write fails reports an error and leaves the
+  record as it was. A withdrawal is not synchronised to stable storage
+  either (\reqref{ADR-PERSISTENCE.DURABILITY-01}): after a host crash the
+  record is withdrawn, as it was, or torn, which a reader rejects. Moving
+  outgrown metadata after the body instead, which would spare the fetch, is
+  deferred to a later version (\reqref{ADR-STORAGE.METAMOVE-01}).
+
+  \texttt{update\_meta} reports \texttt{true} once the update is written in
+  place, and so visible to lookups, and \texttt{false} when it is not
+  applied: a newer response has replaced the one it validated, or the
+  record was withdrawn.
+  The publication lock is a per-key lock
+  in process memory, which a store's final rename
+  (\reqref{FDS-STORAGE.PUBLISH-01}), a purge's unlink
+  (\reqref{FDS-STORAGE.PURGE-01}), the reclaim scan's unlink of a canonical
+  record (\reqref{FDS-STORAGE.RECLAIM-01}), and the restart procedure's
+  admission checks (\reqref{FDS-EVICTION.STARTUP-01}) also take, so none can
+  land between a confirmation and the action that depends on it; a lookup
+  takes it only for the last read described above. Across processes, only
+  the hot-upgrade window before the outgoing backend becomes read-only
+  (\reqref{FDS-COMPAT.READONLY-01}) lets two backends write, and the residual
+  race there is accepted. Once the backend is read-only, \texttt{update\_meta}
+  fails with an error on either path (\reqref{FRE-COMPAT.HOTUPGRADE-01}).
+  With a non-zero configured headroom,
+  the common freshening after a \texttt{304} (\texttt{Date}- and
+  \texttt{Age}-scale changes) is small enough to take the in-place path;
+  growth beyond whatever headroom is configured always withdraws the
+  record.
+
+  A stale hit's revalidation succeeds when the origin returns a
+  \texttt{304} (\reqref{FRE-COMPLIANCE.REVALIDATION-01}).
+  \texttt{HttpProxy}'s \texttt{revalidate\_or\_stale} merges the
+  \texttt{304} into the cached header and calls into \texttt{HttpCache}'s
+  metadata-update handling, which resolves to one of the two execution
+  paths above.
+
+  When a \texttt{CacheLock} is configured (it is an optional collaborator),
+  \texttt{HttpCache} already holds the key's write lock by this point:
+  \texttt{cache\_lookup} takes it as soon as the hit is first found stale,
+  well before the upstream request even starts, so that other requests
+  for the same key queue behind this one leader. The lock is released
+  only after the metadata-update call returns, whether it succeeds or
+  fails.\footnote{\pgsrc{pingora-cache/src/lib.rs}{1539}{\texttt{HttpCache::cache\_lookup}}
+  takes the lock when storage returns nothing; the stale path does so in
+  \pgsrc{pingora-cache/src/lib.rs}{862}{\texttt{cache\_found}}.
+  \pgsrc{pingora-proxy/src/proxy_cache.rs}{774}{\texttt{HttpProxy::revalidate\_or\_stale}}
+  merges the response
+  (\pgsrc{pingora-proxy/src/proxy_cache.rs}{808}{\texttt{revalidate\_merge\_header}})
+  and calls
+  \pgsrc{pingora-proxy/src/proxy_cache.rs}{825}{\texttt{revalidate\_cache\_meta}};
+  \pgsrc{pingora-cache/src/lib.rs}{1187}{\texttt{HttpCache::revalidate\_cache\_meta}}
+  calls \pgsrc{pingora-cache/src/lib.rs}{1218}{\texttt{update\_meta}} and
+  releases the lock regardless of the result
+  (\pgsrc{pingora-cache/src/lib.rs}{1230}{L1230}).}
+
+  \texttt{update\_meta} cannot manipulate the lock.\footnote{\pgsrc{pingora-cache/src/storage.rs}{235}{Its signature}
+  is \texttt{(key, meta, trace) -> Result<bool>}: no reference to the
+  lock is passed in.} It shall make the update, or the withdrawal, visible
+  to lookups before returning. \texttt{HttpCache} releases the lock as soon
+  as this call returns (Figure~\ref{fig:fds-metaupdate-seq}), so every
+  lookup after it, the followers queued behind the lock included, must find
+  the update, or miss. On either path the change is complete when it is
+  visible.
+
+  Lookups do not wait for the lock: a fresh hit never takes it, and a
+  stale response may be served while a background subrequest revalidates
+  it.\footnote{Under stale-while-revalidate, the lock writer in
+  \pgsrc{pingora-proxy/src/proxy_cache.rs}{243}{\texttt{HttpProxy::proxy\_cache}}
+  hands its write lock to a background subrequest and serves the stale
+  object, and a request finding the key locked serves stale too
+  (\pgsrc{pingora-proxy/src/proxy_cache.rs}{233}{L233}) instead of
+  waiting.} A
+  concurrent lookup can therefore read the object while either path runs.
+  The in-place path writes into the region a lookup may be reading, and a
+  withdrawal into the header; a lookup that catches either mid-write is
+  protected by the read-side validation and retry that
+  \reqref{SDS-LAYOUT.OBJECTFILE-01} specifies, so it observes the
+  pre-update metadata, the post-update metadata, or a miss once the record
+  is withdrawn, never a mixture. The body is untouched on either path.
+
+  A withdrawal costs one header write, whatever the body's size, and then
+  one fetch of the whole object from the origin. A herd of revalidations
+  withdraws the record once: the first update that outgrows the region
+  withdraws it, and the next ones find no object stored, which they report
+  as an update of an absent key does (\reqref{FRE-COMPLIANCE.METAABSENT-01}).
+  The configurable headroom above keeps withdrawals rare, and they are
+  observable, as \reqref{FDS-OBSERVABILITY.HEADROOM-01} specifies.
+
+  Figure~\ref{fig:fds-metaupdate-seq} shows the whole sequence, using the
+  same \texttt{HttpProxy}, \texttt{HttpCache}, \texttt{CacheLock}, and
+  \texttt{Storage} structure as the cache-miss sequence in the System
+  Context chapter (Figure~\ref{fig:cache-miss-seq}).
+
+  \begin{figure}[H]
+    \centering
+    \begin{adjustbox}{max width=\textwidth}
+    \begin{sequencediagram}
+      \newinst[0.0]{HttpProxy}{HttpProxy}
+      \newinst[5.2]{HttpCache}{HttpCache}
+      \newinst[2.8]{CacheLock}{CacheLock}
+      \newinst[0.5]{Storage}{Storage}
+      \begin{call}{HttpProxy}{cache\_lookup()}{HttpCache}{stale hit}
+        \begin{call}{HttpCache}{lookup(key)}{Storage}{stale}
+        \end{call}
+        \begin{call}{HttpCache}{lock(key, stale)}{CacheLock}{leader (write permit)}
+        \end{call}
+      \end{call}
+      \postlevel
+      \begin{callself}{HttpProxy}{{\small fetch upstream; receives 304 (Not Modified)}}{}
+      \end{callself}
+      \postlevel
+      \begin{callself}{HttpProxy}{revalidate\_or\_stale(task)}{}
+        \begin{call}{HttpProxy}{revalidate\_merge\_header(resp)}{HttpCache}{merged headers}
+        \end{call}
+        \begin{call}{HttpProxy}{revalidate\_cache\_meta(new\_meta)}{HttpCache}{}
+          \begin{sdalt}{alt}{[new segments fit the metadata region]}
+            \begin{call}{HttpCache}{update\_meta(key, meta)}{Storage}{true: updated in place}
+            \end{call}
+          \sdpart{[new segments do not fit]}
+            \begin{call}{HttpCache}{update\_meta(key, meta)}{Storage}{false: withdrawn}
+              \postlevel
+              \postlevel
+              \postlevel
+              \begin{callself}{Storage}{{\small \shortstack{under the publication lock: rewrite the header,\\marked withdrawn; the next lookup misses,\\and the object is fetched again}}}{}
+              \end{callself}
+            \end{call}
+          \end{sdalt}
+          \begin{call}{HttpCache}{release(key, permit, Done)}{CacheLock}{}
+          \end{call}
+        \end{call}
+      \end{callself}
+    \end{sequencediagram}
+    \end{adjustbox}
+    \caption{Metadata-update sequence, in the same \texttt{HttpProxy},
+    \texttt{HttpCache}, \texttt{CacheLock}, and \texttt{Storage}
+    structure as Figure~\ref{fig:cache-miss-seq}. The write lock is
+    already held when \texttt{revalidate\_or\_stale} begins and is
+    released only after \texttt{update\_meta} returns, whichever path it
+    took. On either path a header write, made last, commits the change, and
+    the body stays where it is.}\label{fig:fds-metaupdate-seq}
+  \end{figure}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Extend this TC to also
+  verify FDS-STORAGE.METAUPDATE-01: that an update written in place is
+  visible to lookups when update_meta returns; that metadata outgrowing its
+  region withdraws the record, which lookups then miss while a client
+  already reading it gets its whole body; that the next store replaces a
+  withdrawn record; that a withdrawal whose header write fails leaves the
+  record as it was; that an update applies only to the response it
+  validated; and that zero configured headroom withdraws the record on any
+  growth.}
+  \reqcover{satisfy}{IMP}
+
+  \refine{ADR-STORAGE.OBJECTFILE-01}
+  \refine{ADR-PERSISTENCE.DURABILITY-01}
+  \satisfy{FRE-COMPLIANCE.REVALIDATION-01}
+  \satisfy{FRE-COMPLIANCE.METAATOMIC-01}
+  \satisfy{FRE-COMPLIANCE.METAPERSIST-01}
+  \satisfy{FRE-COMPLIANCE.METAABSENT-01}
+  \trace{FDS-STORAGE.PUBLISH-01}
+  \trace{FDS-STORAGE.PURGE-01}
+  \trace{REQ-EFFICIENCY.FRAGMENTATION-01}
+\end{requirement}
+
+\begin{requirement}{FDS-OBSERVABILITY.HEADROOM-01}[draft][functionalRequirement]{Headroom-exceeded observability}
+
+  \localreqdiagram*{fdsobsheadroom01}{\reqid}{\reqdesc}
+
+  WHEN a metadata update finds that its new metadata outgrew the record's
+  reserved headroom, so that the update withdraws the record
+  (\reqref{FDS-STORAGE.METAUPDATE-01}), the backend shall log a warning and, when
+  its \texttt{metrics} feature is enabled (it is off by default,
+  \reqref{ADR-OBSERVABILITY.METRICS-01}), increase a counter:
+  \begin{itemize}
+    \item The warning, emitted through the \texttt{log} facade
+      \texttt{pingora-cache} already depends
+      on,\footnote{\pgsrc{pingora-cache/Cargo.toml}{37}{\texttt{log}} is a
+      dependency of \texttt{pingora-cache}; its own
+      \pgsrc{pingora-proxy/src/proxy_cache.rs}{828}{\texttt{warn!("revalidate\_cache\_meta failed...")}}
+      is precedent for logging a metadata-update outcome.} names the record
+      by its path, whose file name is the key's hex-encoded combined
+      hash\footnote{\pgsrc{pingora-cache/src/key.rs}{90}{\texttt{CacheHashKey::combined}}:
+      the only human-inspectable identity \texttt{Storage::update\_meta}'s
+      \texttt{CacheKey} exposes is a hash, not the original request URL.}
+      and states the headroom shortfall: how many more bytes of headroom
+      would have kept the update in place.
+    \item The counter \texttt{pingora\_durable\_meta\_headroom\_exceeded\_total},
+      registered in the \texttt{prometheus} default registry
+      (\reqref{ADR-OBSERVABILITY.METRICS-01}) without any per-key label, so
+      how often it happens is visible without per-key cardinality, is
+      increased by one. The backend registers it, at zero, when it is
+      built: a counter that appeared only with its first event could not
+      be told from one that is not served at all, and \texttt{rate()} and
+      \texttt{increase()} would miss the event that created it.
+  \end{itemize}
+  Both are emitted once the record is withdrawn, so a withdrawal
+  whose header write fails, and so did not happen, is neither logged nor
+  counted. With the \texttt{metrics} feature disabled, the counter is not
+  registered and the warning is the only record of each case. A count that
+  keeps rising tells an operator to raise the configured headroom.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{IMP}
+
+  \refine{ADR-OBSERVABILITY.METRICS-01}
+  \refine{FDS-STORAGE.METAUPDATE-01}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.METAMOVE-01}[draft][designConstraint]{Metadata moves deferred for v1}
+
+  \localreqdiagram*{adrmetamove01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} A metadata update whose new metadata outgrows the region
+  reserved ahead of the body cannot be written in place
+  (\reqref{FDS-STORAGE.METAUPDATE-01}). The backend then withdraws the
+  record: the response at hand is still served, the next request fetches
+  the object from the origin, and its store, sized for the new metadata,
+  replaces the file. That costs a fetch of the whole body, and, should the
+  origin fail before it, the stale copy that could have been served
+  instead. The configurable headroom keeps it rare, and every case is
+  observable (\reqref{FDS-OBSERVABILITY.HEADROOM-01}), so an operator can
+  raise the headroom where it is not.
+
+  \textbf{Decision:} Do not move outgrown metadata for this version. The
+  first alternative below would spare the fetch, but it changes the record
+  format and the reader's rules, and it needs the backend to tell the
+  eviction manager how much each move grows a record, which it cannot do
+  today: the manager is the framework's, and the backend holds it only during
+  its restart procedure (\reqref{FRE-COMPAT.EVICTION-01}).
+  \reqref{HLR-SCOPE.V1-01} prefers the simplest adequate design, so the
+  fetch is accepted for this version, and moving the metadata is to be
+  revisited in a later one.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Move the metadata after the body}: write the new metadata
+      into a slot appended after the end of the record, with headroom, then
+      the header that points to it. The body is never read or moved, and the
+      old metadata stays where it was, so a lookup that read the old header
+      reads it whole. It needs two more header fields, saying where the
+      metadata and the body lie; a reader that accepts a file longer than
+      its record, since a move writes its slot before its header; and a
+      report to the eviction manager of each move's growth, through
+      \texttt{EvictionManager::increment\_weight}, purging the victims it
+      returns. Deferred: those changes, for a case the headroom makes rare.
+    \item \emph{Store the object again from its own body}, through a store
+      of the key opened with the new metadata and a larger region. Rejected:
+      it copies a whole body to change its metadata, and lookups follow the
+      copy while it runs, so a purge, an expiry, or a newer store that lands
+      meanwhile is not seen until it ends.
+    \item \emph{Withdraw the record} (chosen): as the context describes.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] The record format keeps the metadata in one place, and a reader
+      checks one exact length.
+    \item[+] The eviction manager stays in step without the backend calling
+      it: a withdrawn record keeps its file, and the space the manager
+      counts for it, until a store replaces it.
+    \item[--] An update that outgrows the headroom costs a miss for the next
+      request and a fetch of the whole object from the origin.
+    \item[--] Between the withdrawal and that fetch, no stale copy is left to
+      serve should the origin fail.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqterminal[Deferred: metadata moves are not implemented for this version,
+  so nothing further refines, satisfies, or verifies this decision; revisit
+  in a later version.]
+
+  \refine{ADR-STORAGE.OBJECTFILE-01}
+  \trace{HLR-SCOPE.V1-01}
+  \trace{FDS-STORAGE.METAUPDATE-01}
+  \trace{FRE-COMPAT.EVICTION-01}
+\end{requirement}
+
+\begin{requirement}{ADR-OBSERVABILITY.METRICS-01}[draft][designConstraint]{Metrics via the prometheus crate}
+
+  \localreqdiagram*{adrmetrics01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} The backend accepts some costs rather than engineering
+  them away but makes them observable --- for example the fetch from the
+  origin that a metadata update causes when it outgrows its reserved
+  headroom (\reqref{FDS-STORAGE.METAUPDATE-01}). Aggregate counters need a metrics
+  library, and the choice decides where an operator sees them. Pingora ships an
+  HTTP application that exports the \texttt{prometheus} crate's default
+  registry,\footnote{\pgsrc{pingora-prometheus/src/lib.rs}{82}{\texttt{PrometheusHttpApp}}
+  serves \pgsrc{pingora-prometheus/src/lib.rs}{88}{\texttt{prometheus::gather()}},
+  the crate's default registry.} so registering there is what puts the backend's
+  counters in front of an operator who already scrapes Pingora.
+
+  Where that application lives changed in Pingora 0.9.0, and with it the cost of
+  this decision. Under 0.8.1 the exporter was the
+  \texttt{prometheus\_http\_app} module of \texttt{pingora-core} itself, and \texttt{prometheus} was an
+  unconditional dependency of \texttt{pingora-core}, so every build that used
+  \texttt{pingora-cache}\footnote{\pgsrc{pingora-cache/Cargo.toml}{21}{\texttt{pingora-core}}
+  is an unconditional dependency of \texttt{pingora-cache}.} already contained
+  the crate and no feature of this backend's could remove it. In 0.9.0 the
+  exporter moved to a separate \texttt{pingora-prometheus} crate and
+  \texttt{prometheus} is no longer a \texttt{pingora-core} dependency at all.
+  A build of this backend that registers metrics therefore now pulls
+  \texttt{prometheus} in on its own account. The exporter crate re-exports
+  \texttt{prometheus} for exactly this use,\footnote{\pgsrc{pingora-prometheus/src/lib.rs}{54}{``Re-export
+  of the \texttt{prometheus} crate''}: ``Use this re-export to ensure your
+  metrics are registered in the same'' registry the exporter serves;
+  \pgsrc{pingora-prometheus/src/lib.rs}{70}{\texttt{pub use prometheus}}.}
+  and no Pingora crate has a feature flag for metrics that the backend's
+  own choice could follow.
+
+  \textbf{Decision:} Register the backend's metrics with the
+  \texttt{prometheus} crate's default registry, through the
+  \texttt{prometheus} crate that \texttt{pingora-prometheus} re-exports, so
+  they appear wherever an integrator exposes the Pingora metrics --- but
+  only when the backend's \texttt{metrics} Cargo feature is enabled, which it
+  is not by default. The feature gates both the registration and the
+  dependency: with it disabled the backend neither registers metrics nor
+  links \texttt{pingora-prometheus} or \texttt{prometheus} at all. Going
+  through the exporter's re-export makes the registry the exporter's by
+  construction: the default registry is a static of the \texttt{prometheus}
+  crate, and the backend cannot resolve to a different version of it than
+  the exporter does. Enabling the feature is the same decision as running
+  that exporter, since counters nothing exports are of no use. With the
+  feature disabled, the backend registers no metrics and its warning logs
+  remain the only record of the events the metrics would have counted.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Register unconditionally, with no feature}: the simplest
+      option. Rejected: it leaves an integrator no way to keep the backend's
+      names out of a registry it manages itself, and --- since Pingora 0.9.0
+      made \texttt{prometheus} optional --- it would also force the dependency
+      on builds that do not want it.
+    \item \emph{Gate the metrics behind a feature enabled by default}: this
+      decision's previous revision. Rejected: every integrator who does not
+      run the \texttt{pingora-prometheus} exporter would carry a dependency and
+      counters nothing reads, while the events the counters measure are
+      logged regardless.
+    \item \emph{Follow a Pingora feature flag}: not available --- none of
+      the Pingora 0.9.0 crates has a metrics feature, and Cargo cannot enable
+      a feature because the integrator depends on some other crate.
+    \item \emph{Depend on \texttt{prometheus} directly}: the previous
+      revision did. Rejected: it registers into the exporter's registry only
+      while both crates happen to resolve to the same \texttt{prometheus}
+      version, which nothing checks.
+    \item \emph{The \texttt{metrics} facade crate}, leaving the exporter to
+      the integrator: rejected --- metrics recorded through it do not reach
+      the \texttt{prometheus} default registry that the Pingora exporter
+      serves without an additional bridge, and it would replace one optional
+      dependency with a different one plus that bridge.
+    \item \emph{Logs only, no counters}: rejected --- a warning per event
+      shows individual occurrences, but not the aggregate volume the
+      design needs visible without per-key cardinality.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] With the feature on, metrics appear alongside the Pingora
+      metrics, in the registry the \texttt{pingora-prometheus} exporter
+      serves, by construction.
+    \item[+] By default the backend links neither \texttt{pingora-prometheus}
+      nor \texttt{prometheus}, and registers nothing.
+    \item[--] The counters exist only where an integrator enables the
+      feature; elsewhere the costs they measure are visible in the warning
+      logs alone.
+    \item[--] With the feature on, the deliverable depends on
+      \texttt{pingora-prometheus}, which brings the exporter's code along with
+      the re-export, even for an integrator who serves the registry another
+      way.
+    \item[--] The metrics live in a process-global registry, so their names
+      must not collide with those of the integrator or of Pingora.
+    \item[--] Two build configurations to keep compiling and tested.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-OBSERVABILITY.HEADROOM-01}{Specify each metric
+  emitted when new metadata outgrows its record's headroom --- name, type,
+  unit, and when it changes --- the accompanying warning log, and what
+  remains when the metrics feature is disabled.}
+
+  \satisfy{HLR-SCOPE.V1-01}
+  \trace{FDS-STORAGE.METAUPDATE-01}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.EXPIRE-01}[draft][designConstraint]{Expire by rewriting the metadata}
+
+  \localreqdiagram*{adrexpire01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{FRE-COMPAT.EXPIRE-01} asks that an expired object
+  stop being served as fresh while its body stays available for a conditional
+  revalidation. \texttt{Storage::expire} supplies a default that deletes the
+  object instead, which meets the first half and discards the second.
+  Pingora is explicit that how an expiry is recorded is the backend's to
+  choose, and that rewriting the stored freshness and applying an expiry at
+  read time both satisfy the trait's
+  contract.\footnote{\pgsrc{pingora-cache/src/storage.rs}{226}{\texttt{Storage::expire}}:
+  ``How that is recorded is up to storage: rewriting the stored freshness and
+  applying it on read both satisfy the contract.''} The framework also supplies
+  the transformation itself:
+  \texttt{CacheMeta::expire\_at}\footnote{\pgsrc{pingora-cache/src/meta.rs}{800}{\texttt{CacheMeta::expire\_at}}.}
+  produces the expired metadata from the stored metadata, without touching the
+  body.
+
+  What makes the choice cheap here is that this backend already has the
+  machinery. An object's metadata sits in a region with configured growth
+  headroom, and \reqref{FDS-STORAGE.METAUPDATE-01} already specifies how to
+  replace it in place when the new segments fit the region, without reading
+  or copying the body. An expiry's new segments differ from the stored ones
+  only in the internal-metadata segment's freshness deadline --- the header
+  segment is untouched --- yet they need not be the same length.
+  \texttt{pingora-cache} serialises that segment with MessagePack, which
+  writes an integer in as few bytes as its value
+  allows,\footnote{One byte from 0 to 127, and two, three, five or nine above
+  (\href{https://github.com/msgpack/msgpack/blob/master/spec.md\#int-format-family}{MessagePack
+  specification: int format family}); the serialiser \texttt{pingora-cache}
+  uses picks the shortest form that holds the value.} and a deadline's
+  nanoseconds are one such integer. A deadline taken from an
+  \texttt{Expires} header falls on a whole
+  second,\footnote{\pgsrc{pingora-cache/src/filters.rs}{120}{\texttt{calculate\_expires\_header\_time}}
+  returns the header's date, which has no fraction of a second.} so its
+  nanoseconds take one byte, where those of an arbitrary instant nearly
+  always take five: expired at the current instant, such an object's
+  metadata grows by four bytes.
+
+  \textbf{Decision:} Implement \texttt{expire} natively, by deriving the
+  expired metadata with \texttt{expire\_at} at the start of the current
+  second and writing it in place, as \reqref{FDS-STORAGE.METAUPDATE-01}
+  writes an update that fits, rather than inheriting the deleting default.
+  \texttt{expire\_at} only ever lowers the deadline, so its seconds take no
+  more bytes than before, and a deadline on a whole second has nanoseconds
+  of zero, which take the fewest: the expired metadata is never longer than
+  the stored metadata, so it fits the region whatever headroom is left. The
+  stored body is left untouched, so the \texttt{304} that follows reuses it.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Inherit the default and delete}: the cheapest to specify and to
+      build. Rejected --- it turns every expiry into a full refetch of a body
+      the cache is still holding, which is the cost an expiring purge exists to
+      avoid; a durable backend, whose whole argument is that bodies are large
+      and worth keeping (\reqref{HLR-PERSISTENCE.DURABLE-01}), is the last place
+      to discard one.
+    \item \emph{Apply the expiry at read time from a side marker} --- a
+      tombstone file, or a flag in the record header that \texttt{lookup}
+      consults: rejected --- it adds a second on-disk thing per key for the
+      restart scan to classify and reclaim (\reqref{FDS-STORAGE.RECLAIM-01}),
+      and a header flag would have to be reconciled against the freshness the
+      metadata segment itself carries, leaving two sources of truth for one
+      question.
+    \item \emph{Expire at the current instant, and fall back when the expired
+      metadata does not fit the region}: rejected --- the fallback costs more
+      than the four bytes it is for. Withdrawing the record, as a metadata
+      update does (\reqref{FDS-STORAGE.METAUPDATE-01}), would report the
+      entry still stored while no lookup could reuse its body; removing it,
+      as the default does, reports a purge, which must then be as durable as
+      one (\reqref{FRE-COMPLIANCE.PURGEDURABLE-01}).
+    \item \emph{Keep four bytes free in every region for the expiry}: a store
+      adds them, and an update in place leaves them free. Rejected --- three
+      writers would keep an invariant that the start of the second keeps
+      within the expiry alone.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] An expiry costs one metadata region's worth of writes, never a
+      body copy, and the retained body answers the revalidating \texttt{304}.
+    \item[+] No new on-disk structure, no new reclaim class, and no new lock:
+      the operation reuses the publication lock and the in-place path
+      \reqref{FDS-STORAGE.METAUPDATE-01} already specifies.
+    \item[--] An expiry inherits that path's crash semantics: after a host crash
+      an in-place expiry reads back as the old metadata, the new metadata, or a
+      miss (\reqref{ADR-PERSISTENCE.DURABILITY-01}), so an acknowledged expiry
+      can be lost. This is weaker than the purge-acknowledgement guarantee
+      \reqref{FRE-COMPLIANCE.PURGEDURABLE-01} makes, and is why an expiry is not
+      a substitute for a purge when the object must provably stop being served.
+    \item[+] An expiry never removes an object, whatever headroom its region
+      has left.
+    \item[--] An expired object is stale from the start of the second in
+      which it was expired, so its serve-stale windows, measured from its
+      deadline, close up to a second earlier than they would from the
+      instant itself. HTTP caching works in whole
+      seconds,\footnote{\pgsrc{pingora-cache/src/meta.rs}{716}{\texttt{CacheMeta::is\_fresh}}:
+      ``HTTP cache time resolution is second''.} and Pingora itself backdates
+      the deadline of a response with no freshness lifetime by a
+      second.\footnote{\pgsrc{pingora-cache/src/filters.rs}{79}{\texttt{freshness\_ttl\_to\_time}}.}
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-STORAGE.EXPIRE-01}{Specify how a target is resolved,
+  how the expired metadata is derived and written in place, why it always
+  fits, which outcome each case reports, and how the operation behaves once
+  the backend is read-only.}
+
+  \satisfy{FRE-COMPAT.EXPIRE-01}
+  \refine{ADR-STORAGE.OBJECTFILE-01}
+  \trace{FDS-STORAGE.METAUPDATE-01}
+  \trace{FDS-STORAGE.PURGE-01}
+  \trace{ADR-PERSISTENCE.DURABILITY-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.PURGE-01}[draft][functionalRequirement]{Purge via canonical-name unlink}
+
+  \localreqdiagram*{fdspurge01}{\reqid}{\reqdesc}
+
+  A purge is keyed directly off the presented \texttt{PurgeTarget}, with
+  no lookup and no \texttt{CacheLock} (Figure~\ref{fig:purge-seq}). The target names the
+  entry to remove in one of two ways: \texttt{Active}, carrying a
+  \texttt{CompactCacheKey}, asks for whichever entry is currently active for
+  that logical key --- how \texttt{HttpCache} issues an invalidation ---
+  while \texttt{Exact}, carrying a \texttt{CacheEntryKey}, names one entry
+  completely, which is how eviction victims arrive.\footnote{\pgsrc{pingora-cache/src/storage.rs}{51}{\texttt{PurgeTarget}};
+  \pgsrc{pingora-cache/src/lib.rs}{1883}{\texttt{purge\_impl}} passes
+  \texttt{Active} and \pgsrc{pingora-cache/src/lib.rs}{1130}{the eviction loop}
+  passes \texttt{Exact}.} Because this backend assigns no entry identifiers
+  (\reqref{ADR-COMPAT.ENTRYID-01}), the two carry the same information whenever
+  the backend can act at all, and it shall resolve either --- an \texttt{Active}
+  target, or an \texttt{Exact} target whose \texttt{CacheEntryKey} is
+  \texttt{KeyOnly} --- to the canonical path of exactly that key, computed as
+  \reqref{SDS-LAYOUT.SHARDING-01} specifies, from the hex encoding of the
+  key's combined hash, just as the stock backend
+  does\footnote{\pgsrc{pingora-cache/src/memory.rs}{402}{\texttt{MemCache::purge}}
+  resolves the entry by \texttt{target.key().combined()}.} --- and shall never touch
+  any other file. An \texttt{Exact} target carrying an \texttt{Identified}
+  entry key names a generation this backend never created, so the backend
+  shall report it as not found and change nothing, as the stock backend
+  does.\footnote{\pgsrc{pingora-cache/src/memory.rs}{397}{\texttt{MemCache::purge}}
+  returns \texttt{PurgeOutcome::NotFound} for an identified exact target,
+  ``because it cannot safely match identified entries''.}
+
+  For the purge path \texttt{pingora-proxy} itself drives, that key is
+  always a primary: \texttt{HttpCache::purge} panics unless the request is
+  still in its initial \texttt{CacheKey}
+  phase,\footnote{\pgsrc{pingora-cache/src/lib.rs}{1813}{\texttt{HttpCache::purge}}
+  matches on \texttt{self.phase} and panics for any phase other than
+  \texttt{CacheKey} (\pgsrc{pingora-cache/src/lib.rs}{1844}{L1844}); only
+  \pgsrc{pingora-cache/src/lib.rs}{1564}{\texttt{cache\_vary\_lookup}} ever
+  sets a variance on the key, and it runs only from the \texttt{CacheKey} or
+  \texttt{Stale} phase of an ordinary lookup --- a call sequence a purge
+  request never enters
+  (\pgsrc{pingora-proxy/src/proxy_purge.rs}{78}{\texttt{HttpProxy::proxy\_purge}}
+  calls \texttt{purge()} directly, with no preceding lookup).} so the key it
+  purges is \texttt{to\_compact()} of the key set for the request, before any
+  lookup could narrow it to a variant slot, and its combined hash is
+  \texttt{key.primary}
+  itself\footnote{\pgsrc{pingora-cache/src/key.rs}{61}{\texttt{CacheHashKey::combined\_bin}}
+  returns \texttt{primary\_bin()} unchanged when \texttt{variance\_bin()} is
+  \texttt{None}.} (\reqref{FRE-COMPLIANCE.PURGE-01}). That is an observation
+  about this one caller, not an assumption the backend relies on: the public
+  \texttt{HttpCache::spawn\_async\_purge}\footnote{\pgsrc{pingora-cache/src/lib.rs}{1852}{\texttt{HttpCache::spawn\_async\_purge}}
+  accepts any enabled phase and purges \texttt{key.to\_compact()}, which
+  carries the variance once a \texttt{Vary} lookup has set one.} can present a
+  varianced key, and resolving by the combined hash then purges exactly that
+  variant rather than its primary.
+
+  A purge addressed to a primary never touches a \texttt{Vary} variant,
+  which lives at an unrelated shard path the primary key cannot derive
+  (\reqref{FRE-COMPLIANCE.PURGE-01}), nor a per-writer temporary for the
+  same key, which is a distinct directory entry identified by its own
+  writer-identity and \texttt{.tmp} suffix (\reqref{FDS-STORAGE.PUBLISH-01}) that a
+  purge addressed to the bare canonical name never names or opens.
+
+  The purge operation itself is an \texttt{unlink} of that canonical path,
+  performed while holding the key's publication lock
+  (\reqref{FDS-STORAGE.METAUPDATE-01}). The backend answers with a
+  \texttt{PurgeOutcome} rather than a boolean.\footnote{\pgsrc{pingora-cache/src/storage.rs}{128}{\texttt{PurgeOutcome}}.}
+  When nothing exists at that path, and no store of the key is in flight
+  for an invalidation to end (below), the backend shall report
+  \texttt{NotFound}, not an error --- \texttt{unlink}'s own \texttt{ENOENT} is
+  already exactly that signal, so
+  idempotency and the absent-key case (\reqref{FRE-COMPLIANCE.PURGEABSENT-01}) need
+  no separate bookkeeping. IF the \texttt{unlink} fails for any other
+  reason, THEN the purge shall fail with an error, leaving the record in
+  place. When the path existed, or an invalidation ended a store of the key
+  in flight, the backend shall report \texttt{Purged}, carrying no entry
+  identifier, since the backend assigns
+  none.\footnote{Returning \texttt{Purged(None)} is what makes
+  \pgsrc{pingora-cache/src/lib.rs}{1896}{\texttt{eviction.remove}} address the
+  same key-only entry the backend admitted; an identifier the backend never
+  issued would leave the entry tracked.}
+
+  An invalidation shall be answered only once it is durable
+  (\reqref{FRE-COMPLIANCE.PURGEDURABLE-01}): after releasing the lock, the
+  backend shall synchronise the shard directory to stable storage
+  (\reqref{ADR-PERSISTENCE.DURABILITY-01}), and only then report the
+  outcome. It does so also when the path did not exist: a purge made to
+  evict may have unlinked the record just before without synchronising, and
+  a crash undoing that would otherwise bring the object back after the
+  invalidation reported it absent. A shard directory that does not exist
+  has nothing to synchronise. IF that synchronisation fails, THEN the purge
+  shall fail with an error, since its answer might not survive a host
+  crash. A purge made to evict (\texttt{PurgeType::Eviction}), as
+  \texttt{HttpCache} purges the victims its eviction manager returns and as
+  the restart scan purges its own (\reqref{FDS-EVICTION.STARTUP-01}),
+  shall not synchronise: an eviction a host crash undoes brings back a valid
+  object, which the restart scan admits, and evicts again if the cache is
+  over capacity. The record the \texttt{unlink} removes is held open across
+  it and closed last, after any synchronisation and outside the lock:
+  closing it frees its storage, which can take a long time for a large
+  record. Once the backend
+  is read-only (\reqref{FDS-COMPAT.READONLY-01}), every purge shall fail with
+  an error without touching the file (\reqref{FRE-COMPAT.HOTUPGRADE-01}).
+
+  \textbf{Racing writers.} A same-key store in flight publishes by renaming
+  its own per-writer temporary over the canonical path at completion, under
+  the key's publication lock (\reqref{FDS-STORAGE.PUBLISH-01}). An
+  invalidation shall end every store of the key in flight, under the same
+  lock (\reqref{FRE-COMPLIANCE.PURGE-01}): it marks them ended in the
+  in-flight registry, so that later lookups pass over them
+  (\reqref{FDS-STORAGE.PARTIAL-01}), and each one's \texttt{finish},
+  deciding under the lock, removes its temporary instead of renaming it and
+  reports an error (\reqref{FDS-STORAGE.PUBLISH-01}). A store that published
+  before the invalidation took the lock has its record removed by the
+  \texttt{unlink}, so no store that began before an invalidation lands
+  after it; a store that begins after it is not affected. When the key holds
+  no record but a store in flight, the invalidation ends the store and
+  reports \texttt{Purged(None)}, as the stock backend reports a purge that
+  removed only a store in
+  flight.\footnote{\pgsrc{pingora-cache/src/memory.rs}{405}{\texttt{MemCache::purge}}
+  reports \texttt{Purged} when it removed a store in flight, a stored
+  response, or both.} The purge never names or opens a writer's temporary:
+  the writer removes it, as it does after any store that ends unpublished.
+  The stock backend's purge instead removes the store's entry from its
+  in-flight map, and the writer then panics on the
+  \texttt{unwrap()}s\footnote{\pgsrc{pingora-cache/src/memory.rs}{267}{\texttt{MemMissHandler::finish}}
+  unwraps its own lookup in \texttt{self.temp} at
+  \pgsrc{pingora-cache/src/memory.rs}{273}{L273} and
+  \pgsrc{pingora-cache/src/memory.rs}{275}{L275}; a concurrent
+  \texttt{purge} racing ahead of it removes that same entry
+  (\pgsrc{pingora-cache/src/memory.rs}{403}{L403}).} in its own
+  \texttt{finish} --- tolerable only because that struct is explicitly
+  documented as ``for testing only, not for production
+  use.''\footnote{\pgsrc{pingora-cache/src/memory.rs}{71}{\texttt{MemCache}'s
+  own doc comment}: ``For testing only, not for production use.''} Here the
+  writer's \texttt{finish} completes, and reports the purge.
+
+  A purge made to evict leaves stores in flight alone: a racing store's
+  \texttt{rename} and the eviction's \texttt{unlink}, each made under the
+  lock, land in either order, and whichever is last determines the outcome
+  --- the last-writer-wins convergence \reqref{FRE-COMPLIANCE.REPLACE-01}
+  requires among racing stores. A metadata update or expiry is no such
+  racer: it opens the record under the same publication lock, so it acts on
+  the record before the purge removes it, or finds the key absent after
+  (\reqref{FDS-STORAGE.METAUPDATE-01}).
+
+  \textbf{Safe under a racing reader.} A reader already streaming the
+  canonical file holds it open from before the purge arrives
+  (Figure~\ref{fig:sds-objectfile-lookup-seq}); POSIX \texttt{unlink}
+  removes only the directory entry, and ``if the name was the last link to
+  a file but any processes still have the file open, the file will remain
+  in existence until the last file descriptor referring to it is
+  closed.''\footnote{\href{https://man7.org/linux/man-pages/man2/unlink.2.html}{Linux
+  manual page: \texttt{unlink(2)}}.} The reader therefore runs to the end
+  of the body it already opened undisturbed, and the space it reads from is
+  not reused for anything else while that descriptor remains open,
+  satisfying \reqref{FRE-COMPLIANCE.READERISOLATION-01}
+  without any reference-counting of the backend's own: the kernel already
+  does it.
+
+  Figure~\ref{fig:fds-purge-seq} drills into the \texttt{purge(target,
+  Invalidation)} call Figure~\ref{fig:purge-seq} shows opaque to
+  \texttt{Storage}. Variant records left behind once their primary is gone
+  are outside this operation's own reach (\reqref{FRE-COMPLIANCE.PURGE-01});
+  eviction removes them like any other record
+  (\reqref{ADR-STORAGE.RECLAIM-01}).
+
+  \begin{figure}[H]
+    \centering
+    \begin{adjustbox}{max width=0.9\textwidth}
+    \begin{sequencediagram}
+      \newinst[0.0]{HttpCache}{HttpCache}
+      \newinst[2.9]{Storage}{Storage}
+      \newinst[6.7]{FileSystem}{File System}
+      \begin{call}{HttpCache}{purge(target, purge\_type)}{Storage}{PurgeOutcome}
+        \begin{sdalt}{alt}{[Exact(Identified)]}
+          \postlevel
+          \begin{callself}{Storage}{{\small return NotFound --- no generation this backend issued}}{}
+          \end{callself}
+        \sdpart{[Active or Exact(KeyOnly)]}
+          \postlevel
+          \postlevel
+          \begin{callself}{Storage}{{\small \shortstack{compute canonical path from\\hex(target.key().combined()) (\reqref{SDS-LAYOUT.SHARDING-01})}}}{}
+          \end{callself}
+          \begin{call}{Storage}{unlink(path) under the publication lock}{FileSystem}{ok / ENOENT}
+          \end{call}
+          \begin{sdalt}{opt}{[Invalidation]}
+            \postlevel
+            \begin{callself}{Storage}{{\small under the lock: mark the key's stores in flight ended}}{}
+            \end{callself}
+            \begin{call}{Storage}{fsync(shard directory)}{FileSystem}{}
+            \end{call}
+          \end{sdalt}
+          \postlevel
+          \begin{callself}{Storage}{{\small return Purged(None) if unlinked or a store was ended, else NotFound}}{}
+          \end{callself}
+        \end{sdalt}
+      \end{call}
+    \end{sequencediagram}
+    \end{adjustbox}
+    \caption{Purge, drilling into the call Figure~\ref{fig:purge-seq} shows
+    opaque to \texttt{Storage}. A target naming a generation identifier is
+    rejected unseen, since this backend issues none
+    (\reqref{ADR-COMPAT.ENTRYID-01}); otherwise the canonical path is computed
+    directly from the target key's combined hash, never scanned or looked up,
+    and a single \texttt{unlink} either removes it or reports
+    \texttt{ENOENT}, which the backend folds into \texttt{NotFound}. An
+    invalidation also marks the key's stores in flight ended, under the lock,
+    and then synchronises the shard directory before it reports; a purge made
+    to evict does neither --- the \emph{opt} fragment's other branch. No
+    per-writer temporary, and no file of any other key, is named or touched by
+    this call.}\label{fig:fds-purge-seq}
+  \end{figure}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{verify}{TC-STORAGE.PURGE-01}{Verify that purge unlinks only the
+  canonical path derived from the presented target key's combined hash (a
+  primary or a variant), for an Active target and a key-only Exact target
+  alike; that an identified Exact target is reported not-found with nothing
+  unlinked; that purge is idempotent and reports not-found for an absent key;
+  that an invalidation ends a same-key store in flight, which then
+  publishes nothing while the request writing it and a reader already
+  streaming it still read its body, and reports a key holding only such a
+  store purged, while a purge made to evict leaves the store to land; that
+  it never names a writer's temporary nor disturbs a concurrent reader's
+  already-open descriptor; that an invalidation synchronises the
+  directory before it reports, also when it found nothing, while a purge
+  made to evict does not; that a removal is reported carrying no entry
+  identifier; that a purge
+  whose unlink fails reports an error and leaves the record in place; and
+  that it fails once the backend is read-only.}
+  \reqcover{satisfy}{IMP}
+
+  \refine{ADR-STORAGE.OBJECTFILE-01}
+  \refine{ADR-PERSISTENCE.DURABILITY-01}
+  \satisfy{FRE-COMPLIANCE.PURGE-01}
+  \satisfy{FRE-COMPLIANCE.PURGEABSENT-01}
+  \satisfy{FRE-COMPLIANCE.PURGEDURABLE-01}
+  \satisfy{FRE-COMPLIANCE.READERISOLATION-01}
+  \trace{FDS-STORAGE.PUBLISH-01}
+  \trace{FDS-STORAGE.PARTIAL-01}
+  \trace{FRE-COMPLIANCE.REPLACE-01}
+  \trace{SDS-LAYOUT.SHARDING-01}
+  \trace{ADR-STORAGE.RECLAIM-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.EXPIRE-01}[draft][functionalRequirement]{Expire by updating the metadata}
+
+  \localreqdiagram*{fdsexpire01}{\reqid}{\reqdesc}
+
+  An expiry is keyed off a \texttt{PurgeTarget} exactly as a purge is, and the
+  backend shall resolve it exactly as \reqref{FDS-STORAGE.PURGE-01} resolves
+  one: an \texttt{Active} target, or an \texttt{Exact} target whose
+  \texttt{CacheEntryKey} is \texttt{KeyOnly}, to the canonical path of that
+  key; an \texttt{Exact} target carrying an \texttt{Identified} entry key to
+  \texttt{NotFound}, since this backend issues no entry identifiers
+  (\reqref{ADR-COMPAT.ENTRYID-01}). No other file is named or opened.
+
+  \textbf{The operation.} Holding the key's publication lock
+  (\reqref{FDS-STORAGE.METAUPDATE-01}), the backend shall open the record,
+  read its stored metadata, derive the expired metadata from it by applying
+  \texttt{CacheMeta::expire\_at} at the start of the current second, and
+  write the result in place, as a metadata update that fits is written
+  (\reqref{ADR-STORAGE.EXPIRE-01}), without reading or writing the body.
+  The result always fits the record's region, whatever headroom it has
+  left: \texttt{expire\_at} changes only the freshness deadline in the
+  internal-metadata segment, and only ever lowers it, so the deadline's
+  seconds take no more bytes than before and its nanoseconds, zero, take
+  the fewest; and the backend writes the header segment back as stored,
+  byte for byte. The expired metadata is therefore never longer than the
+  stored metadata.
+
+  Taking the lock for the whole read-derive-write sequence is what keeps two
+  concurrent expiries, or an expiry and a revalidation's
+  \texttt{update\_meta}, from clobbering one another: neither can read
+  metadata the other is between reading and rewriting. This is why the backend
+  derives the expired metadata from what is on disk rather than from anything
+  the caller holds --- the caller of an expiry holds no \texttt{CacheMeta} at
+  all.
+
+  \textbf{Outcomes.} The backend shall report \texttt{PurgeOutcome::Expired}
+  once the expired metadata is written, and so visible to lookups;
+  \texttt{NotFound} when no record exists at the canonical path --- the
+  absent-key case (\reqref{FRE-COMPLIANCE.PURGEABSENT-01}), which is not an
+  error --- and an error when the record exists but cannot be read, decoded,
+  or written. An expiry never reports \texttt{Purged}. \texttt{Expired}
+  tells \texttt{HttpCache} the entry is still stored, so it stays in the
+  eviction manager's accounting, which is correct: the record still occupies
+  its full length on
+  disk.\footnote{\pgsrc{pingora-cache/src/lib.rs}{1901}{\texttt{purge\_impl}}
+  makes no eviction call for an \texttt{Expired} outcome.} A record
+  that fails the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-01}
+  specifies --- damaged, truncated, of another format version, or withdrawn
+  --- is reported \texttt{NotFound}, matching what a lookup of that same
+  record would report, and is left as it is for
+  \reqref{FDS-STORAGE.RECLAIM-01}.
+
+  \textbf{Races.} The record is opened under the lock, so a store or purge
+  that lands before the expiry takes the lock is seen: the expiry acts on the
+  record the key then holds, or reports \texttt{NotFound}. A same-key store
+  already in flight is unaffected: it publishes by renaming over the canonical
+  name when it completes, replacing the expired record with a fresh object,
+  which is the behaviour \reqref{FRE-COMPAT.EXPIRE-01} states; an
+  invalidating purge, unlike an expiry, ends such a store
+  (\reqref{FDS-STORAGE.PURGE-01}). A reader already streaming the record
+  keeps its open descriptor
+  and is undisturbed, since the expiry does not touch the body
+  (\reqref{FRE-COMPLIANCE.READERISOLATION-01}).
+
+  Once the backend is read-only (\reqref{FDS-COMPAT.READONLY-01}), every
+  expiry shall fail with an error without changing anything on disk
+  (\reqref{FRE-COMPAT.HOTUPGRADE-01}).
+
+  \begin{figure}[H]
+    \centering
+    \begin{adjustbox}{max width=0.95\textwidth}
+    \begin{sequencediagram}
+      \newinst[0.0]{HttpCache}{HttpCache}
+      \newinst[1.0]{Storage}{Storage}
+      \newinst[7.3]{FileSystem}{File System}
+      \begin{call}{HttpCache}{expire(target)}{Storage}{PurgeOutcome}
+        \begin{sdalt}{alt}{[Exact(Identified)]}
+          \postlevel
+          \begin{callself}{Storage}{{\small return NotFound (\reqref{ADR-COMPAT.ENTRYID-01})}}{}
+          \end{callself}
+        \sdpart{[Active or Exact(KeyOnly)]}
+          \postlevel
+          \begin{call}{Storage}{\shortstack{under the publication lock: open the canonical path,\\read header + metadata region}}{FileSystem}{CacheMeta / ENOENT}
+          \end{call}
+          \begin{sdalt}{opt}{[record valid]}
+            \postlevel
+            \begin{callself}{Storage}{{\small expire\_at(start of the second) --- internal segment only, body untouched}}{}
+            \end{callself}
+            \begin{call}{Storage}{write the segments in place, then the header}{FileSystem}{}
+            \end{call}
+            \postlevel
+            \begin{callself}{Storage}{return Expired}{}
+            \end{callself}
+          \end{sdalt}
+        \end{sdalt}
+      \end{call}
+    \end{sequencediagram}
+    \end{adjustbox}
+    \caption{Expiry, the second removal operation beside
+    Figure~\ref{fig:fds-purge-seq}'s purge. The target is resolved the same
+    way, but instead of unlinking the canonical name the backend derives
+    expired metadata from what that record already stores and writes it back
+    in place, as \reqref{FDS-STORAGE.METAUPDATE-01} writes an update that
+    fits. The body is never read or copied, and the record survives, so the
+    \texttt{304} that follows the revalidation serves the very bytes the cache
+    already held. The read, the derivation, and the write are one critical
+    section under the key's publication lock, so a concurrent expiry or
+    metadata update cannot clobber it. The \emph{opt} fragment's other branch
+    --- no record at the path, or one that fails validation --- reports
+    \texttt{NotFound}.}\label{fig:fds-expire-seq}
+  \end{figure}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{verify}{TC-STORAGE.EXPIRE-01}{Verify that an expiry stops the
+  object being served as a fresh hit while leaving its body byte-identical and
+  readable; that the stored serve-stale windows are not closed by it; that it
+  is idempotent; that it reports not-found for an absent key, for an
+  identified Exact target, and for a record that fails the read-time
+  validation, a withdrawn one included, which it leaves untouched; that it
+  writes its metadata in place, with headroom configured and without, also
+  for a deadline on a whole second; that a concurrent store still replaces
+  the expired record; and that it fails once the backend is read-only.}
+  \reqcover{satisfy}{IMP}
+
+  \refine{ADR-STORAGE.EXPIRE-01}
+  \satisfy{FRE-COMPAT.EXPIRE-01}
+  \satisfy{FRE-COMPLIANCE.PURGEABSENT-01}
+  \trace{FDS-STORAGE.METAUPDATE-01}
+  \trace{FDS-STORAGE.PURGE-01}
+  \trace{FRE-COMPLIANCE.READERISOLATION-01}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.EXECUTOR-01}[draft][designConstraint]{File I/O on the blocking pool}
+
+  \localreqdiagram*{adrexecutor01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} Every operation this backend performs is an ordinary
+  blocking syscall --- \texttt{open}, \texttt{pread}, \texttt{pwrite},
+  \texttt{fdatasync}, \texttt{rename}, \texttt{unlink} --- while every
+  \texttt{Storage} method is an \texttt{async fn} that Pingora polls on a
+  service worker. Pingora gives each service \emph{one} worker thread by
+  default,\footnote{\pgsrc{pingora-core/src/server/configuration/mod.rs}{74}{\texttt{ServerConf::threads}}
+  defaults to 1 (\pgsrc{pingora-core/src/server/configuration/mod.rs}{236}{L236}).}
+  and the deliverable cannot assume an integrator raised it. A syscall run
+  inline therefore stalls not just the request that issued it but every other
+  connection that worker is driving.
+
+  The cost is not hypothetical, and not confined to slow devices. A cache
+  whose whole purpose is to hold more than fits in RAM
+  (\reqref{HLR-PERSISTENCE.CAPACITY-01}) serves reads that miss the page cache
+  as a matter of course, and a store's \texttt{fdatasync}
+  (\reqref{ADR-PERSISTENCE.DURABILITY-01}) costs 1--5~ms on a consumer SSD by
+  this specification's own figures. Blocking a sole worker for that long
+  reorders what the proxy does next: measured against
+  the stock \texttt{MemCache} of \texttt{pingora-cache} on one worker, an inline
+  backend lost an upstream \texttt{103 Early Hints} on 30 of 40 requests where
+  \texttt{MemCache} lost none, because the proxy was late to poll its upstream
+  task channel and the interim response was batched together with the final
+  one. That is observable HTTP behaviour differing from the reference backend,
+  which \reqref{HLR-COMPLIANCE.RFC-01} rules out.
+
+  \textbf{Decision:} Run each storage operation's blocking work on Tokio's
+  blocking pool --- \texttt{spawn\_blocking} --- rather than on the worker
+  that polls the \texttt{async fn}. The handoff is per \emph{operation}, not
+  per syscall: one for a lookup, one for a store's opening, one per body
+  chunk, one for \texttt{finish}, one for a purge, a metadata update, or an
+  expiry. The synchronous code that does the work is unchanged; only where it
+  runs is.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Leave the syscalls inline and document a minimum thread
+      count}: no code to write, and an integrator who sets
+      \texttt{ServerConf::threads} high enough is unaffected. Rejected: it
+      makes correctness against \reqref{HLR-COMPLIANCE.RFC-01} a deployment
+      setting, and the default --- one thread --- is the failing case, so the
+      out-of-the-box configuration would be the broken one.
+    \item \emph{\texttt{tokio::task::block\_in\_place}}: hands the worker's
+      other tasks to a replacement thread without moving the work. Rejected:
+      it panics on a current-thread runtime, so it would make the backend
+      depend on which runtime flavour the integrator's Pingora build uses.
+    \item \emph{\texttt{tokio::fs}}: the same blocking pool with an async
+      surface. Rejected: it offloads one syscall at a time, so a store would
+      pay several handoffs where one suffices, and its API does not cover the
+      positional reads and writes (\texttt{pread}/\texttt{pwrite}) this
+      layout depends on.
+    \item \emph{\texttt{io\_uring}}: genuinely asynchronous file I/O, no pool
+      and no handoff. Rejected for this version: a new dependency, a Linux
+      version floor above what Pingora itself requires, and a second I/O path
+      to keep correct --- machinery \reqref{HLR-SCOPE.V1-01} asks not to build
+      when a pool that ships with the runtime already closes the gap.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] A storage operation never holds a service worker, so a slow
+      device delays the request that touched it and nothing else.
+    \item[+] Correct on the default Pingora configuration, with no requirement
+      on the integrator.
+    \item[--] One thread handoff per storage operation, which is charged
+      against every lookup and every body chunk whether or not the data was
+      in the page cache.
+    \item[--] The blocking pool is shared with everything else in the process
+      that uses it, and its size is the runtime's to decide, not this
+      backend's.
+    \item[--] The restart scan is the one path this does not cover:
+      \reqref{FDS-EVICTION.STARTUP-01}'s \texttt{recover()} borrows the
+      eviction manager for the length of the call, so its work cannot be sent
+      to another thread. It bounds the stall by yielding instead.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-STORAGE.EXECUTOR-01}{Specify which work moves to the
+  blocking pool, what stays on the worker, and how the restart scan bounds
+  the stall it cannot move.}
+
+  \refine{ADR-PERSISTENCE.MECHANISM-01}
+  \satisfy{HLR-COMPLIANCE.RFC-01}
+  \trace{ADR-PERSISTENCE.DURABILITY-01}
+  \trace{FRE-COMPAT.STREAMDELIVERY-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.EXECUTOR-01}[draft][functionalRequirement]{Storage calls never block the worker}
+
+  \localreqdiagram*{fdsexecutor01}{\reqid}{\reqdesc}
+
+  WHILE a \texttt{Storage} call, a \texttt{HandleHit} read, or a
+  \texttt{HandleMiss} write is in progress, the backend shall leave the
+  executor thread that polled it free to drive other tasks
+  (\reqref{ADR-STORAGE.EXECUTOR-01}).
+
+  \textbf{What moves.} Each of the following runs as one unit on the blocking
+  pool, so an operation costs a single handoff rather than one per syscall:
+  \begin{itemize}
+    \item \texttt{lookup} --- opening the record, validating it, and
+      deserialising its metadata (\reqref{SDS-LAYOUT.OBJECTFILE-01}), for a
+      published record and for a partial hit's temporary alike
+      (\reqref{FDS-STORAGE.PARTIAL-01});
+    \item \texttt{get\_miss\_handler} --- creating the per-writer temporary
+      and writing the record's fixed part (\reqref{FDS-STORAGE.PUBLISH-01});
+    \item \texttt{write\_body} --- writing a chunk to the temporary;
+    \item \texttt{finish} --- patching the header, the \texttt{fdatasync},
+      and the rename (\reqref{ADR-PERSISTENCE.DURABILITY-01}), then
+      dropping the miss handler, whose close frees the store's file if the
+      file has lost its name meanwhile;
+    \item \texttt{read\_body} --- each positional read, on both the published
+      and the partial-hit path;
+    \item \texttt{purge} --- the unlink and the shard-directory
+      \texttt{fsync} (\reqref{FDS-STORAGE.PURGE-01});
+    \item \texttt{update\_meta} and \texttt{expire} --- reading the record and
+      writing it back in place, or withdrawing or removing it
+      (\reqref{FDS-STORAGE.METAUPDATE-01}, \reqref{FDS-STORAGE.EXPIRE-01}).
+  \end{itemize}
+
+  \textbf{What stays.} Work that touches no file stays on the worker, because
+  a handoff would cost more than it saves: hashing the cache key, serialising
+  and deserialising \texttt{CacheMeta}, folding a chunk into the running
+  CRC-32C, and every consultation of the in-memory structures --- the
+  in-flight registry, the shard-directory bitset, and the publication lock's
+  stripe table. A call therefore does its CPU work, hands the file work over,
+  and resumes: the borrowed \texttt{CacheKey} and \texttt{CacheMeta} never
+  have to cross the boundary, since only owned bytes do.
+
+  A partial hit's wait for the next chunk also stays on the worker: it is a
+  notification, not a syscall (\reqref{FDS-STORAGE.PARTIAL-01}), and blocking
+  a pool thread on it would hold that thread for as long as the store takes.
+
+  Two syscalls stay deliberately. The first is the \texttt{unlink} that
+  removes an aborted store's temporary when its miss handler is dropped. A destructor
+  cannot await, and the temporary's name must be gone when the drop returns
+  (\reqref{FRE-COMPAT.ABORTSPACE-01}). The unlink is cheap: the handler still
+  has the file open, so it removes only the name. The storage is freed when
+  that handle is closed, which can take a long time for a large file, so
+  the handler gives the handle to the pool to close; should the process
+  exit first, the kernel closes it, and nothing is left behind.
+
+  The second is an \texttt{fstat} when a hit handler is dropped holding the
+  last descriptor of the file it read. Closing that descriptor frees the
+  file if the file has lost its last name: a record replaced, purged or
+  evicted while the hit read it, or a partial hit's temporary removed with
+  its store. The \texttt{fstat} tells: a file that still has a name is
+  closed in place, since its close frees nothing, and one that has none is
+  given to the pool to close, without waiting. Handing every hit's close to
+  the pool would cost the worker more than the close itself. The
+  \texttt{fstat} reads the open file's inode, which is in memory, as the
+  cache directory is on a local file system.
+
+  \textbf{The publication lock.} The per-key lock and the read-only gate
+  (\reqref{FDS-STORAGE.METAUPDATE-01}, \reqref{FDS-COMPAT.READONLY-01}) are
+  taken and released entirely within one blocking unit, so neither is ever
+  held across an \texttt{await} --- the same rule as before, now enforced by
+  the shape of the code rather than only by convention.
+
+  \textbf{The restart scan.} \reqref{FDS-EVICTION.STARTUP-01}'s
+  \texttt{recover()} borrows the eviction manager it admits into for the
+  length of the call, so its admissions cannot be sent to another thread.
+  It shall instead yield to the executor between directory entries, and
+  between the records its ghost-entry check visits, so that a scan of a large
+  tree never holds the worker for longer than one record's header, key, and
+  metadata region take to read. What the scan removes --- a
+  record or temporary it reclaims, an eviction victim --- it shall remove on
+  the blocking pool, since freeing a large file can take far longer than
+  that read.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{verify}{TC-STORAGE.EXECUTOR-01}{Verify that no storage operation
+  holds the executor thread for its duration, by measuring what a task
+  co-resident on a single-worker runtime observes while cache traffic runs.}
+  \reqcover{satisfy}{IMP}
+
+  \refine{ADR-STORAGE.EXECUTOR-01}
+  \satisfy{HLR-COMPLIANCE.RFC-01}
+  \trace{FDS-STORAGE.PUBLISH-01}
+  \trace{FDS-STORAGE.PARTIAL-01}
+  \trace{FDS-STORAGE.PURGE-01}
+  \trace{FDS-STORAGE.METAUPDATE-01}
+  \trace{FDS-EVICTION.STARTUP-01}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.RECLAIM-01}[draft][designConstraint]{Reclaim via the restart-time scan}
+
+  \localreqdiagram*{adr6}{\reqid}{\reqdesc}
+
+  \textbf{Context:} One kind of file is left behind by otherwise-correct
+  operation of this design and never revisited by any keyed
+  \texttt{Storage} call again: a per-writer temporary a crash orphans before
+  its rename (\reqref{FDS-STORAGE.PUBLISH-01}, \reqref{FRE-COMPAT.STARTRECLAIM-01}).
+  It is not discoverable through
+  \texttt{lookup}, \texttt{purge}, or \texttt{update\_meta}: every
+  \texttt{Storage} call pingora-cache itself makes is keyed to one specific
+  object, never an enumeration of what the tree actually holds. The one
+  place this specification already walks the whole tree is Eviction
+  Recovery's own reconstruction scan (\reqref{FDS-EVICTION.STARTUP-01}),
+  run once at every process start and explicitly precedented by
+  \reqref{ADR-COMPAT.EVICTION-01} for a structurally similar problem: no
+  snapshot, no delta log, no distinction between a clean shutdown and a
+  crash, because only a fresh scan can be trusted regardless of how the
+  previous run ended.
+
+  A purge of a primary leaves records behind too: its \texttt{Vary}
+  variants, whose keys \reqref{FDS-STORAGE.PURGE-01} establishes the backend
+  is neither handed nor able to derive at the moment the primary is purged
+  (\reqref{FRE-COMPLIANCE.PURGE-01}). Unlike a temporary, such a variant is
+  a published object, which the eviction manager counts against the size
+  budget and evicts like any other (\reqref{FRE-COMPAT.EVICTION-01}).
+
+  \textbf{Decision:} Reclaim crash-orphaned temporaries as part of that same
+  restart-time scan, rather than by any separate mechanism --- together with
+  two kinds of canonical record the scan meets anyway: one that fails
+  validation, which lookups report as a miss but deliberately leave in place
+  (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and one a metadata update withdrew
+  (\reqref{FDS-STORAGE.METAUPDATE-01}). While Eviction Recovery walks the tree
+  to reconstruct the eviction manager, the same walk also classifies and
+  removes them, at the cost of no second full-tree traversal and no new
+  trigger. Leave \texttt{Vary} variant records to eviction, whatever their
+  primary holds: the scan admits them like any other record.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Reclaim, in the same scan, the variants no lookup can
+      reach}: those whose primary is absent, fails validation, or carries a
+      \texttt{provenance()} later than the variant's own \texttt{created()},
+      which is the test \texttt{pingora-cache} itself
+      applies.\footnote{\pgsrc{pingora-cache/src/lib.rs}{1564}{\texttt{HttpCache::cache\_vary\_lookup}}
+      sets \texttt{valid\_after} to the primary's \texttt{meta.provenance()}
+      (\pgsrc{pingora-cache/src/lib.rs}{1576}{L1576}); the following
+      \pgsrc{pingora-cache/src/lib.rs}{1489}{\texttt{cache\_lookup}} on the
+      variant key discards any result whose own \texttt{meta.created()} is
+      earlier (\pgsrc{pingora-cache/src/lib.rs}{1518}{L1518}).} Rejected:
+      that test settles reachability only when every variance comes from
+      the \texttt{Vary} handling in \texttt{pingora-cache} itself, which consults the
+      primary first. An integrator's \texttt{cache\_key\_callback} can set a
+      variance
+      itself;\footnote{\pgsrc{pingora-cache/src/key.rs}{125}{\texttt{CacheKey::set\_variance\_key}}
+      is public.
+      \pgsrc{pingora-proxy/src/proxy_cache.rs}{97}{\texttt{HttpProxy::proxy\_cache}}
+      looks a key that already carries a variance up as a variant slot, and
+      \pgsrc{pingora-cache/src/lib.rs}{1388}{\texttt{update\_variance}}
+      keeps that variance when \texttt{cache\_vary\_filter} returns the same
+      one.} its responses are then stored in variant slots with no primary
+      ever written, and lookups serve them, so the scan would delete every
+      such object at each start. A variant no lookup can reach costs only
+      space the size budget already counts, and eviction removes it like any
+      object no request reaches.
+    \item \emph{Reclaim a purge's variants synchronously, inside
+      \texttt{purge} itself}: rejected on structural grounds, not just
+      simplicity --- \reqref{FDS-STORAGE.PURGE-01} shows that the proxy's
+      purge path only ever gives \texttt{purge} the primary's
+      \texttt{CompactCacheKey}, and \texttt{pingora-cache} hands the backend
+      neither a variant's own key nor any index from primary to variant. At
+      that moment, without an index of the backend's own (the next
+      alternative), there is no key to purge a variant \emph{by}.
+    \item \emph{Record each primary's variants, and reclaim them inside
+      \texttt{purge}}: when a variant is stored, append its hash to a small
+      list kept beside its primary, so that purging the primary can unlink
+      the listed variants at once. Rejected: a new on-disk structure per
+      varied primary, which must stay consistent while variants of one
+      primary are stored and replaced concurrently, across processes, and
+      through crashes --- and the restart-time scan must exist anyway, for
+      crash-orphaned temporaries and for eviction reconstruction. The
+      space a variant whose primary is gone holds is already counted against
+      the size budget, so leaving it to eviction costs no correctness.
+    \item \emph{A separate periodic background thread}, scanning the tree
+      on its own timer independently of restart: rejected as machinery
+      \reqref{HLR-SCOPE.V1-01}'s simplest-adequate-design preference does
+      not ask for --- a timer, an interval to tune, and a cancellation path
+      for shutdown or hot-upgrade drain --- when the restart-time scan is
+      already mandatory for eviction-state correctness
+      (\reqref{FRE-COMPAT.EVICTION-01}) even with reclaim entirely absent,
+      and needs no new machinery to extend.
+    \item \emph{Reclaim a crash-orphaned temporary opportunistically}, the
+      moment some other component happens to be looking at its directory:
+      rejected for lack of such a moment --- \reqref{FDS-LAYOUT.STARTUP-01}'s
+      shard-directory cache only ever tracks which second-level directories
+      \emph{exist}, learned by listing the first-level directories once at
+      construction; it never lists a shard's files, and no ordinary store
+      operation is ever already enumerating a shard's files.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] No new subsystem: no timer, no scheduler, no second tree walk,
+      no shutdown-drain interaction to design --- extends a scan the
+      backend must run regardless.
+    \item[+] One trigger, one code path, matching
+      \reqref{ADR-COMPAT.EVICTION-01}'s own precedent of never
+      distinguishing a clean restart from a crash restart.
+    \item[+] Compatible with a hot upgrade by construction:
+      \reqref{FRE-COMPAT.HOTUPGRADE-01} already anticipates background
+      reclamation running on the incoming side while the outgoing process
+      drains, under the same open-file safety
+      argument \reqref{FDS-STORAGE.PURGE-01} gives for purge --- unlinking
+      a file leaves an already-open reader on it undisturbed.
+    \item[--] Variant records a purge of their primary left behind stay on
+      disk, across restarts too. Their space is counted against the size
+      budget, and capacity-driven eviction removes them like any unrequested
+      object once the cache nears that budget; a cache that never nears it
+      keeps them, as leftover files in \reqref{HLR-EFFICIENCY.SPACE-01}'s
+      sense. This specification accepts that as a v1 cost, matching the
+      trade-offs \reqref{ADR-EFFICIENCY.COMPACTION-01} and
+      \reqref{ADR-COMPAT.EVICTION-01} already record.
+    \item[--] A record withdrawn or damaged while a process is up is only
+      reclaimed at that process's \emph{next} restart, unless a store of its
+      key replaces it first; a deployment wanting a tighter bound must
+      restart or hot-upgrade more often. This specification does not
+      mandate a schedule for that. To make what accumulates visible, each
+      scan logs the number and bytes of the files it reclaimed, by class,
+      and also reports them as metrics when the metrics feature is enabled
+      (\reqref{ADR-OBSERVABILITY.METRICS-01}).
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-STORAGE.RECLAIM-01}{Specify the concrete detection
+  and removal procedure for each class of file the scan reclaims, riding Eviction Recovery's
+  existing enumeration, and the per-class count and bytes of reclaimed files
+  each scan reports.}
+
+  \refine{ADR-PERSISTENCE.MECHANISM-01}
+  \satisfy{FRE-COMPAT.STARTRECLAIM-01}
+  \trace{ADR-COMPAT.EVICTION-01}
+  \trace{FDS-EVICTION.STARTUP-01}
+  \trace{FRE-COMPAT.HOTUPGRADE-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.RECLAIM-01}[draft][functionalRequirement]{Reclaiming orphaned files}
+
+  \localreqdiagram*{fdsreclaim01}{\reqid}{\reqdesc}
+
+  Eviction Recovery's scan (\reqref{FDS-EVICTION.STARTUP-01}) already visits
+  every file in the tree once, reading each canonical record's header, key,
+  and internal metadata to \texttt{admit} it. This procedure
+  (\reqref{ADR-STORAGE.RECLAIM-01}) rides that same pass: for each directory
+  entry it classifies by name and, for a canonical record, by validation,
+  then either admits it as before or reclaims it --- no second walk of the
+  tree, and no entry visited twice. Three classes are reclaimed:
+  crash-orphaned temporaries, damaged, foreign or misplaced canonical
+  records, and withdrawn records.
+
+  \textbf{Crash-orphaned temporaries.} An entry with the \texttt{.tmp}
+  extension carries its writer's lease identity in its name
+  (\reqref{FDS-STORAGE.PUBLISH-01}). The procedure shall treat the writer as
+  possibly running --- and leave the temporary untouched --- exactly when
+  the writer's lease exists and the procedure cannot take its lock, or
+  cannot tell (\reqref{ADR-STORAGE.WRITERID-01}). The process's own writers
+  satisfy this test, since serving may already have begun while the scan
+  runs: a lock held through one open file description refuses another, even
+  in the same process. So does a live hot-upgrade peer. Every other
+  temporary belongs to a writer that has stopped, and the procedure shall
+  unlink it. A temporary whose name has another form is left alone. The test
+  requires every process sharing the cache directory to run on this host,
+  with the directory on a local file system, a deployment constraint the
+  deliverable documents.
+
+  \textbf{Stopped writers' leases.} After the walk, the procedure shall
+  remove every lease, and every lease left under its staging name, whose
+  lock it can take, holding the lock across the removal; a lease whose lock
+  is held belongs to a live writer, or to one being created, and is left.
+  Since a lease gets its final name only once it is locked, a live writer's
+  lease is never removed. A temporary whose lease is missing counts as its
+  writer's having stopped, so the order of the two removals does not
+  matter.
+
+  \textbf{Damaged or foreign canonical records.} A canonical record that fails
+  the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-01} specifies ---
+  including one of another format version --- cannot be admitted, since its key or freshness
+  deadline cannot be trusted or decoded. Lookups report such records as
+  misses but leave them in place, so the procedure shall reclaim them. A
+  record whose checksums mismatch on every read may instead be an in-place
+  metadata update caught between its two writes: before treating it as
+  damaged, the procedure reads it once more holding the key's publication
+  lock, as a lookup does (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and admits it
+  if that read finds it whole.
+
+  \textbf{Misplaced records.} A canonical record found anywhere but at the
+  path its stored key names (\reqref{SDS-LAYOUT.SHARDING-01}) --- put there by
+  hand, or by a defect --- is never served: a lookup of its key reads the
+  other path, and a lookup of the key this path belongs to finds a key
+  mismatch (\reqref{SDS-LAYOUT.OBJECTFILE-01}). The procedure shall reclaim
+  it, counted as damaged.
+
+  \textbf{Withdrawn records.} A canonical record that a metadata update
+  withdrew (\reqref{FDS-STORAGE.METAUPDATE-01}) holds no object: lookups
+  report it as a miss and leave it in place until a store of its key
+  replaces it. The procedure shall reclaim it, under a class of its own, so
+  that its count is not mistaken for damage.
+
+  \textbf{Variants.} A canonical record whose own stored key carries a
+  variance (\texttt{Some(variance)} in its \texttt{CompactCacheKey}) is a
+  secondary slot (\reqref{SDS-LAYOUT.OBJECTFILE-01}). The procedure shall
+  admit it like any other valid record, whatever its sibling primary holds
+  (\reqref{ADR-STORAGE.RECLAIM-01}). It never opens that primary: a lookup
+  can reach a variant for which no primary was ever stored, and a variant no
+  lookup can reach is evicted like any other record.
+
+  \textbf{Entries it cannot read.} Nothing is known of a directory the
+  procedure cannot list, or of an entry it cannot read, so it can be neither
+  admitted nor reclaimed. Unless the directory or entry has vanished
+  meanwhile, the procedure shall skip it and name it in a warning in the
+  log.
+
+  \textbf{Reclaiming safely under live traffic.} This scan may run while the
+  process serves (\reqref{FDS-EVICTION.STARTUP-01}), and while an outgoing
+  hot-upgrade peer, its backend already read-only, completes its last requests
+  (\reqref{FDS-COMPAT.READONLY-01}). A live store can publish a fresh record at a
+  path the procedure has just classified as reclaimable, at any moment ---
+  its upstream fetch may have begun long before. The procedure shall
+  therefore never unlink a canonical record by path alone: it notes the
+  file's identity (device and inode) when it opens the entry to classify it,
+  and unlinks it only while holding the key's publication lock
+  (\reqref{FDS-STORAGE.METAUPDATE-01}), after confirming that the path still
+  refers to that same file; otherwise it skips the entry. Because the read-only
+  peer publishes nothing, the lock --- which this process's stores and purges
+  also take --- covers every writer. A temporary needs no such check: nothing
+  is ever renamed onto a temporary's name. One race remains harmless by
+  construction: a file the peer or a reader already holds open is unaffected
+  by the unlink, for the same POSIX reason \reqref{FDS-STORAGE.PURGE-01}
+  relies on.
+
+  \textbf{Reporting.} When the scan completes, or stops because the backend
+  is read-only or its server is shutting down
+  (\reqref{FDS-EVICTION.STARTUP-01}), the procedure shall log one summary
+  line, saying which, and giving the number of directories and
+  entries it skipped and the number and bytes of the files it reclaimed in
+  each
+  class --- \texttt{temporary}, \texttt{damaged}, and \texttt{withdrawn} ---
+  and, when the backend's \texttt{metrics} feature is enabled (it is off by
+  default, \reqref{ADR-OBSERVABILITY.METRICS-01}), add the same figures to two counters
+  in the \texttt{prometheus} default registry, each labelled by class:
+  \begin{itemize}
+    \item \texttt{pingora\_durable\_reclaimed\_files\_total}, the
+      number of files;
+    \item \texttt{pingora\_durable\_reclaimed\_bytes\_total}, their
+      bytes.
+  \end{itemize}
+  The backend registers both when it is built, with every class's series
+  at zero, so that each is served from the start rather than from the first
+  reclaim of its class (as \reqref{FDS-OBSERVABILITY.HEADROOM-01} does for
+  its counter).
+
+  \begin{figure}[H]
+    \centering
+    \begin{adjustbox}{max width=\textwidth}
+    \begin{sequencediagram}
+      \newinst[0.0]{EvictionRecovery}{Eviction Recovery}
+      \newinst[0.5]{Storage}{Storage}
+      \newinst[6.7]{FileSystem}{File System}
+      \newinst[1.2]{EvictionManager}{EvictionManager}
+      \begin{call}{EvictionRecovery}{enumerate()}{Storage}{}
+        \begin{sdalt}{loop}{[for each directory entry, in any order]}
+          \begin{sdalt}{alt}{[classify by name and validation]}
+            \postlevel
+            \begin{call}{Storage}{\shortstack{.tmp: writer's lease held?\\no: unlink --- yes: skip}}{FileSystem}{}
+            \end{call}
+          \sdpart{[canonical, fails validation, misplaced, or withdrawn]}
+            \postlevel
+            \begin{call}{Storage}{\shortstack{under the publication lock: same file?\\yes: unlink --- no: skip}}{FileSystem}{}
+            \end{call}
+          \sdpart{[canonical, valid (primary or variant slot)]}
+            \begin{call}{Storage}{admit(key, size, fresh\_until)}{EvictionManager}{}
+            \end{call}
+          \end{sdalt}
+        \end{sdalt}
+        \postlevel
+        \begin{call}{Storage}{\shortstack{each lease in writers/: lock free?\\yes: unlink --- no: skip}}{FileSystem}{}
+        \end{call}
+      \end{call}
+    \end{sequencediagram}
+    \end{adjustbox}
+    \caption{Reclaim, riding the same \texttt{enumerate()} pass
+    Figure~\ref{fig:fds-startup-seq} shows as one opaque call: each entry is
+    classified once; a crash-orphaned temporary or a damaged, foreign,
+    misplaced, or withdrawn record is unlinked --- a canonical record only after
+    confirming, under its publication lock, that the path still names the
+    file classified --- and never admitted; every other record, variants
+    included, is admitted exactly as \reqref{FDS-EVICTION.STARTUP-01} already
+    specifies. After the walk, the leases of stopped writers are
+    removed.}\label{fig:fds-reclaim-seq}
+  \end{figure}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{verify}{TC-STORAGE.RECLAIM-01}{Verify that a temporary whose
+  writer is not running (its lease missing, or present but unlocked) is
+  reclaimed, and one whose writer is running is left; that a stopped
+  writer's lease is removed and a running writer's kept; that a damaged,
+  foreign-format, misplaced, or withdrawn record is reclaimed; that a variant is
+  admitted whatever its primary holds; that a record replaced by a live store
+  between classification
+  and unlink survives; that a directory or entry it cannot list or read is
+  skipped, named in a warning, and counted; and that the log summary, and
+  the reclaim counters
+  when the metrics feature is enabled, report each class.}
+  \reqcover{satisfy}{IMP}
+
+  \refine{ADR-STORAGE.RECLAIM-01}
+  \refine{ADR-STORAGE.WRITERID-01}
+  \satisfy{FRE-COMPAT.STARTRECLAIM-01}
+  \trace{FDS-EVICTION.STARTUP-01}
+  \trace{FDS-STORAGE.PUBLISH-01}
+  \trace{FDS-STORAGE.PURGE-01}
+  \trace{SDS-LAYOUT.OBJECTFILE-01}
+  \trace{SDS-LAYOUT.SHARDING-01}
+  \trace{FRE-COMPAT.HOTUPGRADE-01}
+\end{requirement}
+
+\begin{requirement}{ADR-EFFICIENCY.COMPACTION-01}[draft][designConstraint]{Compaction deferred for v1}
+
+  \localreqdiagram*{adr3}{\reqid}{\reqdesc}
+
+  \textbf{Context:} Each object is stored as a self-contained record --- its
+  metadata followed by its body (\reqref{ADR-STORAGE.OBJECTFILE-01}). Giving each
+  record its own file still pays block rounding and the per-file overhead once
+  per object: block-granular allocation may waste almost a full block on a
+  small object's tail, a cost that does not shrink with the object's size and
+  works directly against the stakeholder space-efficiency goal
+  (\reqref{HLR-EFFICIENCY.SPACE-01}, \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}).
+
+  \textbf{Decision:} Do not implement object compaction for this version.
+  Closing this waste requires real, multi-part machinery --- a background
+  trigger and threshold policy, an aggregate file format and its own
+  internal index, a lookup path that checks two locations instead of one,
+  relocation on revalidation, and reclaiming space after a purge --- against
+  which \reqref{HLR-SCOPE.V1-01} prefers the simplest adequate design, even
+  at the cost of peak space efficiency. This decision therefore conflicts
+  with \reqref{HLR-EFFICIENCY.SPACE-01} and with the derived
+  \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}, which no other decision
+  satisfies for this version: the waste described above is accepted, not
+  eliminated, for as long as it stands. The resolution, for both conflicts,
+  is to revisit compaction in a later version, once
+  \reqref{HLR-SCOPE.V1-01}'s scope constraint no longer applies.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Implement compaction now}: a deferred background step that
+      moves a completed object's record, back-to-back with others, into a
+      shared \emph{aggregate} file once its wasted space passes a
+      configurable threshold. It would still require choosing the aggregate
+      backend --- a custom format reusing
+      \reqref{ADR-STORAGE.OBJECTFILE-01}'s record layout, or an embedded
+      engine such as libmdbx or SQLite. Rejected: real,
+      multi-part complexity --- the aggregate format and index, the
+      two-location lookup, relocation and reclaim handling, and the
+      backend choice itself --- for a version \reqref{HLR-SCOPE.V1-01}
+      asks to keep simple, even though it would fully close
+      \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}.
+    \item \emph{Do not implement compaction for this version} (chosen):
+      every object keeps its own file; the block-rounding and per-file
+      waste on small objects is accepted rather than eliminated.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] No new subsystem: no aggregate format, no index, no
+      background scheduler, no second lookup location, no purge-hole
+      reclamation --- matches \reqref{HLR-SCOPE.V1-01}'s preference for the
+      simplest adequate design.
+    \item[+] Nothing beyond what \reqref{ADR-STORAGE.OBJECTFILE-01} already
+      specifies needs building or trusting.
+    \item[--] Block-granular allocation and per-file overhead keep scaling
+      with the number of small cached objects, unresolved for this
+      version.
+    \item[--] \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s obligation is not
+      satisfied by this decision.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqterminal[Deferred: compaction is not implemented for this version, so
+  nothing further refines, satisfies, or verifies this decision; revisit if
+  HLR-SCOPE.V1-01's scope changes.]
+
+  \refine{ADR-PERSISTENCE.MECHANISM-01}
+  \conflictsWith{HLR-EFFICIENCY.SPACE-01}
+  \conflictsWith{REQ-EFFICIENCY.FRAGMENTATION-01}
+  \trace{ADR-STORAGE.OBJECTFILE-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Pingora compatibility: the eviction-reconstruction decision and the
+% detailed design record that fixes its mechanism.
+% ---------------------------------------------------------------------
+\begin{requirement}{ADR-COMPAT.EVICTION-01}[draft][designConstraint]{Eviction-state reconstruction strategy}
+
+  \localreqdiagram*{adr5}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{FRE-COMPAT.EVICTION-01} requires the
+  \texttt{pingora-cache} eviction manager's view to stay consistent with the
+  objects persisted across a restart, but the manager is driven by
+  \texttt{HttpCache}, not by the \texttt{Storage} backend, so the backend
+  cannot keep it synchronised on its own --- reconstructing it from the
+  persisted set is one way to close that gap. Doing so can trade startup
+  latency against the length of any inconsistency window, reliance on a
+  custom \texttt{EvictionManager} versus the stock one, and how far the
+  result departs from a pure drop-in \texttt{Storage} backend
+  (\reqref{HLR-COMPAT.PINGORA-01}); the alternatives below weigh those
+  trade-offs.
+
+  \textbf{Decision:} Adopt \emph{file-system reconstruction as the sole
+  mechanism, on every restart}: enumerate the persisted entries
+  (\reqref{ADR-PERSISTENCE.MECHANISM-01}) and
+  \texttt{admit}\footnote{\pgsrc{pingora-cache/src/eviction/mod.rs}{252}{\texttt{EvictionManager::admit}}.}
+  each one into the manager, purging any victim an \texttt{admit} returns.
+  No snapshot is taken, no delta log is maintained, and no distinction is
+  made between a clean shutdown and a crash: reconstruction always follows
+  the same procedure, and it admits every object with its record size, the
+  same size a completed store reports (\reqref{FRE-COMPAT.EVICTION-01}).
+
+  Whether the integrator begins serving before reconstruction completes
+  (accepting inaccurate capacity accounting until it does) or waits for it
+  (accepting startup latency proportional to the number of stored objects)
+  is an integration choice this decision leaves open. The window of
+  inaccuracy therefore ends exactly when the procedure completes; no fixed
+  time bound is claimed for it. Running alongside live traffic creates three
+  races, each closed by a rule the procedure follows:
+  \begin{itemize}
+    \item \emph{A stale size.} Live traffic may replace an object between
+      the scan reading its record and admitting it. The scan therefore
+      re-checks the record immediately before admitting, and uses the size
+      it finds then --- or skips the entry if the object is gone, since the
+      live store already admitted its replacement.
+    \item \emph{A ghost entry.} A live eviction drops its victim from the
+      manager at once, and removes the victim's record from storage only
+      afterwards, in a task of its
+      own,\footnote{\pgsrc{pingora-cache/src/lib.rs}{1073}{\texttt{HttpCache::finish\_miss\_handler}}
+      admits the completed store (\pgsrc{pingora-cache/src/lib.rs}{1118}{L1118}),
+      then spawns a task that purges each victim the manager returned
+      (\pgsrc{pingora-cache/src/lib.rs}{1128}{L1128}).} so the scan may
+      admit the victim again in between, and its entry would outlive the
+      record. After enumeration, the procedure re-checks every object it
+      admitted and removes the manager's entry for any that no longer
+      exists. A purge leaves no such entry: \texttt{HttpCache} removes a
+      purged object's entry itself, after the
+      purge.\footnote{\pgsrc{pingora-cache/src/lib.rs}{1896}{L1896}, once
+      the backend has reported the object purged.}
+    \item \emph{An early victim.} An admission during the scan may return,
+      as a victim, an object live traffic has just read. It is purged like
+      any other victim: capacity accounting stays exact, and the object is
+      simply fetched again when next requested.
+  \end{itemize}
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Snapshot on clean shutdown, reconstruction
+      only on crash}: on a clean shutdown, snapshot the manager with
+      \texttt{save};\footnote{\pgsrc{pingora-cache/src/eviction/mod.rs}{303}{\texttt{EvictionManager::save}}.}
+      at startup, if the snapshot file is present, \texttt{load}\footnote{\pgsrc{pingora-cache/src/eviction/mod.rs}{306}{\texttt{EvictionManager::load}}.}
+      it and delete it durably before serving resumes, so its presence
+      means exactly ``a durable, unconsumed snapshot exists'' and its
+      absence means ``reconstruct.'' That still leaves real machinery: a
+      shutdown-side lifecycle hook in Eviction Recovery
+      (\reqref{FDS-EVICTION.STARTUP-01}) --- today there is only one, at
+      process start --- a rule that a draining process never saves (its
+      snapshot would miss what the incoming process stores meanwhile), tied
+      to the read-only call \reqref{ADR-COMPAT.READONLY-01} introduces, and a
+      startup branch choosing between loading and scanning.
+      \reqref{HLR-SCOPE.V1-01} prefers the simplest adequate design even at
+      the cost of peak space or I/O efficiency; a recurring per-restart scan
+      is exactly such an efficiency cost, and the crash path already has to
+      build the scan/admit/reconcile machinery regardless
+      (\reqref{FDS-EVICTION.STARTUP-01}). Rejected: a second lifecycle hook,
+      a save rule coupled to the read-only switch, and a second startup path are more
+      machinery than the restart-time saving justifies.
+    \item \emph{Save/load with log replay}: snapshot the manager and keep an
+      append-only delta log between snapshots; replay the log at startup
+      instead of scanning the file system. Rejected: adds delta-log maintenance
+      and save-time reset machinery to the steady-state hot path, which the
+      adopted approach avoids entirely.
+    \item \emph{Lazy admission}: no scan at all; admit an object the first
+      time a lookup finds it. Rejected: an object nobody requests again is
+      never admitted, so it is never counted against the size budget and
+      never evicted --- exactly the gap \reqref{FRE-COMPAT.EVICTION-01}
+      exists to close.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] Simplest possible mechanism: no snapshot, no delta log, no
+      validity marker, no startup branch --- matches \reqref{HLR-SCOPE.V1-01}'s
+      preference for the simplest adequate design.
+    \item[+] One behaviour regardless of how the previous run ended: nothing
+      to misclassify a restart as clean when it was not, or vice versa.
+    \item[+] Reuses the stock \texttt{EvictionManager} only through
+      \texttt{admit}; no custom manager, and no \texttt{save}/\texttt{load}
+      pairing to keep synchronised.
+    \item[--] Every restart pays a full file-system scan; starting to serve
+      before it completes leaves capacity accounting inaccurate until it
+      does, and waiting for it to finish instead trades that window for
+      startup latency proportional to the number of stored objects ---
+      unlike the snapshot alternative's clean-restart case, which could
+      avoid both costs at once.
+    \item[--] Admission order follows the scan, not past use, so the
+      recency order the manager chose victims by before the restart is lost:
+      right after a restart, a frequently used object can be evicted ahead of
+      one nobody requests (accepted for this version,
+      \reqref{FRE-COMPAT.EVICTION-01}).
+    \item[--] Reconstruction is carried out by a separate component, Eviction
+      Recovery, additional to the \texttt{Storage} trait implementation
+      (\reqref{FDS-EVICTION.STARTUP-01}), so the deliverable is more than a pure
+      drop-in \texttt{Storage} backend (\reqref{HLR-COMPAT.PINGORA-01}).
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-EVICTION.STARTUP-01}{Specify the concrete
+  reconstruction procedure, and the API surface that orchestrates it,
+  realising this strategy.}
+
+  \satisfy{FRE-COMPAT.EVICTION-01}
+  \refine{ADR-PERSISTENCE.MECHANISM-01}
+\end{requirement}
+
+\begin{requirement}{ADR-COMPAT.ENTRYID-01}[draft][designConstraint]{No storage-assigned entry IDs}
+
+  \localreqdiagram*{adrentryid01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} Pingora 0.9.0 lets a backend give the eviction manager an
+  identity finer than the cache key. \texttt{HandleHit} and \texttt{HandleMiss}
+  may each return a \texttt{CacheEntryId},\footnote{\pgsrc{pingora-cache/src/storage.rs}{331}{\texttt{HandleHit::entry\_id}}
+  and \pgsrc{pingora-cache/src/storage.rs}{393}{\texttt{HandleMiss::entry\_id}},
+  both defaulting to \texttt{None}.} which \texttt{HttpCache} pairs with the
+  \texttt{CompactCacheKey} into the \texttt{CacheEntryKey} it admits, accesses,
+  and removes. The facility exists for a backend that keeps several
+  \emph{generations} of one key at once, so that eviction accounts for the exact
+  stored object rather than for whichever one currently answers the key. The
+  choice is all-or-nothing and must be consistent across both handles.
+
+  This backend has no such generations to distinguish. One key names one
+  canonical path (\reqref{SDS-LAYOUT.SHARDING-01}) and a store replaces whatever
+  is there by renaming over it (\reqref{FDS-STORAGE.PUBLISH-01}); a per-writer
+  temporary is not a readable generation, and the identifier is required to
+  survive \texttt{finish}, so a temporary's identity could not serve as one.
+
+  \textbf{Decision:} Return \texttt{None} from both \texttt{entry\_id} methods
+  and keep eviction keyed on the \texttt{CompactCacheKey} alone. Every entry
+  this backend admits is therefore a \texttt{CacheEntryKey::KeyOnly}, and every
+  purge outcome it reports is \texttt{Purged(None)}
+  (\reqref{FDS-STORAGE.PURGE-01}). An \texttt{Exact} purge target carrying an
+  \texttt{Identified} entry key names a generation this backend never issued, so
+  it is reported as not found rather than resolved to the key's canonical path.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Assign an identifier per published record} (its inode number, or
+      a counter recorded in the record header): rejected --- it buys accuracy
+      only for a backend that retains generations, and this one does not. Here
+      it would make accounting worse: a store that replaces a key would be
+      admitted as a second entry, while the manager, which storage never tells
+      of the replacement, would keep the first until it aged out, counting
+      space the rename already freed. It would also cost an identity that must
+      be read back on every hit, and survive a restart scan.
+    \item \emph{Retain generations and identify them}, publishing each store
+      under its own name and letting eviction remove them individually:
+      rejected --- it is a different storage design, not an addition to this
+      one, and \reqref{FRE-COMPLIANCE.REPLACE-01}'s last-writer-wins
+      convergence over a single canonical name is what several other decisions
+      here already rest on.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] The restart scan and live traffic address the same entry without
+      having to agree on an identifier the scan would have to recover from disk
+      (\reqref{FDS-EVICTION.STARTUP-01}).
+    \item[+] The backend's eviction accounting is exactly what it was under
+      Pingora 0.8.1, where the manager took the cache key directly.
+    \item[--] An eviction victim arrives as an \texttt{Exact} target and a purge
+      request as an \texttt{Active} one, yet both resolve identically here, so
+      the distinction the framework draws is one this backend can only
+      degenerate.
+    \item[--] Adopting generations later is a change to this decision and to the
+      record layout, not an incremental addition.
+    \item[--] An eviction purge can remove a newer object stored under the
+      victim's key. \texttt{HttpCache} purges victims in a spawned task after
+      \texttt{admit} chooses them;\footnote{\pgsrc{pingora-cache/src/lib.rs}{1128}{The
+      miss handler's \texttt{finish} path} spawns the purges of the victims
+      \texttt{admit} returned.} a store of that key completing in between is
+      what the purge removes. The eviction manager then tracks an entry with no
+      record behind it until it is evicted again, and the next lookup misses.
+      It is rare, since a victim is the least recently used key, and costs one
+      refetch; the stock \texttt{MemCache}, which assigns no identifiers
+      either, behaves the same.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \satisfy{FRE-COMPAT.EVICTION-01}
+  \refine{ADR-PERSISTENCE.MECHANISM-01}
+  \trace{ADR-COMPAT.EVICTION-01}
+  \trace{FDS-STORAGE.PURGE-01}
+  \trace{FDS-EVICTION.STARTUP-01}
+\end{requirement}
+
+\begin{requirement}{ADR-COMPAT.READONLY-01}[draft][designConstraint]{Read-only on the upgrade signal}
+
+  \localreqdiagram*{adrreadonly01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} Once the outgoing process receives the Pingora upgrade
+  signal, its backend must stop changing the shared cache --- no
+  publication, and purges and metadata updates refused --- while still
+  serving reads (\reqref{FRE-COMPAT.HOTUPGRADE-01}); meanwhile the incoming
+  process must reach a consistent eviction view
+  (\reqref{FRE-COMPAT.EVICTION-01}). The \texttt{Storage} trait receives no
+  such signal. Pingora does announce it to the process's own code: the
+  server broadcasts \texttt{ExecutionPhase::GracefulUpgradeTransferringFds}
+  when \texttt{SIGQUIT} arrives, before it sends the listening sockets to the
+  new process, and both processes then accept connections for
+  \texttt{CLOSE\_TIMEOUT} (5~s) before the old one stops listening and drains
+  its sessions for up to \texttt{EXIT\_TIMEOUT} (300~s).\footnote{\pgsrc{pingora-core/src/server/mod.rs}{235}{\texttt{Server::watch\_execution\_phase}};
+  the phase is sent at \pgsrc{pingora-core/src/server/mod.rs}{279}{L279},
+  before the sockets are sent (\pgsrc{pingora-core/src/server/mod.rs}{290}{L290});
+  \pgsrc{pingora-core/src/server/mod.rs}{66}{\texttt{CLOSE\_TIMEOUT}} and
+  \pgsrc{pingora-core/src/server/mod.rs}{63}{\texttt{EXIT\_TIMEOUT}}.}
+
+  \textbf{Decision:} The backend exposes an operation that makes it
+  \emph{read-only}, which the integrator invokes when its process's server
+  broadcasts \texttt{GracefulUpgradeTransferringFds}. The two words are kept
+  apart: the \emph{process} drains --- it finishes the sessions it has
+  accepted --- while its \emph{backend} is read-only, reading the shared
+  cache but no longer changing it. From that call on, the backend
+  publishes nothing (a store that completes has its temporary removed
+  instead of renamed), fails purges and metadata updates with an error, and
+  keeps serving lookups and reads. The incoming process starts its restart
+  procedure only once it holds the listening sockets \emph{and} the
+  upgrade's close timeout has elapsed: the outgoing process's read-only call ---
+  delivered asynchronously, shortly after its phase broadcast --- has taken
+  effect by then, so every object it published is already on disk before the
+  incoming scan begins.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{No read-only switch: two independent writers for the whole
+      window.}
+      Rejected: objects the outgoing process publishes after the incoming
+      scan are unknown to the incoming eviction manager until the next
+      restart, violating \reqref{FRE-COMPAT.EVICTION-01}, and the two
+      managers together can let disk use exceed the budget.
+    \item \emph{An on-disk generation marker}: each backend records a
+      generation at start and checks, before every publication or purge, that
+      no newer one exists --- no integrator hook needed. Rejected: a new
+      on-disk structure (\reqref{HLR-SCOPE.V1-01}), a file-system check on
+      every write, and a window between the check and the rename that the
+      marker cannot close.
+    \item \emph{The incoming process defers all writes until the outgoing one
+      exits.} Rejected: it runs uncached for up to \texttt{EXIT\_TIMEOUT} ---
+      five minutes of full origin load after every upgrade.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] The incoming process is the sole writer for its whole life after
+      the close timeout, so the single-instance guarantees apply unchanged.
+    \item[+] The integration is one call from a Pingora hook the server
+      already provides.
+    \item[--] An integrator that does not wire the call gets the two-writer
+      behaviour rejected above; the deliverable documents the call as
+      required for hot upgrades.
+    \item[--] Purges sent to the outgoing process once its backend is
+      read-only fail and must be retried; responses it stores from then on
+      are served but not cached.
+    \item[--] The incoming process's restart procedure starts at least 5~s
+      after it takes over, lengthening the window of inaccurate accounting
+      \reqref{ADR-COMPAT.EVICTION-01} already accepts.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-COMPAT.READONLY-01}{Specify the read-only operation
+  and its integration with the execution-phase broadcast, the behaviour of each
+  Storage call after it, and the incoming process's start condition for its
+  restart procedure.}
+
+  \refine{ADR-PERSISTENCE.MECHANISM-01}
+  \satisfy{FRE-COMPAT.HOTUPGRADE-01}
+  \trace{ADR-COMPAT.EVICTION-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Standards compliance: detailed, verifiable storage requirements
+% refining HLR-COMPLIANCE.RFC-01.
+%
+% Scope: this component is a pingora-cache Storage backend, not a full
+% HTTP cache. Decisions such as whether a response is cacheable, how
+% freshness/age are computed, when to revalidate, and how Cache-Control
+% request/response directives are interpreted live in pingora-cache.
+% The requirements below therefore capture only what the *storage layer*
+% must do so those RFC 9111 / RFC 9110 semantics survive a store -> retrieve
+% cycle intact: faithful round-trip of metadata and body, support for the
+% operations pingora-cache invokes (metadata update on validation, variant
+% selection, purge), and refusal to serve partially-stored responses.
+%
+% Each requirement is written to be verifiable so it can be checked by the
+% test-case specifications in the following stage.
+% ---------------------------------------------------------------------
+\begin{requirement}{FRE-COMPLIANCE.HEADERS-01}[draft][functionalRequirement]{Faithful header round-trip}
+
+  \localreqdiagram*{rfr01}{\reqid}{\reqdesc}
+
+  WHEN \texttt{pingora-cache} looks up a stored object, including after a
+  process restart, the storage backend shall return the complete response
+  head it was handed for that object --- the status code, the protocol
+  version, and every response header field with its name and value
+  preserved byte for byte and same-named fields in their relative order.
+
+  ``Every header field'' covers any head \texttt{pingora-cache} hands over:
+  fields \texttt{pingora-cache} does not itself recognise, opaque non-ASCII
+  octets in a value, repeated field names (including
+  \texttt{Set-Cookie}-style fields that must not be list-combined), empty
+  field values, and a header set large enough to exceed any fixed-size
+  metadata region the on-disk format reserves. Returning the head unchanged
+  keeps the status, freshness, validation, and \texttt{Cache-Control} inputs
+  \texttt{pingora-cache} relies on from being dropped or altered by storage.
+
+  \textit{Basis: \rfcsec{9111}{3.1}[storing header fields];
+  \rfcsec{9110}{5.2}[field lines], \rfcsec{9110}{5.3}[field order],
+  \rfcsec{9110}{6.2}[control data], \rfcsec{9110}{6.3}[header fields].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{SDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.TRAILERS-01}[draft][functionalRequirement]{Trailer fields kept distinct}
+
+  \localreqdiagram*{rfr02}{\reqid}{\reqdesc}
+
+  The storage backend shall return no field it received as a trailer field
+  to \texttt{pingora-cache} as a header field.
+
+  The backend may persist trailer fields separately from the header fields
+  or discard them; either meets the requirement. In the targeted
+  \texttt{pingora-cache} version the \texttt{Storage} interface offers no
+  trailer channel: the metadata handed to the backend carries header fields
+  only, and the miss handler carries body bytes only, so the framework can
+  never present a trailer to the backend and the interface itself discharges
+  this obligation. The requirement still constrains the backend's own on-disk
+  format --- which offers no way to fold trailer-originated fields into the
+  stored header set --- and any future framework version that does carry
+  trailers.
+
+  Because no trailer can reach the backend through the targeted interface, no
+  test can exercise this obligation; it is verified by \emph{inspection} of the
+  \texttt{Storage} interface and of the on-disk record format, recorded in
+  \reqref{TC-COMPLIANCE.TRAILERS-01}.
+
+  \textit{Basis: \rfcsec{9111}{3.1}[``Caches MUST NOT combine trailer fields with
+  header fields'']; \rfcsec{9110}{6.5}[trailer fields].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{SDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.BODY-01}[draft][functionalRequirement]{Faithful round-trip of the body}
+
+  \localreqdiagram*{rfr03}{\reqid}{\reqdesc}
+
+  The storage backend shall deliver, on every read of a stored object's body
+  --- from its start, or from a position sought through the hit
+  handler\footnote{\pgsrc{pingora-cache/src/storage.rs}{270}{\texttt{HitHandler::can\_seek}}
+  and \pgsrc{pingora-cache/src/storage.rs}{284}{\texttt{HitHandler::seek}}.}
+  --- exactly the corresponding bytes of the body written for that object, in
+  order, with no truncation, padding, re-encoding, or other transformation.
+
+  The requirement applies to bodies of every size: empty bodies, bodies at the
+  backend's chunk- and block-size boundaries, and bodies spanning many chunks.
+  Exact reads from a sought position matter because \texttt{pingora-cache}
+  builds range responses from a sought reader, so those responses then carry
+  exactly the stored bytes for the requested range.
+
+  \textit{Basis: \rfcsec{9110}{8.1}[representation data];
+  \rfcsec{9111}{3}[storing responses]; \rfcsec{9110}{14.2}[Range].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{SDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.FRESHNESS-01}[draft][functionalRequirement]{Preserve freshness and age inputs}
+
+  \localreqdiagram*{rfr04}{\reqid}{\reqdesc}
+
+  Freshness lifetime and current age that \texttt{pingora-cache} evaluates from a
+  retrieved object, at a given evaluation instant, shall match those it
+  evaluates at that same instant from the object as it was handed to the
+  backend --- including across a restart, and after a metadata update
+  (\reqref{FRE-COMPLIANCE.REVALIDATION-01}), when the updated object is the
+  one handed over.
+
+  Two kinds of input feed that evaluation. The response header fields ---
+  \texttt{Date}, \texttt{Expires}, \texttt{Age}, and the
+  \texttt{Cache-Control} \texttt{max-age}/\texttt{s-maxage} directives --- are
+  already required to round-trip byte for byte by
+  \reqref{FRE-COMPLIANCE.HEADERS-01}, boundary and degenerate values included;
+  interpreting them is up to \texttt{pingora-cache}. What this requirement
+  adds is the other kind: the created, updated, and fresh-until instants
+  \texttt{pingora-cache} keeps in the object's internal metadata, which the
+  backend round-trips as part of the metadata it persists, never substituting
+  timestamps of its own. Boundary values --- an \texttt{Age} of \texttt{0},
+  delta-seconds at the overflow cap (\texttt{2147483648}), \texttt{max-age=0},
+  an already-past or syntactically invalid \texttt{Expires} --- are where a
+  mismatch in evaluation would surface, so this requirement's test exercises
+  them.
+
+  \textit{Basis: \rfcsec{9111}{4.2}[freshness], \rfcsec{9111}{4.2.3}[calculating age],
+  \rfcsec{9111}{5.1}[Age], \rfcsec{9111}{5.2.2}[response directives],
+  \rfcsec{9111}{5.3}[Expires].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{SDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FRE-COMPLIANCE.HEADERS-01}
+  \trace{FRE-COMPLIANCE.REVALIDATION-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.VALIDATORS-01}[draft][functionalRequirement]{Preserve validator fields}
+
+  \localreqdiagram*{rfr05}{\reqid}{\reqdesc}
+
+  The storage backend shall return the \texttt{ETag} and \texttt{Last-Modified}
+  validator fields byte for byte in each form conditional revalidation depends
+  on: a strong entity tag, a weak one (\texttt{W/}), an empty entity tag
+  (\texttt{ETag: ""}), and both validators on one response.
+
+  \reqref{FRE-COMPLIANCE.HEADERS-01} already requires every header field to
+  round-trip byte for byte. This requirement names the validator forms whose
+  silent normalisation would specifically break revalidation --- the fields
+  \texttt{pingora-cache} uses to issue \texttt{If-None-Match} /
+  \texttt{If-Modified-Since} and to match a \texttt{304 (Not Modified)} to the
+  stored representation --- so that each is verified explicitly. Validators
+  changed by a metadata update are governed by
+  \reqref{FRE-COMPLIANCE.REVALIDATION-01}.
+
+  \textit{Basis: \rfcsec{9110}{8.8.2}[Last-Modified], \rfcsec{9110}{8.8.3}[ETag];
+  \rfcsec{9111}{4.3}[validation].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{SDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FRE-COMPLIANCE.HEADERS-01}
+  \trace{FRE-COMPLIANCE.REVALIDATION-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.REVALIDATION-01}[draft][functionalRequirement]{Freshen metadata}
+
+  \localreqdiagram*{rfr06}{\reqid}{\reqdesc}
+
+  WHEN \texttt{update\_meta} is called with newer metadata for the object a key
+  holds, the storage backend shall replace that object's metadata and header
+  fields with the newer set, keeping the object's body unchanged and
+  retrievable under the same key, or, if the newer set exceeds the space the
+  backend reserved for the object's metadata, stop holding the object, so
+  that the next request for it fetches it again.
+
+  \texttt{pingora-cache} freshens a stored response this way after a
+  successful validation --- a \texttt{304 (Not Modified)} response --- through
+  the backend's \texttt{update\_meta}
+  operation.\footnote{\pgsrc{pingora-cache/src/storage.rs}{235}{\texttt{Storage::update\_meta}}.}
+  A newer header set may be larger than the one it replaces, and no longer
+  fit the space the on-disk layout reserved ahead of the body
+  (\reqref{FDS-STORAGE.METAUPDATE-01}). For this version, the backend then
+  stops holding the object rather than keep it
+  (\reqref{ADR-STORAGE.METAMOVE-01}). \rfcsec{9111}{4.3.4} binds the
+  responses a cache keeps, but nothing obliges a cache to keep one, and
+  \rfcsec{9111}{4.4} counts removing a stored response as invalidating it.
+  Either way, the object is never served truncated, nor with a mixture of
+  the two metadata sets.
+  The newer metadata belongs to the object that was validated: a key whose
+  object a newer one has replaced since then keeps the newer object, whole,
+  and the update is not applied (\reqref{FDS-STORAGE.METAUPDATE-01}).
+  What a concurrent lookup may observe is stated in
+  \reqref{FRE-COMPLIANCE.METAATOMIC-01}, what survives a restart or crash in
+  \reqref{FRE-COMPLIANCE.METAPERSIST-01}, and what an update of a key with no
+  stored object does in \reqref{FRE-COMPLIANCE.METAABSENT-01}. An update
+  requested after the backend's process has received the Pingora upgrade signal
+  is refused instead (\reqref{FRE-COMPAT.HOTUPGRADE-01}).
+
+  \textit{Basis: \rfcsec{9111}{3.2}[updating stored header fields],
+  \rfcsec{9111}{4.3.4}[freshening stored responses upon validation].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FDS-STORAGE.METAUPDATE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.METAATOMIC-01}[draft][functionalRequirement]{Atomic metadata update}
+
+  \localreqdiagram*{rfrmetaatomic01}{\reqid}{\reqdesc}
+
+  WHILE a metadata update of an object is in progress, the storage backend
+  shall answer every lookup of that object with either its pre-update or its
+  post-update metadata, whole, together with the object's unchanged body.
+
+  A lookup therefore never observes a partially updated mixture of the two
+  metadata sets, nor a body that no longer matches the metadata it is served
+  with; a mixture could pair freshness inputs and validators that never
+  belonged together. The update itself is stated in
+  \reqref{FRE-COMPLIANCE.REVALIDATION-01}.
+
+  \textit{Basis: \rfcsec{9111}{3.2}[updating stored header fields].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FRE-COMPLIANCE.REVALIDATION-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.METAPERSIST-01}[draft][functionalRequirement]{Freshened metadata persists}
+
+  \localreqdiagram*{rfrmetapersist01}{\reqid}{\reqdesc}
+
+  WHEN a process of the backend looks up an object whose metadata update an
+  earlier process reported as applied, the storage backend shall return the
+  updated metadata --- or, only if a host crash or power loss intervened,
+  either the updated or the superseded metadata, never a mixture of the two.
+
+  Superseded metadata only makes the object due for revalidation sooner,
+  whereas a mixture could pair freshness inputs and validators that never
+  belonged together. The requirement holds until a later store, update, or
+  purge of the key changes the object again.
+
+  This requirement derives from two parents: \reqref{HLR-COMPLIANCE.RFC-01}
+  for freshening semantics, which an update lost on an orderly restart would
+  undo, and \reqref{HLR-PERSISTENCE.CRASHSAFE-01} for what a host crash may
+  and may not do to an applied update.
+
+  \textit{Basis: \rfcsec{9111}{4.3.4}[freshening stored responses upon
+  validation].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-01}
+  \trace{FRE-COMPLIANCE.REVALIDATION-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.METAABSENT-01}[draft][functionalRequirement]{Update of an absent key}
+
+  \localreqdiagram*{rfrmetaabsent01}{\reqid}{\reqdesc}
+
+  IF \texttt{update\_meta} is called for a key that holds no stored object,
+  THEN the storage backend shall report an error distinguishable from an
+  applied update, leaving the key without a stored object.
+
+  Materialising a bodyless object from the metadata alone would let a later
+  lookup serve a response with no representation. This deliberately differs
+  from the stock backend, which panics in that
+  case.\footnote{\pgsrc{pingora-cache/src/memory.rs}{448}{\texttt{MemCache::update\_meta}}
+  calls \texttt{panic!("no meta found")} when the key holds no object.}
+
+  \textit{Basis: \rfcsec{9111}{3.2}[updating stored header fields].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FRE-COMPLIANCE.REVALIDATION-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.REPLACE-01}[draft][functionalRequirement]{Replace stored responses atomically}
+
+  \localreqdiagram*{rfr10}{\reqid}{\reqdesc}
+
+  The storage backend shall answer every lookup it serves from a published
+  object with the object most recently published under the looked-up key,
+  whole --- never a mixture of two objects, nor the metadata of one paired
+  with the body of another.
+
+  \texttt{pingora-cache} stores a new response under a key that already holds
+  one when a full response to a validation request replaces the stored
+  response it could not freshen, or when an expired object is simply
+  re-fetched and re-admitted. The old object therefore stays the answer, whole,
+  until the new store is published, and the new object is the answer, whole,
+  from then on. Until then a lookup within the writing process may instead be
+  served a partial hit of the in-flight new object
+  (\reqref{FRE-COMPAT.STREAMING-01}); a lookup that cannot see the in-flight
+  write --- such as one from a peer process --- gets the old object. When
+  several stores of the same key race --- which \texttt{pingora-cache}
+  permits (\reqref{FRE-COMPAT.CONCURRENT-01}) --- the last to publish is the
+  single winner. What a reader already streaming the old object receives is
+  stated in \reqref{FRE-COMPLIANCE.READERISOLATION-01}.
+
+  \textit{Basis: \rfcsec{9111}{4.3.3}[handling a validation response --- a full
+  response replaces the stored one]; \rfcsec{9111}{3}[storing responses].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FDS-STORAGE.PUBLISH-01}
+  \trace{FRE-COMPAT.STREAMING-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.READERISOLATION-01}[draft][functionalRequirement]{Readers survive replace/purge}
+
+  \localreqdiagram*{rfrreaderisolation01}{\reqid}{\reqdesc}
+
+  WHEN the object a reader is streaming is replaced or purged, that reader
+  shall deliver only that object's own bytes, ending either at that object's
+  normal end of body or with an error.
+
+  A reader never crosses into the bytes of the replacing object, of another
+  object, or of a torn record. Delivering only the object's own bytes implies
+  that the storage the reader reads from is not reused for anything else while
+  the reader still references it; the design decides how
+  (\reqref{FDS-STORAGE.PUBLISH-01}, \reqref{FDS-STORAGE.PURGE-01}).
+
+  \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses];
+  \rfcsec{9111}{3}[storing responses].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FRE-COMPLIANCE.REPLACE-01}
+  \trace{FRE-COMPLIANCE.PURGE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.VARY-01}[draft][functionalRequirement]{Store and select Vary variants}
+
+  \localreqdiagram*{rfr07}{\reqid}{\reqdesc}
+
+  WHEN \texttt{pingora-cache} looks up a key, the storage backend shall return
+  the object stored under exactly that key --- primary slot or variant slot
+  --- or report a miss when none is stored there.
+
+  The backend thus holds several response variants for the same primary cache
+  key, each under the variance-augmented cache key \texttt{pingora-cache}
+  presents, and never serves one slot's object in place of another's, so that
+  \texttt{Vary}-based content negotiation is honoured. The variance is derived
+  from the request fields named by the response's \texttt{Vary} header and
+  folded into the cache key \emph{before} the backend is called; the backend
+  never sees the request itself. Variants persist across a restart like any
+  other stored object (\reqref{HLR-PERSISTENCE.DURABLE-01}); how mutating one
+  variant affects the others is stated in
+  \reqref{FRE-COMPLIANCE.VARYISOLATION-01}.
+
+  \textit{Basis: \rfcsec{9111}{4.1}[calculating cache keys with Vary];
+  \rfcsec{9110}{12.5.5}[Vary].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{SDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.VARYISOLATION-01}[draft][functionalRequirement]{Variant isolation}
+
+  \localreqdiagram*{rfrvaryisolation01}{\reqid}{\reqdesc}
+
+  WHEN one variant of a primary key is stored, replaced, freshened, or
+  purged, the storage backend shall leave every other variant of that primary
+  key unchanged.
+
+  A purge addressed to the \emph{primary} slot is the deliberate exception: it
+  makes every variant unreachable (\reqref{FRE-COMPLIANCE.PURGE-01}).
+
+  \textit{Basis: \rfcsec{9111}{4.1}[calculating cache keys with Vary].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{SDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FRE-COMPLIANCE.VARY-01}
+  \trace{FRE-COMPLIANCE.PURGE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.PURGE-01}[draft][functionalRequirement]{Honour purge and invalidation}
+
+  \localreqdiagram*{rfr08}{\reqid}{\reqdesc}
+
+  WHEN the storage backend applies an invalidating purge of a key, it shall
+  serve neither the response stored under that key, nor any store of that
+  key in flight when the purge arrives, nor --- for a primary key --- any of
+  its \texttt{Vary} variants on any later lookup, until a store that begins
+  after the purge publishes a new object under that key.
+
+  The purge request path \texttt{pingora-proxy} drives addresses a purge to
+  the \emph{primary} slot of an asset, and the variant lookups in
+  \texttt{pingora-cache} consult the primary slot first; removing the primary slot therefore
+  acts as the tombstone of the whole variant set, and the backend is not
+  handed --- and cannot derive --- the keys of the individual variants. Such
+  orphaned variant records stay in storage, counted against the cache's size
+  budget like any other object, until eviction removes them
+  (\reqref{FRE-COMPAT.EVICTION-01}). A same-key store in flight
+  when the purge arrives may carry the very content the purge removes, if it
+  began before the change that prompted the purge reached the origin, so the
+  purge ends it as well: later lookups pass over it, and it publishes nothing
+  when it completes. The request writing it still reads its own body back,
+  and a reader already streaming it completes, as one streaming a purged
+  record does (\reqref{FRE-COMPLIANCE.READERISOLATION-01}).
+  The \texttt{pingora-cache} contract would let such a store
+  land,\footnote{\pgsrc{pingora-cache/src/storage.rs}{217}{\texttt{Storage::expire}}'s
+  doc calls a store that commits after an expiry ``the same race
+  \texttt{Storage::purge} has'', to be ``resolved by whatever serializes
+  writes for that key''.} but its in-memory backend removes a key's stores in
+  flight together with its stored
+  response,\footnote{\pgsrc{pingora-cache/src/memory.rs}{403}{\texttt{MemCache::purge}}
+  removes the key from \texttt{self.temp}, its stores in flight, as well as
+  from \texttt{self.cached}.} and an invalidation is the case where landing
+  is wrong. A purge made to evict leaves stores in flight alone: it is not an
+  invalidation. \texttt{pingora-cache} itself invalidates only on an
+  explicit purge request from the proxy application --- it does not
+  invalidate on unsafe request methods, leaving that RFC~9111 duty to the
+  application.
+
+  A purge of a key holding nothing is stated in
+  \reqref{FRE-COMPLIANCE.PURGEABSENT-01}, when a purge may be acknowledged in
+  \reqref{FRE-COMPLIANCE.PURGEDURABLE-01}, and what a reader streaming the
+  purged object receives in \reqref{FRE-COMPLIANCE.READERISOLATION-01}.
+
+  \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses];
+  \rfcsec{9110}{9.2.1}[safe methods].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.PURGEABSENT-01}[draft][functionalRequirement]{Purge or expiry of absent key}
+
+  \localreqdiagram*{rfrpurgeabsent01}{\reqid}{\reqdesc}
+
+  IF a purge or an expiry addresses a key under which no object is stored,
+  THEN the storage backend shall report that nothing was found, with no error
+  and no change to any other stored object.
+
+  The case covers a key never stored and a key purged or expired a second
+  time, so both operations are idempotent. \reqref{FRE-COMPAT.EXPIRE-01}
+  states what an expiry does when the key \emph{does} hold an object.
+
+  \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FRE-COMPLIANCE.PURGE-01}
+  \trace{FRE-COMPAT.EXPIRE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.PURGEDURABLE-01}[draft][functionalRequirement]{Purge acknowledged once durable}
+
+  \localreqdiagram*{rfrpurgedurable01}{\reqid}{\reqdesc}
+
+  The storage backend shall report the outcome of an invalidating purge ---
+  an object removed, or none found --- only once the key's absence will
+  survive a crash or restart of the backend's process or host.
+
+  An invalidation the backend will not make durable --- as after its process
+  has received the Pingora upgrade signal (\reqref{FRE-COMPAT.HOTUPGRADE-01})
+  --- therefore fails with an error rather than being reported as having
+  removed something or nothing. An invalidation that found nothing is no
+  exception: the key's record may have been removed just before by a purge
+  made to evict, which nothing has made durable, and a crash undoing that
+  removal would bring the object back after the invalidation reported it
+  absent.
+
+  A purge made to evict (\texttt{PurgeType::Eviction}) is outside this
+  requirement. No one asked for the object's removal: the cache chose to
+  drop it for space, and an evicted object back after a crash is still a
+  valid response, which the cache may serve or evict again. It is not a
+  purge in \reqref{HLR-PERSISTENCE.CRASHSAFE-01}'s sense.
+
+  This requirement derives from two parents: \reqref{HLR-COMPLIANCE.RFC-01}
+  for invalidation semantics, which a purged object reappearing would undo,
+  and \reqref{HLR-PERSISTENCE.CRASHSAFE-01} for the durability of an
+  acknowledged purge across a host crash.
+
+  \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-01}
+  \trace{FRE-COMPLIANCE.PURGE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.INCOMPLETE-01}[draft][functionalRequirement]{Never serve incomplete responses}
+
+  \localreqdiagram*{rfr09}{\reqid}{\reqdesc}
+
+  IF a store does not complete --- it aborts, or its process or host crashes
+  first --- or a host crash occurs before a completed store's content has
+  reached stable storage, THEN the storage backend shall serve that store's
+  object on no later lookup, in the writing process or any later one.
+
+  A lookup that would have returned the object reports a miss instead, or ---
+  when the key already held an object --- returns that earlier object
+  (\reqref{FRE-COMPLIANCE.REPLACE-01}); truncated, torn, or otherwise
+  corrupted content is never served as complete, and nothing such a store
+  leaves on disk is promoted by a later process. The \texttt{Storage}
+  interface gives \texttt{pingora-cache} no way to consume an ``incomplete''
+  record, so a miss is the only compliant outcome. The backend does not
+  combine partial content from \texttt{206 (Partial Content)} or range
+  responses, so it stores only complete representations and leaves any range
+  handling to \texttt{pingora-cache}. What a reader already following the
+  store receives when it aborts is stated in
+  \reqref{FRE-COMPLIANCE.PARTIALABORT-01}, and the release of the storage
+  such a store consumed in \reqref{FRE-COMPAT.ABORTSPACE-01} and
+  \reqref{FRE-COMPAT.STARTRECLAIM-01}.
+
+  This requirement derives from two parents: \reqref{HLR-COMPLIANCE.RFC-01}
+  for the RFC~9111 rule on storing incomplete responses, and
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} for extending it to content a host
+  crash leaves incomplete.
+
+  \textit{Basis: \rfcsec{9111}{3.3}[storing incomplete responses],
+  \rfcsec{9111}{3.4}[combining partial content]; \rfcsec{9110}{14.2}[Range],
+  \rfcsec{9110}{6.1}[framing and completeness].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPLIANCE.PARTIALABORT-01}[draft][functionalRequirement]{Aborted partial hits end in error}
+
+  \localreqdiagram*{rfrpartialabort01}{\reqid}{\reqdesc}
+
+  IF the in-flight store a partial hit's reader is attached to aborts, THEN
+  that reader shall end its stream with an error, never with a normal end of
+  body.
+
+  A truncated representation is thus never delivered to a follower as if it
+  were complete. The abort may be an upstream failure, a cancellation, or a
+  write failure (\reqref{FRE-COMPAT.WRITEFAIL-01}); the partial hit itself is
+  stated in \reqref{FRE-COMPAT.STREAMING-01}, and its normal end on
+  completion in \reqref{FRE-COMPAT.STREAMEND-01}.
+
+  \textit{Basis: \rfcsec{9111}{3.3}[storing incomplete responses];
+  \rfcsec{9110}{6.1}[framing and completeness].}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPLIANCE.RFC-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPAT.STREAMING-01}
+\end{requirement}
+

@@ -1,0 +1,30 @@
+name: Dependencies
+
+# cargo-deny over the published crate's dependency graph: security advisories,
+# licences, duplicate versions and sources (deny.toml). It runs when the
+# dependencies or the policy change, and nightly, because new advisories
+# appear without any change here.
+on:
+  push:
+    branches: [main]
+    paths: ["**/Cargo.toml", "Cargo.lock", "deny.toml", ".github/workflows/deny.yml", "flake.nix", "flake.lock"]
+  pull_request:
+    paths: ["**/Cargo.toml", "Cargo.lock", "deny.toml", ".github/workflows/deny.yml", "flake.nix", "flake.lock"]
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: cargo deny check
+        run: nix develop -c cargo deny --manifest-path durable-cache/Cargo.toml --exclude-dev check

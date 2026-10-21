@@ -1,0 +1,132 @@
+% =====================================================================
+% Appendix: Storage Backend Alternatives.
+%
+% Expands the alternatives weighed by ADR-PERSISTENCE.MECHANISM-01: how
+% each design organises bytes on disk, what storing a streamed HTTP
+% response looks like in it, and why it lost to the plain file system
+% for a first version.
+% =====================================================================
+
+This appendix expands the alternatives weighed by
+\reqref{ADR-PERSISTENCE.MECHANISM-01}: how each design organises bytes on
+disk, what storing a streamed HTTP response looks like in it, and why it
+lost to the plain file system for a first version
+(\reqref{HLR-SCOPE.V1-01}).
+
+\section{Raw Device / Cyclone Store: Apache Traffic Server}
+\label{app:alt-ats}
+
+Traffic Server's cache runs directly on raw disk spans (or span files),
+bypassing the file system. Each storage stripe is treated as a circular
+buffer: a \emph{write cursor} advances through it, everything written
+lands at the cursor through a multi-megabyte \emph{aggregation buffer}
+flushed sequentially, and objects larger than the target fragment size
+(1\,MB by default) are split into \emph{fragments} chained through
+directory entries --- the design the documentation calls a \emph{cyclone
+cache}.\footnote{\href{https://docs.trafficserver.apache.org/en/latest/developer-guide/cache-architecture/architecture.en.html\#cyclone-buffer}{Apache Traffic Server documentation: ``Cache Architecture'' (Cyclone Buffer)}}
+Eviction is implicit: as the cursor wraps, it overwrites the
+least recently written data, and the directory entries pointing there die
+with it.
+
+\emph{Example.} A 2.5\,MB response arriving chunk by chunk accumulates in
+the aggregation buffer and is cut into three fragments, each appended at
+the cursor; the directory chains them under the object's key. A crash
+between the second and third fragment leaves a truncated chain and a
+stale directory; on restart the directory is rebuilt by scanning the
+stripe, and the incomplete chain is simply never resurrected.
+
+That machinery --- aggregation buffer, fragment chaining, directory
+persistence, recovery scan --- is what makes the model work, and none of
+it exists outside Traffic Server's own process: the cache is already its
+own internal library
+target,\footnote{\href{https://github.com/apache/trafficserver/blob/10.1.4/src/iocore/cache/CMakeLists.txt\#L18-L39}{Apache
+Traffic Server source (release 10.1.4): \texttt{src/iocore/cache/CMakeLists.txt}, lines 18--39}}
+but its core object is an EventSystem continuation, not a caller of
+one,\footnote{\href{https://github.com/apache/trafficserver/blob/10.1.4/src/iocore/cache/CacheVC.h\#L45}{Apache
+Traffic Server source (release 10.1.4): \texttt{src/iocore/cache/CacheVC.h}, line 45}}
+so adopting it means adopting Traffic Server's own cooperative-threading
+runtime alongside it, not just relinking a self-contained module.
+Squid's Rock store, which formally replaced its earlier COSS store in
+Squid~3.5,\footnote{\href{https://www.squid-cache.org/Versions/v3/3.5/RELEASENOTES.html}{Squid~3.5
+release notes}: ``COSS storage type is formally replaced by Rock storage
+type.''} solves the same duties with different trade-offs: a single
+database file of fixed-size slots of at most 32\,KB, with a larger object
+spread across several slots.\footnote{\href{https://www.squid-cache.org/Versions/v3/3.5/RELEASENOTES.html}{Squid~3.5
+release notes}: the rock slot size defaults to, and is at most, 32\,KB, with
+``new support for larger than 32KB objects in both rock type cache and
+shared memory cache.''} Rebuilding machinery of either class from scratch is
+the largest bespoke surface among the alternatives
+(\reqref{HLR-SCOPE.V1-01}).
+
+\section{Embeddable Cache Engine: Meta's CacheLib}
+\label{app:alt-cachelib}
+
+CacheLib is a C++ library combining a slab-allocated RAM cache with the
+\emph{Navy} flash engine: small items go to
+BigHash,\footnote{\href{https://cachelib.org/docs/Cache_Library_Architecture_Guide/navy_overview/\#block-cache}{CacheLib documentation: ``Navy Overview'' (Block Cache)}}
+effectively a giant fixed-bucket hash map on the device, while larger
+items go to BlockCache, which divides the device into equally sized
+append-only regions (16\,MB by default) and reclaims whole regions to
+make space. Allocation is size-first: \texttt{allocate} returns a
+writable buffer of the requested length, and data that exceeds the
+maximum allocation --- or arrives as a stream --- is stored as a parent
+item plus chained child
+items\footnote{\href{https://cachelib.org/docs/Cache_Library_User_Guides/chained_items/\#chained-allocations}{CacheLib documentation: ``Chained items'' (Chained allocations)}}
+added one at a time, so the total size need not be known in advance.
+This eviction and region-reclaim machinery is compatible with
+\texttt{pingora-cache}: the \texttt{EvictionManager} \texttt{pingora-cache}
+drives is optional,\footnote{\pgsrc{pingora-cache/src/lib.rs}{571}{\texttt{HttpCache::enable}}
+takes it as an \texttt{Option}.} so a backend can leave it unset and let
+CacheLib manage capacity on its own (\reqref{FRE-COMPAT.EVICTION-01}).
+
+\emph{Example.} Caching a streamed response means allocating a parent
+item for the metadata, then, per arriving chunk, allocating a chained
+child of that chunk's size, copying the bytes in, and linking it ---
+workable, with every chunk boundary being the application's bookkeeping.
+Across a hot upgrade the model stops fitting: its persistence is a
+shutdown-and-reattach protocol over shared memory with one active cache
+instance per
+path,\footnote{\href{https://cachelib.org/docs/Cache_Library_User_Guides/Cache_persistence/\#common-failure-scenarios}{CacheLib documentation: ``Cache persistence'' (Common failure scenarios)}}
+so the old and new process cannot serve one store concurrently
+(\reqref{FRE-COMPAT.HOTUPGRADE-01}).
+
+The FFI boundary between Rust and C++, together with the
+one-active-instance-per-path persistence model above, is what rules
+CacheLib out for a first version: the integration surface outweighs
+the engine's maturity.
+
+\section{Embedded Database: libmdbx/LMDB, RocksDB}
+\label{app:alt-embdb}
+
+These engines store \emph{records} transactionally --- copy-on-write
+B-trees in the LMDB family, a log-structured merge tree in RocksDB ---
+so a cached object becomes a metadata record plus body-chunk records
+written as they arrive.
+
+\emph{Example.} A body that streams for minutes either holds a write
+transaction open for its whole duration or is committed
+chunk-record by chunk-record; a reader streaming a partial hit must
+discover freshly committed chunks and wait for the next
+(\reqref{FRE-COMPAT.STREAMING-01}) --- coordination the store does
+not provide, so the in-memory machinery exists beside it anyway.
+Cross-process use during a hot upgrade is engine-specific: RocksDB
+admits no multi-process
+writers,\footnote{\href{https://github.com/facebook/rocksdb/wiki/RocksDB-FAQ\#basic-readwrite}{RocksDB wiki: ``RocksDB FAQ'' (Basic Read/Write)}}
+so the incoming process could not write while the outgoing one still holds
+the database open, while the LMDB family permits multi-process access with
+no more than one write transaction at a
+time\footnote{\href{https://github.com/erthink/libmdbx\#gotchas}{libmdbx README (GitHub mirror), ``Gotchas''}}
+--- no obstacle once the outgoing process stops writing
+(\reqref{ADR-COMPAT.READONLY-01}). Pure-Rust engines such as \texttt{redb} and
+\texttt{fjall} remove the FFI boundary but not the record chunking or the
+streaming coordination above.
+
+What the engine genuinely buys --- record packing and crash-consistent
+commits --- is ground the file-system design cedes knowingly: packing
+returns as a derived efficiency requirement
+(\reqref{REQ-EFFICIENCY.FRAGMENTATION-01}), deferred for the first version
+(\reqref{ADR-EFFICIENCY.COMPACTION-01}), and object-level crash safety is
+recovered with file-system idioms: same-directory rename publication
+(\reqref{ADR-STORAGE.ATOMICPUBLISH-01}), selective synchronisation with
+checksums (\reqref{ADR-PERSISTENCE.DURABILITY-01}), and a restart-time
+cleanup scan (\reqref{ADR-STORAGE.RECLAIM-01}).

@@ -1,0 +1,14 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+description = "cargo xtask cache-tests / trace-report — dev tooling, not a deliverable"
+publish = false
+edition.workspace = true
+
+[dependencies]
+clap.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+nix.workspace = true
+walkdir = "2"

@@ -1,0 +1,74 @@
+[workspace]
+resolver = "2"
+members = [
+    "durable-cache",
+    "test/fixture-proxy",
+    "test/mock-origin",
+    "test/harness",
+    "test/compat",
+    "xtask",
+]
+
+# `durable-cache` is the only published member; every other member
+# carries `publish = false` in its own manifest: they are test fixtures and
+# tooling, not deliverables.
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/lmalheiro/durable-cache"
+
+[workspace.dependencies]
+# The Pingora 0.9 release line: any 0.9.x (HLR-COMPAT.PINGORA-01). A patch
+# release is taken as it comes. The record format is the backend's own
+# (format::FORMAT_VERSION), and the golden-bytes test of
+# TC-COMPAT.FORMATUPGRADE-01 fails if a release changes the metadata encoding
+# stored records rely on. Moving to 0.10 is a deliberate revision of the
+# specification.
+pingora-cache = { version = "0.9" }
+# No TLS backend here: the pingora-core TLS backends are mutually exclusive,
+# and durable-cache inherits these lines, so a backend chosen here would be
+# forced on every integrator. A member that needs TLS names its own backend.
+pingora-core = { version = "0.9", default-features = false }
+pingora-proxy = { version = "0.9", default-features = false }
+pingora-error = { version = "0.9" }
+pingora-http = { version = "0.9" }
+# The Pingora exporter crate, for its re-export of `prometheus`: registering
+# through it puts the counters in the very registry the exporter serves
+# (ADR-OBSERVABILITY.METRICS-01).
+pingora-prometheus = { version = "0.9" }
+
+durable-cache = { path = "durable-cache" }
+durable-cache-harness = { path = "test/harness" }
+durable-cache-mock-origin = { path = "test/mock-origin" }
+
+# No features here: each member states the ones it uses, and a member's
+# features are added to these, so anything listed here reaches the library.
+tokio = { version = "1" }
+async-trait = "0.1"
+bytes = "1"
+crc32c = "0.6"
+# Naming the files of a key with a user tag (SDS-LAYOUT.SHARDING-01):
+# Blake2b-128, the hash pingora-cache names keys by, and hex. pingora-cache
+# already depends on both.
+blake2 = "0.10"
+hex = "0.4"
+zerocopy = { version = "0.8", features = ["derive"] }
+libc = "0.2"
+nix = { version = "0.29", features = ["signal", "process"] }
+tempfile = "3"
+reqwest = { version = "0.12", features = ["stream"] }
+futures-util = "0.3"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+axum = "0.7"
+async-stream = "0.3"
+escargot = "0.5"
+clap = { version = "4", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"

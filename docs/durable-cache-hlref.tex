@@ -1,0 +1,859 @@
+% =====================================================================
+% Stage 2 -- High-Level Refinement.
+% =====================================================================
+
+\begin{requirement}{FRE-COMPAT.UNSIZED-01}[draft][functionalRequirement]{Bodies of unknown length}
+
+  \localreqdiagram*{rfrunsized01}{\reqid}{\reqdesc}
+
+  \texttt{pingora-cache} hands the backend a response body as it arrives from
+  the upstream: the miss handler obtained from \texttt{get\_miss\_handler}
+  receives the body chunk by chunk, and the end of the body is signalled only
+  with the final chunk. Nothing in the \texttt{Storage} contract declares the
+  body's total size when the store opens --- a chunked upstream response
+  carries no \texttt{Content-Length} to declare.
+
+  WHEN a store begins without the body's total length being declared, the
+  backend shall persist the complete body while holding in process memory no
+  more of that body than the chunk its current \texttt{write\_body} call is
+  writing, independent of the body's length.
+
+  The bound rules out buffering a whole body before writing it, and any
+  per-store buffer besides: the operating system's page cache already
+  batches writes to the device, so a buffer in the backend would save only
+  system calls, at the cost of memory per concurrent store. The chunk being
+  written is allowed because \texttt{pingora-cache} has already allocated
+  it when the backend receives it, and its size depends on the
+  upstream protocol --- HTTP/1 bodies
+  are read through a 64~KiB buffer,\footnote{\pgsrc{pingora-core/src/protocols/http/v1/body.rs}{31}{\texttt{BODY\_BUFFER\_SIZE}}
+  is \texttt{1024 * 64}.} while an HTTP/2 data frame can be larger.
+
+  \textit{Basis: \texttt{Storage::get\_miss\_handler} and the
+  \texttt{MissHandler} chunked write path.}\footnote{\pgsrc{pingora-cache/src/storage.rs}{176}{\texttt{Storage::get\_miss\_handler}}
+  returns a \pgsrc{pingora-cache/src/storage.rs}{399}{\texttt{MissHandler}},
+  whose \pgsrc{pingora-cache/src/storage.rs}{357}{\texttt{HandleMiss::write\_body(data,~eof)}}
+  is called once per chunk, with \texttt{eof} set only on the final call.}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.CONCURRENT-01}[draft][functionalRequirement]{Concurrent same-key writes}
+
+  \localreqdiagram*{rfrconcurrent01}{\reqid}{\reqdesc}
+
+  \texttt{pingora-cache} permits several writes of the same key to be in
+  flight at once. The \texttt{CacheLock} that serialises miss handling is an
+  optional collaborator, and even when configured its age timeout deliberately
+  lets a new writer start while a previous one may still be writing; during a
+  hot upgrade, a peer process holds its own, independent lock table
+  (\reqref{FRE-COMPAT.HOTUPGRADE-01}), so same-key writes can also race
+  across processes.
+
+  While several writes of the same key are in flight at once, the backend
+  shall keep each in isolation --- no writer's bytes ever interleaved with
+  another's --- and shall make each write \emph{durably published} ---
+  visible by name to a scan, a restart, or a peer process --- as a complete
+  object or not at all. This is the general form of the atomicity guarantee
+  whose replacement-specific case is detailed in
+  \reqref{FRE-COMPLIANCE.REPLACE-01}; a lookup within the writing process
+  may additionally be served a partial hit of an in-flight write, as
+  governed by \reqref{FRE-COMPAT.STREAMING-01}.
+  When those writes complete, the backend shall converge on a single winner;
+  the atomic-replacement semantics of that convergence are also owned by
+  \reqref{FRE-COMPLIANCE.REPLACE-01}.
+
+  \textit{Basis: \texttt{HttpCache}'s optional cache lock and its age
+  timeout;}\footnote{Once a lock ages out or is abandoned,
+  \pgsrc{pingora-cache/src/lock.rs}{110}{\texttt{CacheLock::lock}} stops
+  treating it as an in-progress write and hands out a fresh write permit
+  instead of making the caller wait --- the mechanism behind the age timeout
+  described above.} \textit{the stock \texttt{MemCache}'s per-writer keying
+  of in-flight
+  writes.}\footnote{\pgsrc{pingora-cache/src/memory.rs}{364}{\texttt{MemCache::get\_miss\_handler}}
+  assigns each new write its own incrementing id and inserts it into the
+  per-key map alongside any other writes already in flight.}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \trace{FRE-COMPLIANCE.REPLACE-01}
+  \trace{FRE-COMPAT.HOTUPGRADE-01}
+  \trace{FRE-COMPAT.STREAMING-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.EVICTION-01}[draft][functionalRequirement]{Eviction state consistency}
+
+  \localreqdiagram*{rfrcompat01}{\reqid}{\reqdesc}
+
+  \texttt{pingora-cache} manages capacity through an eviction manager (the
+  \texttt{EvictionManager} trait, e.g.\ its \texttt{simple\_lru} and \texttt{lru}
+  implementations) that holds, in memory, the set of cached items, their on-disk
+  sizes, and the recency/freshness ordering used to choose eviction victims. The
+  eviction manager is a component \emph{distinct} from the \texttt{Storage}
+  backend, and it is the framework --- not the backend --- that drives it: both
+  objects are handed to \texttt{HttpCache} (e.g.\ through the cache's
+  \texttt{enable} configuration set up in the proxy), after which
+  \texttt{HttpCache} records admissions and accesses against the manager as objects
+  are written and read, and purges the victims it returns through the backend's
+  removal path. The two are configured independently and the backend never calls
+  the manager itself.
+
+  Because this backend persists cached objects across process restarts
+  (\reqref{HLR-PERSISTENCE.DURABLE-01}) while the
+  eviction manager's in-memory state does not survive on its own, a naive restart
+  leaves capacity accounting and eviction decisions out of step with the objects
+  actually persisted: objects the manager no longer knows about are never counted
+  against the size budget and never evicted. The discrepancy exists \emph{only at
+  restart} --- in steady state \texttt{HttpCache} keeps a single manager in step ---
+  so the requirement is to close that startup gap.
+
+  A direct consequence of the framework owning the runtime \texttt{admit},
+  \texttt{access}, and purge calls is that \emph{a \texttt{Storage}
+  implementation cannot, on its own, keep the eviction manager synchronised}:
+  its own contribution is to persist objects durably and to expose enumeration
+  of the persisted entries (key, size, freshness), but bringing the manager
+  back in step with that persisted set after a restart requires cooperation
+  beyond what the \texttt{Storage} trait itself can provide. Meeting this requirement therefore demands more than a
+  pure drop-in \texttt{Storage} backend --- a compatibility consideration for
+  \reqref{HLR-COMPAT.PINGORA-01}. This requirement thus derives from both
+  parents: \reqref{HLR-PERSISTENCE.DURABLE-01} creates the gap by making
+  objects outlive the manager's memory, and \reqref{HLR-COMPAT.PINGORA-01}
+  fixes the framework-owned eviction contract the gap must be closed within.
+
+  WHEN the backend reports its restart procedure complete, the eviction
+  manager's view of admitted objects shall be consistent with the durably
+  published objects: every durably published object represented once ---
+  keyed by its \texttt{CompactCacheKey}, with its record size and stored
+  freshness deadline --- no entry remaining for an object that is no longer
+  present, and the manager's reported \texttt{total\_items} and
+  \texttt{total\_size} equal to the count and aggregate record size of those
+  objects.
+
+  An object's \emph{record size} is the full length of the file that stores
+  it, metadata and body together. The backend reports that same size both
+  when a store completes and when the restart procedure admits the object, so
+  the two admission paths agree and \texttt{total\_size} measures the disk
+  the cache occupies. Two things are deliberately left open. Before the
+  restart procedure completes --- serving may already have begun ---
+  capacity accounting may be inaccurate. And the recency order the manager
+  used to choose victims before the restart need not survive it: afterwards,
+  victims may be chosen in a different order.
+
+  \textit{Basis: \texttt{HttpCache} drives the eviction manager on the hit
+  and miss paths;}\footnote{\pgsrc{pingora-cache/src/lib.rs}{880}{\texttt{eviction.access(...)}}
+  is called on a hit and
+  \pgsrc{pingora-cache/src/lib.rs}{1118}{\texttt{eviction.admit(...)}} on a
+  completed miss.} \textit{the \texttt{EvictionManager} trait's
+  \texttt{admit}/\texttt{access}
+  contract;}\footnote{\pgsrc{pingora-cache/src/eviction/mod.rs}{230}{\texttt{trait EvictionManager}}
+  declares \pgsrc{pingora-cache/src/eviction/mod.rs}{252}{\texttt{admit}} and
+  \pgsrc{pingora-cache/src/eviction/mod.rs}{289}{\texttt{access}}.} \textit{item
+  identity via
+  \texttt{CacheEntryKey};}\footnote{\pgsrc{pingora-cache/src/eviction/mod.rs}{53}{\texttt{enum CacheEntryKey}}
+  wraps a \pgsrc{pingora-cache/src/key.rs}{153}{\texttt{struct CompactCacheKey}},
+  optionally paired with a storage-defined \texttt{CacheEntryId}. A backend that
+  publishes a single object per key supplies no identifier
+  (\reqref{ADR-COMPAT.ENTRYID-01}), so the entry key is \texttt{KeyOnly} and
+  carries the cache key alone.}
+  \textit{the manager's aggregate
+  accounting.}\footnote{\pgsrc{pingora-cache/src/eviction/mod.rs}{232}{\texttt{total\_size}}
+  and \pgsrc{pingora-cache/src/eviction/mod.rs}{234}{\texttt{total\_items}}
+  report the manager's tracked byte size and item count.}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{ADR} % An architecture decision selecting the reconstruction strategy
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \deriveReqt{HLR-PERSISTENCE.DURABLE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.HOTUPGRADE-01}[draft][functionalRequirement]{Hot-upgrade cache consistency}
+
+  \localreqdiagram*{rfrhotupgrade01}{\reqid}{\reqdesc}
+
+  Pingora supports \emph{hot} (graceful, zero-downtime) upgrades: a new
+  (\emph{incoming}) executable takes over the listening sockets from the
+  running (\emph{outgoing}) one, which drains its already-accepted
+  in-flight requests before exiting, so for a bounded window two processes
+  run concurrently. Because this backend persists objects durably
+  (\reqref{HLR-PERSISTENCE.DURABLE-01}), the persisted state outlives any
+  single process --- so both executables, configured for the same
+  upstreams, access the very same cache during that window, a concern that
+  would not arise if state were confined to one process's memory. Only
+  objects already durably published are shared between the two processes
+  --- in-flight activity such as streaming partial hits
+  (\reqref{FRE-COMPAT.STREAMING-01}) is not yet part of the cache, and is
+  outside this requirement's scope.
+
+  While two processes share the same durable cache during a hot upgrade,
+  the backend in each shall keep the shared cache consistent:
+  \begin{itemize}
+    \item \textbf{Outgoing process.} WHEN the outgoing process receives
+      the Pingora upgrade signal, its backend shall make no further durable
+      change to the shared cache: a store that completes afterwards shall
+      not be durably published, and a purge or metadata update requested
+      afterwards shall fail with an error rather than be reported as
+      applied. It shall keep serving reads of objects already durably
+      published, by either process, so that its remaining requests
+      complete.
+    \item \textbf{Incoming process.} Its backend is subject to the ordinary
+      concurrent-writer and eviction-consistency guarantees this backend
+      already provides for a single running instance
+      (\reqref{FRE-COMPAT.CONCURRENT-01}, \reqref{FRE-COMPAT.EVICTION-01})
+      as though it were the sole writer --- hot upgrade grants no exception
+      to those --- and none of its storage operations, the restart-time
+      reclaim scan included, shall make an object unreadable through a file
+      descriptor the outgoing process already holds open.
+  \end{itemize}
+
+  A purge refused by the draining process surfaces as a failed purge
+  request, which its client can retry against the incoming process; reporting
+  it as applied would break the purge-acknowledgement guarantee
+  (\reqref{FRE-COMPLIANCE.PURGEDURABLE-01}). How the outgoing process's backend
+  learns that the signal has arrived is left to the design: the server
+  announces the transition to its own code through an execution-phase
+  broadcast.\footnote{\pgsrc{pingora-core/src/server/mod.rs}{235}{\texttt{Server::watch\_execution\_phase}}
+  subscribes to the phase broadcast, which announces
+  \texttt{ExecutionPhase::GracefulUpgradeTransferringFds} when the upgrade
+  signal (\texttt{SIGQUIT}) arrives
+  (\pgsrc{pingora-core/src/server/mod.rs}{279}{L279}); both processes then
+  accept connections for \texttt{CLOSE\_TIMEOUT}
+  (\pgsrc{pingora-core/src/server/mod.rs}{66}{5~s}) before the old one stops
+  listening and drains.}
+
+  This requirement derives from both parents: \reqref{HLR-COMPAT.PINGORA-01}
+  brings the Pingora hot-upgrade model, with its window of two processes, and
+  \reqref{HLR-PERSISTENCE.DURABLE-01} makes the cache state they share
+  outlive either process.
+
+  \textit{Basis: Pingora graceful (zero-downtime) upgrade
+  (\reqref{HLR-COMPAT.PINGORA-01}).}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{FDS-EVICTION.STARTUP-01}{Realise the reconstruction
+  procedure so the incoming process's eviction view is rebuilt from durably
+  published objects only, keeping the shared cache consistent across the
+  hot-upgrade window.}
+  \reqexpect{satisfy}{FDS-COMPAT.READONLY-01}{Specify how the outgoing process's
+  backend learns that the upgrade signal arrived, what it suppresses from
+  then on (publication, purge, metadata update) and how it reports refusals,
+  and how the incoming process's reconstruction is ordered relative to the
+  outgoing process's last publications.}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \deriveReqt{HLR-PERSISTENCE.DURABLE-01}
+  \trace{FRE-COMPAT.CONCURRENT-01}
+  \trace{FRE-COMPAT.EVICTION-01}
+  \trace{FRE-COMPAT.STREAMING-01}
+  \trace{FRE-COMPLIANCE.PURGEDURABLE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.STREAMFLAG-01}[draft][functionalRequirement]{Advertise streaming writes}
+
+  \localreqdiagram*{rfrstreamflag01}{\reqid}{\reqdesc}
+
+  The backend shall report \texttt{true} from its implementation of the
+  \texttt{Storage} trait's \texttt{support\_streaming\_partial\_write}
+  method.
+
+  The stampede protection in \texttt{pingora-cache} assumes a backend that can serve
+  an object \emph{while it is still being written}: when \texttt{Storage}
+  advertises \texttt{support\_streaming\_partial\_write}, \texttt{HttpCache}
+  releases the cache lock as soon as the leader's miss handler opens --- right
+  after \texttt{get\_miss\_handler} rather than at
+  \texttt{finish\_miss\_handler} --- and every concurrent request for the key
+  is then expected to be served by a \emph{partial} read of the in-flight
+  object. A backend without partial reads instead holds every follower, under
+  the lock, for the leader's whole body; for a large or slow upstream response
+  that turns stampede protection into a head-of-line delay of the full
+  download for every concurrent client. Advertising the flag is what lets
+  followers reach the partial hits of \reqref{FRE-COMPAT.STREAMING-01} at all,
+  so the flag is only truthful together with that requirement,
+  \reqref{FRE-COMPAT.STREAMDELIVERY-01}, and \reqref{FRE-COMPAT.STREAMEND-01}.
+
+  \textit{Basis: the \texttt{Storage} trait's
+  \texttt{support\_streaming\_partial\_write}
+  flag;}\footnote{\pgsrc{pingora-cache/src/storage.rs}{245}{\texttt{Storage::support\_streaming\_partial\_write}}
+  defaults to \texttt{false}; a backend opts in by overriding it.}
+  \textit{\texttt{HttpCache} releasing the cache lock right after the miss
+  handler opens, instead of waiting for the store to
+  finish.}\footnote{\pgsrc{pingora-cache/src/lib.rs}{997}{\texttt{HttpCache::set\_miss\_handler}}
+  releases the lock immediately once
+  \texttt{support\_streaming\_partial\_write()} is true, rather than at
+  \texttt{finish\_miss\_handler}.}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqcover{satisfy}{FDS}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \trace{FRE-COMPAT.STREAMING-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.STREAMING-01}[draft][functionalRequirement]{Partial hits on lookup}
+
+  \localreqdiagram*{rfrstreaming01}{\reqid}{\reqdesc}
+
+  WHILE one or more stores of a key that no invalidating purge has ended
+  (\reqref{FRE-COMPLIANCE.PURGE-01}) are in flight --- each from the opening
+  of its miss handler until it completes or aborts --- the backend shall
+  answer a \texttt{lookup} of that key with a \emph{partial hit} of the most
+  recently opened of those stores: that store's object metadata together with a
+  \texttt{HitHandler} that streams the body bytes the store writes.
+
+  The partial hit takes precedence over any published object of the same key,
+  exactly as the stock \texttt{MemCache} prefers a partial read on lookup.
+  \texttt{pingora-cache} permits several stores of one key to be in flight at
+  once; resolving to the most recently opened one gives a follower the
+  freshest response the cache is fetching. What the partial hit's reader
+  delivers, and when, is stated in \reqref{FRE-COMPAT.STREAMDELIVERY-01} and
+  \reqref{FRE-COMPAT.STREAMEND-01}; what it owes when the store aborts, in
+  \reqref{FRE-COMPLIANCE.PARTIALABORT-01}.
+
+  \textit{Basis: the stock \texttt{MemCache}'s unconditional preference for a
+  partial read on
+  lookup.}\footnote{\pgsrc{pingora-cache/src/memory.rs}{313}{\texttt{MemCache::lookup}}
+  always prefers an in-flight write over a complete cached entry; per its own
+  comment it has no preference among multiple in-flight writers, so the
+  most-recently-opened tie-break above is this backend's own addition, not
+  inherited framework behavior.}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify the in-flight write
+  registry, the lookup order (in-flight write before the published record),
+  and the most-recently-opened tie-break.}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.STREAMDELIVERY-01}[draft][performanceRequirement]{Partial-hit chunk delivery}
+
+  \localreqdiagram*{rfrstreamdelivery01}{\reqid}{\reqdesc}
+
+  WHILE a partial hit's reader is attached to an in-flight store, the reader
+  shall deliver the body bytes that store had already written, followed by
+  the chunks the store subsequently appends, with at least 99\,\% of those
+  appended chunks delivered within 10~ms of their \texttt{write\_body} call
+  returning.
+
+  A chunk is delivered when the reader's \texttt{read\_body} call returns it;
+  the bound applies on a host that is not CPU-saturated. The follower thus
+  streams the body as the leader writes it, without waiting for the store to
+  finish. The bound is a percentile rather than a worst case so that a single
+  scheduling delay does not violate it, while still excluding designs that
+  poll the file or batch notifications, whose delays are typically an order
+  of magnitude longer.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify how a reader learns of
+  each appended chunk so that it can deliver the chunk within the latency
+  bound.}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \trace{FRE-COMPAT.STREAMING-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.STREAMEND-01}[draft][functionalRequirement]{Partial-hit completion}
+
+  \localreqdiagram*{rfrstreamend01}{\reqid}{\reqdesc}
+
+  WHEN the in-flight store a partial hit's reader is attached to completes,
+  the reader shall deliver the store's remaining body bytes and then end the
+  body normally, whether or not the object has meanwhile been durably
+  published.
+
+  Completion is followed by the object's durable publication, which may
+  happen while a follower is still reading, so a follower's normal end cannot
+  rely on the in-flight store still existing when it gets there. When the store instead
+  aborts --- an upstream failure or a cancellation --- the effect on an
+  attached reader is governed by
+  \reqref{FRE-COMPLIANCE.PARTIALABORT-01}.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify how each reader
+  delivers the remainder and ends normally on completion, and why its
+  reader stays valid across the object's durable publication.}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \trace{FRE-COMPAT.STREAMING-01}
+  \trace{FRE-COMPLIANCE.PARTIALABORT-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.FORMATUPGRADE-01}[draft][functionalRequirement]{Records across Pingora changes}
+
+  \localreqdiagram*{rfrformatupgrade01}{\reqid}{\reqdesc}
+
+  The metadata the backend persists is the serialisation, by
+  \texttt{pingora-cache} itself, of each object's
+  \texttt{CacheMeta},\footnote{\pgsrc{pingora-cache/src/meta.rs}{890}{\texttt{CacheMeta::serialize}}
+  yields the internal-metadata and header byte segments the backend stores.}
+  and that encoding is not the backend's to control. Its internal-metadata
+  segment carries a version the framework decodes across its own
+  releases,\footnote{\pgsrc{pingora-cache/src/meta.rs}{166}{\texttt{internal\_meta::deserialize}}
+  decodes versions 0--2 and rejects any other
+  (\pgsrc{pingora-cache/src/meta.rs}{190}{L190}).} and its header segment is
+  compressed with a dictionary each process loads at
+  startup.\footnote{\pgsrc{pingora-cache/src/meta.rs}{965}{\texttt{HEADER\_SERDE}}
+  is built from the dictionary set through
+  \pgsrc{pingora-cache/src/meta.rs}{989}{\texttt{set\_compression\_dict\_path}}
+  or \pgsrc{pingora-cache/src/meta.rs}{1008}{\texttt{set\_compression\_dict\_content}},
+  if any.} Because persisted records outlive the process that wrote them
+  (\reqref{HLR-PERSISTENCE.DURABLE-01}), a cache directory written by a
+  process built against one \texttt{pingora-cache} release may be opened by a
+  process built against another --- most visibly across a hot upgrade that
+  also changes the Pingora version (\reqref{FRE-COMPAT.HOTUPGRADE-01}). This requirement derives from both
+  parents: \reqref{HLR-COMPAT.PINGORA-01} fixes the framework whose encoding
+  may change, and \reqref{HLR-PERSISTENCE.DURABLE-01} makes records survive
+  such a change.
+
+  WHEN the backend reads a record written by a process that used a different
+  \texttt{pingora-cache} release, the backend shall either return the object
+  exactly as that record stored it or report a miss for it, and shall never
+  return incorrectly decoded metadata.
+
+  The header compression dictionary is outside this requirement.
+  \texttt{pingora-cache} offers no way to learn which dictionary a process
+  loaded, nor which one a stored header segment was compressed with, so the
+  backend cannot tell a record written under another dictionary from one
+  written under its own. Every process sharing a cache directory is
+  therefore expected to load the same dictionary, and a deployment that
+  changes it deletes the cache directory or gives the new process a new one.
+  This is a deployment constraint the deliverable documents, like the
+  requirement that processes sharing a directory run on one host
+  (\reqref{ADR-STORAGE.WRITERID-01}).
+
+  The backend meets this without tying its records to any Pingora release.
+  Each record carries the backend's \emph{own} format version
+  (\reqref{SDS-LAYOUT.OBJECTFILE-01}), which the backend changes whenever
+  records written before would no longer be read back exactly: a change to
+  its own layout, or a \texttt{pingora-cache} release whose encoding of the
+  metadata differs. A record of another version is reported as a miss. A
+  \texttt{pingora-cache} release that leaves the encoding alone therefore
+  keeps the cache warm; one that changes it starts the cache cold once.
+
+  Whether a release changed the encoding is a decision the backend's
+  maintainers make, not an inference from a version number. The Pingora
+  release numbering cannot settle it: 0.9.0 extended \texttt{InternalMetaV2} with new
+  fields while keeping its version byte at 2, compatibly, so 0.8.1's metadata
+  would have decoded under 0.9.0, yet a release could as well change the
+  encoding under an unchanged version byte.
+  \reqref{TC-COMPAT.FORMATUPGRADE-01} holds the encoding the current format
+  relies on as fixed bytes, and fails when the release in use reads or
+  writes them differently, so no release is adopted without that decision.
+  The guarantee is therefore verified for every release that test has run
+  against. A release an integrator resolves beyond those is assumed, not
+  verified, to keep the encoding, as a patch release of the 0.9 line
+  should.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{SDS}
+  \reqcover{verify}{TC}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \deriveReqt{HLR-PERSISTENCE.DURABLE-01}
+  \trace{FRE-COMPAT.HOTUPGRADE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.WRITEFAIL-01}[draft][functionalRequirement]{Write failures fail the store}
+
+  \localreqdiagram*{rfrwritefail01}{\reqid}{\reqdesc}
+
+  IF writing a store's data to persistent storage fails --- for example
+  because the file system is full --- THEN the backend shall return an error
+  from the \texttt{write\_body} or \texttt{finish} call during which the
+  failure occurred.
+
+  The \texttt{HandleMiss} contract gives each call a \texttt{Result} for
+  exactly this purpose.\footnote{\pgsrc{pingora-cache/src/storage.rs}{357}{\texttt{HandleMiss::write\_body}}
+  returns \texttt{Result<()>}.} A store that has failed this way is
+  incomplete, so what lookups may then observe of it is governed by
+  \reqref{FRE-COMPLIANCE.INCOMPLETE-01}, and the storage it consumed by
+  \reqref{FRE-COMPAT.ABORTSPACE-01}.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-01}{Specify how a failed write or
+  sync during a store is detected and surfaced as an error from the call in
+  progress, and that the store is then treated as aborted.}
+  \reqcover{verify}{TC}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPAT.ABORTSPACE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.ABORTSPACE-01}[draft][functionalRequirement]{Aborted stores release space}
+
+  \localreqdiagram*{rfrabortspace01}{\reqid}{\reqdesc}
+
+  WHEN a store ends without being durably published --- aborted by an
+  upstream failure, a cancellation, or a write failure --- the backend shall
+  remove the store's temporary no later than when its miss handler is
+  dropped, and shall free the storage that store consumed without waiting for
+  a restart.
+
+  Space held by an unpublished store is not counted by the eviction manager,
+  which admits an object only once its store completes, so a store that
+  failed without releasing its space would shrink the disk available to the
+  cache with every upstream failure until the next restart. Freeing a
+  large file's storage can take a long time, so it may complete
+  shortly after the drop, away from the thread that dropped the handler; a
+  reader still streaming the store keeps the storage until it finishes
+  (\reqref{FDS-STORAGE.PARTIAL-01}). The stock
+  backend releases an unfinished write the same
+  way.\footnote{\pgsrc{pingora-cache/src/memory.rs}{291}{\texttt{Drop for MemMissHandler}}
+  removes the handler's in-flight write.} A process crash is different ---
+  no handler is dropped --- and its leftovers are reclaimed as
+  \reqref{FRE-COMPAT.STARTRECLAIM-01} requires.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-01}{Specify that an unpublished
+  store's per-writer temporary is unlinked when the store ends, including on
+  abort and on write failure, and how attached partial-hit readers are
+  unaffected by that unlink.}
+  \reqcover{verify}{TC}
+
+  \deriveReqt{HLR-EFFICIENCY.SPACE-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPAT.WRITEFAIL-01}
+  \trace{FRE-COMPAT.STARTRECLAIM-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.STARTRECLAIM-01}[draft][functionalRequirement]{Reclaim leftovers at start}
+
+  \localreqdiagram*{rfrstartreclaim01}{\reqid}{\reqdesc}
+
+  WHEN a process of the backend starts, the backend shall release the storage
+  held by unpublished stores whose writing process is no longer running.
+
+  Such a leftover is not reachable through a keyed \texttt{Storage} call
+  again: a process crash drops no miss handler, so the release on abort
+  (\reqref{FRE-COMPAT.ABORTSPACE-01}) never runs for its stores. Without a
+  release at start, each crash would shrink the disk available to the cache
+  for good. A store whose writer is still running --- such as a hot-upgrade
+  peer's --- is not a leftover, and the incoming process leaves it untouched
+  (\reqref{FRE-COMPAT.HOTUPGRADE-01}).
+
+  A \texttt{Vary} variant record whose primary key holds no stored object is
+  not a leftover either. It is a published object, which the eviction manager
+  counts against the cache's size budget and evicts like any other
+  (\reqref{FRE-COMPAT.EVICTION-01}), and a lookup may still reach it: an
+  integrator's cache key can carry a variance of its own, and no primary is
+  then ever stored.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{FDS}
+  \reqcover{verify}{TC}
+
+  \deriveReqt{HLR-EFFICIENCY.SPACE-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPAT.ABORTSPACE-01}
+\end{requirement}
+
+\begin{requirement}{FRE-COMPAT.EXPIRE-01}[draft][functionalRequirement]{Expire keeps the body}
+
+  \localreqdiagram*{rfrexpire01}{\reqid}{\reqdesc}
+
+  WHEN the framework asks the storage backend to expire a stored object, the
+  backend shall leave that object in the stale state.
+
+  An object is in the \emph{stale state} when a later lookup for its key
+  returns it, with its stored body readable in full, and reports it as not
+  fresh at any instant after the expiry. Deleting the object is
+  therefore not the stale state, and neither is leaving it fresh.
+
+  The boundary instant itself is deliberately excluded, because the framework
+  owns both halves of that comparison and places it there.
+  \texttt{CacheMeta::expire\_at(instant)}, which Pingora documents as marking
+  an asset ``stale as of
+  \emph{instant}'',\footnote{\pgsrc{pingora-cache/src/meta.rs}{800}{\texttt{CacheMeta::expire\_at}}
+  sets \texttt{fresh\_until} to the earlier of its current value and
+  \emph{instant}.} lowers the stored freshness deadline to that instant, while
+  \texttt{CacheMeta::is\_fresh} compares
+  inclusively.\footnote{\pgsrc{pingora-cache/src/meta.rs}{716}{\texttt{CacheMeta::is\_fresh}}
+  returns \texttt{fresh\_until >= time}.} An object expired at $t$ is therefore
+  reported fresh at exactly $t$ and stale at every instant after it --- a
+  distinction below the one-second resolution RFC~9111 works at, and one no
+  backend storing the deadline the framework derives can alter.
+
+  Pingora 0.9.0 added this second removal operation beside
+  \texttt{purge}.\footnote{\pgsrc{pingora-cache/src/storage.rs}{226}{\texttt{Storage::expire}}.}
+  Where a purge deletes the object and costs the next request a full refetch,
+  an expiry keeps it and costs only a conditional request the origin can answer
+  with a \texttt{304}, after which the retained body is served again. A proxy
+  chooses between the two per request.\footnote{\pgsrc{pingora-proxy/src/proxy_trait.rs}{732}{\texttt{ProxyHttp::purge\_action}}.}
+
+  The obligation is about the object's observable state, not about any
+  particular field or file the backend rewrites to reach it. Two things it
+  deliberately leaves alone. Whether a reader is served the retained body \emph{while} that
+  revalidation is in flight is decided by the object's own serve-stale windows,
+  which an expiry does not touch. And a store already in flight for the same key
+  is not cancelled: if it completes it publishes a fresh object. An
+  invalidating purge, by contrast, ends such a store
+  (\reqref{FRE-COMPLIANCE.PURGE-01}), since it may carry the content the
+  purge removes; an expiry asks only for a revalidation, which a fresh
+  object provides.
+
+  The trait supplies a default that deletes the object
+  instead,\footnote{\pgsrc{pingora-cache/src/storage.rs}{230}{The default}
+  forwards to \texttt{Storage::purge}.} which does keep the object from being
+  served as fresh, but by removing it rather than by reaching the stale state,
+  so it does not satisfy this requirement. What an expiry of a key holding
+  nothing reports follows \reqref{FRE-COMPLIANCE.PURGEABSENT-01}.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{ADR}
+  \reqcover{verify}{TC}
+
+  \deriveReqt{HLR-COMPAT.PINGORA-01}
+  \trace{FRE-COMPLIANCE.PURGE-01}
+  \trace{FRE-COMPLIANCE.REVALIDATION-01}
+\end{requirement}
+
+\begin{requirement}{ADR-PERSISTENCE.MECHANISM-01}[draft][designConstraint]{Plain file system storage}
+
+  \localreqdiagram*{adr1}{\reqid}{\reqdesc}
+
+  \textbf{Context:} The cache must persist HTTP response headers and bodies
+  durably (\reqref{HLR-PERSISTENCE.DURABLE-01}), this is a first version
+  that favours the simplest adequate design (\reqref{HLR-SCOPE.V1-01}),
+  and a body arrives as a stream whose total length is unknown when
+  writing begins (\reqref{FRE-COMPAT.UNSIZED-01}). The choice is
+  twofold: which storage substrate to build on, and whether to adopt an
+  established storage engine or write the storage layer ourselves.
+
+  \textbf{Decision:} Persist cached objects on a plain file system ---
+  growable files in directories --- rather than adopting an embeddable
+  storage engine or building on a raw block device, a custom preallocated
+  arena, or an embedded database. The kernel's file system already does an
+  allocator's work: block allocation and free-space management, growing
+  files in place, keeping \emph{its own} structures intact across crashes
+  (journaling), and giving every process on the host one coherent view of
+  the same files. What it deliberately does not give, the backend keeps as
+  its own duty:
+  \begin{itemize}
+    \item \emph{Atomic publication.} A file being written when the process
+      dies is not rolled back, so object publication must be made atomic
+      and leftovers discarded (\reqref{FRE-COMPLIANCE.INCOMPLETE-01},
+      \reqref{FRE-COMPAT.STARTRECLAIM-01},
+      \reqref{ADR-STORAGE.ATOMICPUBLISH-01}).
+    \item \emph{Crash safety of its own writes.} A write can be reported as
+      done while the bytes are still only in the operating system's cache,
+      and syncing a file does not persist the directory entry that names
+      it, so a host crash can lose or reorder writes. Which writes the
+      backend synchronises, and what it detects instead, is its own
+      decision (\reqref{ADR-PERSISTENCE.DURABILITY-01}). The eviction
+      manager's state is not among them: it is rebuilt from the object
+      records themselves at every start (\reqref{ADR-COMPAT.EVICTION-01}).
+    \item \emph{Hot-upgrade coordination.} During a hot upgrade two
+      processes see the same bytes but are not coordinated by the file
+      system; making the outgoing process stop changing the shared cache,
+      while leaving its open readers intact, is the backend's own protocol
+      (\reqref{FRE-COMPAT.HOTUPGRADE-01}).
+  \end{itemize}
+  Every alternative below leaves those same coordination duties open ---
+  or solves them at the price of a poorer fit for streaming bodies and a
+  larger integration surface --- which is why the simplest substrate wins
+  for a first version (\reqref{HLR-SCOPE.V1-01}). Appendix~\ref{app:alternatives}
+  examines each alternative in detail.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Adopt Apache Traffic Server's object store}: the most
+      proven raw-disk HTTP cache, but not an adoptable component --- the
+      store is built into Traffic Server's own process model and not
+      published as a library,\footnote{The cache implementation lives
+      under \texttt{src/iocore/cache}, part of IOCore (the process's core
+      I/O and event system), and is built as an internal library linked
+      only into the \texttt{traffic\_server} binary --- there is no
+      separately packaged cache library.
+      \url{https://github.com/apache/trafficserver/tree/10.1.4/src/iocore/cache}}
+      so adopting it means carrying the server along.
+    \item \emph{Adopt Meta's CacheLib}, an embeddable C++ caching engine:
+      proven allocation, admission, and eviction
+      machinery,\footnote{\url{https://cachelib.org/docs/Cache_Library_User_Guides/eviction_policy/\#eviction-policy}}
+      and a body of unknown length fits as incrementally chained
+      per-chunk
+      allocations.\footnote{\url{https://cachelib.org/docs/Cache_Library_User_Guides/chained_items/\#chained-allocations}}
+      Its eviction machinery need not conflict with
+      the one in \texttt{pingora-cache}: the \texttt{EvictionManager}
+      \texttt{pingora-cache} drives is
+      optional,\footnote{\pgsrc{pingora-cache/src/lib.rs}{571}{\texttt{HttpCache::enable}}
+      takes it as an \texttt{Option}; without it, nothing is evicted
+      from storage.} so a backend can leave it unset and let CacheLib
+      manage capacity on its own (\reqref{FRE-COMPAT.EVICTION-01}).
+      Two costs rule it out for a first version instead:
+      \begin{itemize}
+        \item a C++ dependency, driven from Rust through an FFI boundary;
+        \item one active cache instance per
+          path,\footnote{\url{https://cachelib.org/docs/Cache_Library_User_Guides/Cache_persistence/\#common-failure-scenarios}}
+          where a hot-upgrade window has two processes sharing one store
+          (\reqref{FRE-COMPAT.HOTUPGRADE-01}).
+      \end{itemize}
+    \item \emph{Embedded database as the whole store} (libmdbx/LMDB,
+      RocksDB, or pure-Rust engines such as \texttt{redb} and \texttt{fjall}):
+      record packing and crash consistency come built in, and the pure-Rust
+      engines remove the FFI cost as well, but their unit of storage is the
+      record --- a body streaming in with unknown length
+      (\reqref{FRE-COMPAT.UNSIZED-01}) must be chunked into records by the
+      application --- and streaming partial hits
+      (\reqref{FRE-COMPAT.STREAMING-01}) need the same in-memory
+      coordination beside the store anyway. Cross-process use during a hot
+      upgrade also varies by engine: RocksDB admits no multi-process
+      writers,\footnote{\url{https://github.com/facebook/rocksdb/wiki/RocksDB-FAQ\#basic-readwrite}}
+      so the incoming process could not write while the outgoing one still
+      holds the database open, whereas the LMDB family allows several
+      processes, one write transaction at a
+      time.\footnote{\url{https://github.com/erthink/libmdbx\#gotchas}}
+    \item \emph{Adopt an existing Rust disk cache} such as \texttt{cacache}, a
+      key- and content-addressed cache with integrity-checked
+      content:\footnote{\href{https://docs.rs/cacache/latest/cacache/}{\texttt{cacache}
+      crate documentation}: ``a Rust library for managing local key and
+      content address caches''; a streaming \texttt{Writer}'s data is
+      committed only by \texttt{commit()}.} proven, no FFI, and streaming
+      writes are supported. Rejected for this version: content becomes
+      visible only when a write commits, so streaming partial hits still need
+      the backend's own in-flight coordination; content addressing separates
+      each object's metadata from its body, so a purge or metadata update
+      leaves content that some unreferenced-content collection must remove,
+      which its documentation does not provide; and a cryptographic integrity
+      hash is computed over every body.
+    \item \emph{Build on a raw block device or custom arena} (the
+      substrate beneath Traffic Server's cache, CacheLib's flash engine,
+      and Squid's Rock store): eliminates all per-object file-system overhead,
+      and the systems built on it prove the model serves HTTP caching well.
+      Choosing this substrate means building space
+      management and an on-device directory from scratch. That
+      combination is the largest bespoke surface of any alternative
+      here, and the antithesis of a first version
+      (\reqref{HLR-SCOPE.V1-01}).
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] Total cache size is bounded by disk capacity, not process RAM
+      (\reqref{HLR-PERSISTENCE.CAPACITY-01}).
+    \item[+] A growable file holds a body of unknown length with no size
+      declared up front; bytes are appended as they stream in --- no
+      per-chunk allocation and chaining, no pre-declared record sizes.
+    \item[+] No foreign engine to integrate: no FFI boundary, no second
+      eviction policy beside the one in \texttt{pingora-cache}, no engine-specific
+      recovery tooling; the custom surface is confined to layout, naming,
+      and the coordination duties above.
+    \item[--] Ties the cache to file-system semantics: block-granular
+      allocation with per-file overhead
+      (\reqref{REQ-EFFICIENCY.FRAGMENTATION-01}) and per-directory entry
+      scaling (\reqref{REQ-EFFICIENCY.DIRSCALE-01}) --- stated as derived
+      requirements that the detailed decisions must satisfy.
+    \item[--] An established engine would come with packing and
+      compaction already built and tested; giving that up means the
+      derived requirements above only set the efficiency targets --- the
+      detailed design still has to build the machinery that meets them.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{deriveReqt}{REQ-EFFICIENCY.FRAGMENTATION-01}{Bound the aggregate
+  space overhead a plain file system imposes on objects smaller than one
+  block --- block rounding and per-file inode/directory-entry costs --- so
+  that it grows sub-linearly with the number of such objects.}
+  \reqexpect{deriveReqt}{REQ-EFFICIENCY.DIRSCALE-01}{Bound the number of
+  entries that accumulate in any one directory, up to a stated cache
+  capacity, so object lookup and maintenance stay fast as the number of
+  cached objects grows.}
+
+  \reqcover{refine}{ADR}
+
+  \satisfy{HLR-PERSISTENCE.DURABLE-01}
+  \satisfy{HLR-PERSISTENCE.CAPACITY-01}
+  \satisfy{HLR-SCOPE.V1-01}
+  \satisfy{FRE-COMPAT.UNSIZED-01}
+  \trace{FRE-COMPAT.HOTUPGRADE-01}
+  \trace{FRE-COMPAT.EVICTION-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+\end{requirement}
+
+\begin{requirement}{REQ-EFFICIENCY.FRAGMENTATION-01}[draft][requirement]{Sub-linear small-object overhead}
+
+  \localreqdiagram*{reqfrag01}{\reqid}{\reqdesc}
+
+  For cached objects smaller than one file-system block, the aggregate space
+  the on-disk layout consumes beyond those objects' own metadata and body
+  bytes shall grow sub-linearly with the number of such objects.
+
+  A plain file system (\reqref{ADR-PERSISTENCE.MECHANISM-01}) allocates space
+  in whole blocks (commonly 4~KiB), so a stored file's tail can waste up to
+  nearly a full block. It also charges every file a fixed cost for its inode
+  and directory entry, regardless of the file's size. Across many small
+  cached objects --- a busy HTTP cache may hold many --- these costs grow in
+  step with the object count and can waste a significant fraction of the
+  disk. This requirement derives from both parents: the stakeholder
+  space-efficiency goal (\reqref{HLR-EFFICIENCY.SPACE-01}) is what the waste
+  works against, and the plain-file-system decision is what generates it.
+  Verification is by analysis of the layout, confirmed by measuring disk use
+  at growing object counts. The first functional version does not meet this
+  requirement: \reqref{ADR-EFFICIENCY.COMPACTION-01} defers the packing that
+  would, and declares the conflict.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{ADR}
+
+  \deriveReqt{HLR-EFFICIENCY.SPACE-01}
+  \deriveReqt{ADR-PERSISTENCE.MECHANISM-01}
+\end{requirement}
+
+\begin{requirement}{REQ-EFFICIENCY.DIRSCALE-01}[draft][requirement]{Directory-entry scaling}
+
+  \localreqdiagram*{reqdirscale01}{\reqid}{\reqdesc}
+
+  For a cache holding up to $10^8$ objects whose cache-key hashes are
+  uniformly distributed, the on-disk layout shall hold no more than 2,000
+  entries in any one directory.
+
+  This requirement derives from two parents. On a plain file system
+  (\reqref{ADR-PERSISTENCE.MECHANISM-01}) every cached object is reached
+  through a directory entry, and many file systems slow down on name lookup
+  and insertion as a single directory's entry count grows; listings and
+  housekeeping scans grow more expensive with it. Left unbounded, that growth
+  would make lookups slower as the cache fills, which
+  \reqref{HLR-PERFORMANCE.LOOKUP-01} rules out. The capacity and the bound are
+  a design target, deliberately beyond the $10^7$ objects that requirement
+  measures, not a limit on what the cache may hold: beyond $10^8$ objects the
+  bound no longer applies, but nothing else in this specification stops
+  working. Verification is by analysis of the expected
+  entry distribution for the layout, together with a test of the fan-out the
+  analysis assumes.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{satisfy}{SDS-LAYOUT.SHARDING-01}{Lay out objects so that, for up
+  to $10^8$ uniformly hashed objects, no directory holds more than 2,000
+  entries.}
+  \reqcover{verify}{TC}
+
+  \deriveReqt{ADR-PERSISTENCE.MECHANISM-01}
+  \deriveReqt{HLR-PERFORMANCE.LOOKUP-01}
+\end{requirement}
+

@@ -1,0 +1,20 @@
+[package]
+name = "durable-cache-harness"
+version = "0.1.0"
+description = "Process/signal control, HTTP client, and filesystem tamper helpers for test/compat — test-only"
+publish = false
+edition.workspace = true
+
+[lib]
+name = "durable_cache_harness"
+path = "src/lib.rs"
+
+[dependencies]
+durable-cache = { workspace = true, features = ["test-support"] }
+durable-cache-mock-origin.workspace = true
+nix.workspace = true
+escargot.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+anyhow.workspace = true

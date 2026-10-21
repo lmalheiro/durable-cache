@@ -1,0 +1,24 @@
+[package]
+name = "durable-cache-mock-origin"
+version = "0.1.0"
+description = "In-process scripted origin server for test/compat — test-only, not a deliverable"
+publish = false
+edition.workspace = true
+
+[lib]
+name = "durable_cache_mock_origin"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mock-origin"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["full"] }
+bytes.workspace = true
+http-body-util.workspace = true
+async-stream.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true

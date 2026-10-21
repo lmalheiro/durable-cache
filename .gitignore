@@ -1,0 +1,28 @@
+.claude/*
+!.claude/skills/
+__pycache__
+.vscode
+# LaTeX build artifacts
+docs/build/
+docs/*.aux
+docs/*.fdb_latexmk
+docs/*.fls
+docs/*.out
+docs/*.synctex.gz
+docs/*.toc
+docs/durable-cache.log
+docs/durable-cache-requirements.json
+# The HTML reading copy is derived from the build the same way; the PDF
+# is the committed artifact. Regenerate with tools/reqman-html.py.
+docs/durable-cache.html
+docs/durable-cache-pending-coverage.json
+texput.log
+
+# Rust
+# Cargo.lock is committed deliberately (workspace has test binaries and a
+# reproducibility goal shared with the Nix flake) — not ignored.
+**/target/
+
+# Nix
+/result
+/result-*

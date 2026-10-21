@@ -1,0 +1,17 @@
+[package]
+name = "compat"
+version = "0.1.0"
+description = "Group B/D hand-written integration tests (TC-COMPLIANCE.*/TC-COMPAT.*) — test-only, not a deliverable"
+publish = false
+edition.workspace = true
+
+[dev-dependencies]
+durable-cache = { workspace = true, features = ["test-support"] }
+durable-cache-harness.workspace = true
+durable-cache-mock-origin.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tempfile.workspace = true

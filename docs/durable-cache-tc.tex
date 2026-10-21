@@ -1,0 +1,1746 @@
+% =====================================================================
+% Stage 5 -- Test Case Specifications.
+%
+% The final stage of the refinement flow. Every verifiable artifact in the
+% preceding stages carries a verify obligation -- \reqcover{verify}{TC}, or a
+% \reqexpect naming the specific TC; each is discharged here by a test-case
+% specification that \verify's it.
+%
+% These specifications are drafts -- the objective and the shape of each
+% test are fixed, but the concrete fixtures, sample responses, and exact
+% assertions are left to be filled in when the tests are implemented (an
+% IMP artifact \satisfy-ing each TC).
+% =====================================================================
+
+We assume the compliance tests will be driven by
+\href{https://github.com/http-tests/cache-tests}{\texttt{http-tests/cache-tests}},
+an existing, actively maintained test suite for HTTP caches (Appendix~\ref{app:cache-tests}
+details it fully). It ships its own controllable origin server, so the ``mocked
+upstream'' needed for the test scenarios does not need to be built: each test
+case addresses the origin with a unique ID and receives back exactly the
+headers, timing, and body that scenario requires.
+
+What remains to be built is the \emph{test subject}: a minimal Pingora proxy
+that enables \texttt{pingora-cache} with a single upstream peer pointed at the
+cache-tests origin and the file-system backend as its only \texttt{Storage}
+implementation. This proxy is a disposable test fixture, not a project
+deliverable --- it exists solely to host the storage backend under test for
+the duration of a compliance run and ships nothing.\footnote{Running it also
+introduces a Node.js/npm dependency into the test or CI environment, since the
+cache-tests CLI client is JavaScript-based.} \reqref{TC-COMPLIANCE.RFC-01}
+runs the cache-tests CLI against that proxy twice --- once with the stock
+\texttt{MemCache} as its \texttt{Storage} and once with the file-system
+backend --- and compares the two result sets test by test. Because
+\texttt{pingora-cache} does not itself claim full RFC~9111 conformance, the
+stock run is the reference: a test that fails on both runs is a limitation of
+\texttt{pingora-cache}, not of this backend, which is exactly what
+\reqref{HLR-COMPLIANCE.RFC-01} requires to be distinguished
+(Appendix~\ref{app:cache-tests}).
+
+% ---------------------------------------------------------------------
+% Standards compliance.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-COMPLIANCE.RFC-01}[draft][verify]{No regression against MemCache}
+
+  \localreqdiagram*{tc01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Show that the file-system backend adds no RFC 9111/9110
+  deviation to the proxy's observable caching behaviour, by comparing it with
+  the same proxy using the stock \texttt{MemCache}.
+
+  \textbf{Setup:} One proxy build whose \texttt{Storage} implementation is
+  selectable at start --- the stock \texttt{MemCache} or the file-system
+  backend --- with its upstream peer pointed at the \texttt{cache-tests}
+  origin server, and all other configuration identical. \texttt{cache-tests}
+  supplies its own corpus of per-test-case responses and expected outcomes;
+  Appendix~\ref{app:cache-tests} (\S~\ref{app:cache-tests-mapping}) lists
+  which \texttt{cache-tests} files exercise each \texttt{FRE-COMPLIANCE.*}
+  requirement, and which requirements it does not reach.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Start the proxy with \texttt{MemCache}; run the \texttt{cache-tests}
+      CLI against it, exporting the results as JSON.
+    \item Start the proxy with the file-system backend on an empty cache
+      directory; run the CLI again the same way.
+    \item Compare the two result sets test by test, ranking outcomes pass,
+      then suboptimal, then fail. Re-run against both backends every test
+      whose outcome differs, to separate a reproducible difference from a
+      timing-dependent one.
+  \end{enumerate}
+
+  \textbf{Expected result:} No test has a reproducibly lower-ranked outcome
+  with the file-system backend than with \texttt{MemCache}. Tests that fail on
+  both runs are recorded as \texttt{pingora-cache} limitations, outside this
+  requirement. Observation-only results that differ are listed for review.
+  (Restart scenarios are outside this test --- \texttt{cache-tests} cannot
+  restart the process under test --- and are covered by the per-requirement
+  test cases.)
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-COMPLIANCE.RFC-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.HEADERS-01}[draft][verify]{Header fields round-trip faithfully}
+
+  \localreqdiagram*{tc02}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A stored response returns the exact response head it was
+  given --- status code, version, and every header field.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store a response whose head exercises each shape fidelity must not
+      depend on: repeated field names in a deliberate order, an unrecognised
+      field, an empty-valued field, a field value carrying opaque non-ASCII
+      octets (obs-text), a \texttt{Set-Cookie}-style field repeated across
+      lines, a non-\texttt{200} status code, header sets of eight consecutive
+      serialised sizes stored with no metadata headroom, so that each
+      metadata region ends exactly where the body begins
+      (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and a header set many times the
+      default headroom.
+    \item Look the object up; then restart the process and look it up again.
+  \end{enumerate}
+
+  \textbf{Expected result:} Both lookups return the status code and version
+  unchanged and every field with its name and value intact byte for byte, the
+  relative order of same-named fields preserved; nothing is dropped, added,
+  reordered, or normalised, regardless of the size of the header set. Where
+  the metadata region is exactly full, the body that follows it is intact.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.HEADERS-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.TRAILERS-01}[draft][verify]{Trailer fields kept distinct}
+
+  \localreqdiagram*{tc03}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Show, by inspection, that trailer fields are never
+  returned as header fields. No test can present a trailer through the
+  targeted interface (\reqref{FRE-COMPLIANCE.TRAILERS-01}), so this
+  specification records an inspection procedure rather than a test.
+
+  \textbf{Steps (inspection):}
+  \begin{enumerate}
+    \item Inspect the \texttt{Storage} and \texttt{HandleMiss} signatures of
+      the targeted \texttt{pingora-cache} version: confirm that a store
+      receives header metadata only as a \texttt{CacheMeta} and body bytes
+      only through \texttt{write\_body}, with no trailer parameter.
+    \item Inspect the on-disk record format
+      (\reqref{SDS-LAYOUT.OBJECTFILE-01}) and its implementation: confirm
+      that the stored header segment is written only from the
+      \texttt{CacheMeta} handed to the store or metadata update, and that no
+      other section could supply fields to it.
+  \end{enumerate}
+
+  \textbf{Expected result:} The interface offers no trailer channel, and
+  the record format has no path by which a trailer-originated field could
+  enter the stored header segment. Repeat the inspection whenever the
+  targeted \texttt{pingora-cache} version changes.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.TRAILERS-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.BODY-01}[draft][verify]{Body round-trips byte for byte}
+
+  \localreqdiagram*{tc04}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The served body equals the stored body exactly, for full
+  and for seeked (partial) reads.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store responses with random binary bodies at boundary sizes: empty,
+      one byte, exactly at and one byte either side of the backend's
+      write-chunk and file-system block sizes, and a large multi-chunk body.
+    \item Retrieve each, including after a restart, and compare to the bytes
+      written.
+    \item Where the hit handler advertises seek support, read sub-ranges of the
+      large body --- the start, an interior slice spanning a chunk boundary,
+      and the tail --- and compare each against the corresponding slice of the
+      stored bytes.
+  \end{enumerate}
+
+  \textbf{Expected result:} Each full read is identical byte for byte and in
+  order --- no truncation, padding, or re-encoding; each seeked read delivers
+  exactly the requested slice, so range responses built from the reader carry
+  precisely the stored bytes.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.BODY-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.FRESHNESS-01}[draft][verify]{Freshness and age inputs preserved}
+
+  \localreqdiagram*{tc05}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Freshness and age computed from a retrieved object match
+  those computed before it was stored.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory, with freshness and age evaluated by
+  the functions of \texttt{pingora-cache} itself over the returned \texttt{CacheMeta}.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store responses exercising \texttt{Date}, \texttt{Expires}, \texttt{Age},
+      and \texttt{max-age}/\texttt{s-maxage}, including boundary and degenerate
+      values: \texttt{Age: 0}, delta-seconds at the overflow cap
+      (\texttt{2147483648}), \texttt{max-age=0}, an already-past
+      \texttt{Expires}, and a syntactically invalid \texttt{Expires}.
+    \item Evaluate freshness lifetime and current age before storing and after
+      retrieving (including across a restart), using the same clock reference.
+    \item Apply a metadata update carrying new freshness fields
+      (\reqref{FRE-COMPLIANCE.REVALIDATION-01}) and re-evaluate from a fresh
+      lookup.
+  \end{enumerate}
+
+  \textbf{Expected result:} The pre-store and post-retrieve evaluations agree,
+  including the internal created/updated instants of \texttt{pingora-cache}; boundary and invalid
+  values round-trip as opaque bytes, un-normalised; after the update, evaluation
+  reflects the updated field set and the new updated-at instant.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.FRESHNESS-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.VALIDATORS-01}[draft][verify]{Validator fields preserved}
+
+  \localreqdiagram*{tc06}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} \texttt{ETag} and \texttt{Last-Modified} survive storage
+  unchanged, including the weak indicator.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store responses with a strong \texttt{ETag}, a weak (\texttt{W/})
+      \texttt{ETag}, an empty entity tag (\texttt{ETag: ""}), a
+      \texttt{Last-Modified} date, and one response carrying both validators.
+    \item Retrieve and compare the validator fields to those stored, including
+      after a restart.
+    \item Apply a metadata update that changes the validators
+      (\reqref{FRE-COMPLIANCE.REVALIDATION-01}); retrieve and compare again.
+  \end{enumerate}
+
+  \textbf{Expected result:} The validators are returned byte-exactly, with the
+  \texttt{W/} marker retained and the empty tag intact, so conditional
+  revalidation can be issued and matched; after the update, every lookup
+  returns the updated validators.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.VALIDATORS-01}
+  \verify{FRE-COMPLIANCE.REVALIDATION-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.REVALIDATION-01}[draft][verify]{Metadata freshened atomically}
+
+  \localreqdiagram*{tc07}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A metadata update after a \texttt{304} replaces metadata
+  while leaving the body intact, applies only to the object it validated, is
+  observed atomically and is visible to lookups when \texttt{update\_meta}
+  returns; an update that outgrows the record's reserved space withdraws the
+  object, observably, so that the next request fetches it again.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface, with a test hook able to make a withdrawal's header write fail,
+  and log and metric capture.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store an object, then apply a metadata update with a newer header set;
+      repeat with an update whose header set is large enough that it no longer
+      fits the space the layout reserved ahead of the body
+      (\reqref{FDS-STORAGE.METAUPDATE-01}), while a client reads the object
+      through a hit opened before that update.
+    \item Run lookups concurrently with each update.
+    \item As each \texttt{update\_meta} call returns, immediately look the
+      object up, before any other task runs, and inspect the record on disk.
+    \item Restart the process and look the object up again.
+    \item Apply a metadata update to a key with no stored object.
+    \item Configure zero reserved headroom and repeat the small-update case
+      from step 1.
+    \item After an update has withdrawn a record, store the object again, as
+      the next request's fetch does, and look it up.
+    \item Apply sixteen updates that each outgrow the reserved space, all at
+      once. With a store of the key from the origin in flight, apply an
+      update that outgrows the record, then let the store finish.
+    \item Make the backend read-only (\reqref{FDS-COMPAT.READONLY-01}) and
+      apply an update that fits and one that does not.
+    \item Make the header write of a withdrawal fail; then apply the update
+      again.
+    \item Read the counter
+      \texttt{pingora\_durable\_meta\_headroom\_exceeded\_total} once the
+      backend is built. Then, for every withdrawal above, and for the one
+      whose header write failed, read the captured log and the counter.
+    \item In a build without the backend's \texttt{metrics} feature, apply one
+      update that withdraws the record; read the captured log and the
+      registry.
+    \item Store an object, then a newer object of the same key, created later;
+      then apply the update a \texttt{304} for the first object brings: new
+      header fields under the first object's creation time.
+  \end{enumerate}
+
+  \textbf{Expected result:} The body is unchanged and still retrievable under the
+  same key; every concurrent lookup sees either the pre-update or post-update
+  metadata, never a mixture, and never a body mismatched to its metadata;
+  when each call that fits returns, a lookup answers with the update and the
+  record on disk holds it; after the restart, lookups return the updated
+  metadata, never the superseded set; the missing-key update reports an
+  error and materialises no object; the update that outgrows the reserved
+  space reports \texttt{false} and withdraws the record in place, the file
+  keeping its length: the client already reading it gets the whole body, and
+  every later lookup misses, after the restart too; with zero headroom even
+  the small update withdraws the record; the store made after a withdrawal
+  replaces the withdrawn file, with a region sized for its own header set,
+  and lookups hit it; of the sixteen updates, one withdraws the record and
+  the others report that the key holds no object; the update made during
+  the store from the origin withdraws the record, and that store then lands
+  and replaces it; the updates once the backend is read-only fail with an
+  error and change nothing; the withdrawal whose header write fails reports
+  an error and leaves the record as it was, served with its old metadata,
+  and the next attempt withdraws it; the counter reads zero once the
+  backend is built; each withdrawal logs one warning naming
+  the key's hash and the headroom shortfall, and raises the counter by one,
+  while the failed one is neither logged nor counted; in the build without
+  the \texttt{metrics} feature the warning is still logged and the counter
+  is not registered; and the update for the replaced object is reported not
+  applied, and the newer object stands whole.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.REVALIDATION-01}
+  \verify{FRE-COMPLIANCE.METAATOMIC-01}
+  \verify{FRE-COMPLIANCE.METAPERSIST-01}
+  \verify{FRE-COMPLIANCE.METAABSENT-01}
+  \verify{FDS-STORAGE.METAUPDATE-01}
+  \verify{FDS-OBSERVABILITY.HEADROOM-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.VARY-01}[draft][verify]{Vary variants stored and selected}
+
+  \localreqdiagram*{tc08}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Multiple variants of one primary key are stored and
+  correctly selected.
+
+  \textbf{Setup:} The backend behind a \texttt{pingora-cache}
+  \texttt{HttpCache} driven by a test harness, so that lookups, variant
+  selection, and purges follow the framework's own call sequence; a
+  ``restart'' constructs new instances over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store two responses under the same primary key with different variance
+      keys derived from \texttt{Vary}.
+    \item Look up with requests matching each variant, and with one matching
+      neither.
+    \item Replace one variant with a newer response and apply a metadata update
+      to it; look both variants up again. Then purge that variant's own
+      variance-augmented key through the backend's purge operation, and look
+      the other variant up again.
+    \item Restart the process and look each variant up once more.
+  \end{enumerate}
+
+  \textbf{Expected result:} Each matching lookup returns its own variant; the
+  non-matching lookup reports a miss; one variant is never served for another;
+  mutating one variant leaves the other byte-identical; the full variant set
+  survives the restart, each variant still retrievable under its
+  variance-augmented key.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.VARY-01}
+  \verify{FRE-COMPLIANCE.VARYISOLATION-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.PURGE-01}[draft][verify]{Purge makes all variants unreachable}
+
+  \localreqdiagram*{tc09}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} After a purge of a key, neither the response nor any of its
+  variants is ever served again.
+
+  \textbf{Setup:} The backend behind a \texttt{pingora-cache}
+  \texttt{HttpCache} driven by a test harness, so that lookups, variant
+  selection, and purges follow the framework's own call sequence; a
+  ``restart'' constructs new instances over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store several \texttt{Vary} variants under one key.
+    \item Issue a purge for that key (the proxy's purge path addresses the primary
+      slot), then look the primary and each variant up again, through
+      the primary-slot-first lookup in \texttt{pingora-cache}.
+    \item Purge the same key a second time, and purge a key that was never
+      stored.
+    \item Restart the process, once cleanly and once after killing it, and
+      look the primary and each variant up again. (Purge durability across a
+      host crash is exercised by \reqref{TC-PERSISTENCE.CRASHSAFE-01}.)
+    \item Repeat the purge while a reader is mid-stream on one variant and
+      while a same-key store is in flight; let both run to completion.
+    \item Restart the process once more, letting Eviction Recovery's scan run
+      (\reqref{FDS-EVICTION.STARTUP-01}), and inspect the cache directory and
+      the eviction manager for the variant records.
+  \end{enumerate}
+
+  \textbf{Expected result:} Every lookup --- primary and variants --- reports a
+  miss after the purge; an invalidated response is never served; the repeated
+  and never-stored purges are harmless no-ops that report nothing found; no
+  purged object reappears after the restart or crash; the mid-stream reader
+  runs to completion or fails cleanly --- never another object's bytes --- and
+  its storage is not reused while referenced; the racing store publishes
+  nothing, since the purge ended it; after the final restart, the variant
+  records the purge orphaned are still in the cache directory, each admitted
+  to the eviction manager with its record size, so that eviction removes them
+  like any other object.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.PURGE-01}
+  \verify{FRE-COMPLIANCE.PURGEABSENT-01}
+  \verify{FRE-COMPLIANCE.PURGEDURABLE-01}
+  \verify{FRE-COMPLIANCE.READERISOLATION-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.INCOMPLETE-01}[draft][verify]{Incomplete responses never served}
+
+  \localreqdiagram*{tc10}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A store that does not run to completion is not later served
+  as if complete.
+
+  \textbf{Setup:} The backend behind a \texttt{pingora-cache}
+  \texttt{HttpCache} driven by a test harness, so that lookups, variant
+  selection, and purges follow the framework's own call sequence; a
+  ``restart'' constructs new instances over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Begin storing a response and, while the store is in flight, attach a
+      follower streaming the partial hit
+      (\reqref{FRE-COMPAT.STREAMING-01}, \reqref{FRE-COMPLIANCE.PARTIALABORT-01}).
+    \item Abort the store before the body is fully written (simulating an
+      upstream disconnect), then drop its miss handler; inspect the cache
+      directory.
+    \item Look the key up, including after a restart.
+    \item Repeat, but instead of an orderly abort kill the process mid-write
+      (no abort path runs); restart, look the key up, and inspect the cache
+      directory for the per-writer temporary left behind.
+  \end{enumerate}
+
+  \textbf{Expected result:} Every lookup reports a miss --- the only observable
+  the \texttt{Storage} interface permits for an incomplete entry --- and a
+  partial body is never returned as a complete response; the follower's
+  in-flight stream terminates with an error, never as a clean end of body; the
+  orderly-aborted store's temporary is gone by the time its handler is dropped;
+  the crash-orphaned temporary is never served or promoted, and is gone once
+  the restarted process's restart-time scan has run. States a real host crash
+  can leave behind are exercised by \reqref{TC-PERSISTENCE.CRASHSAFE-01}.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.INCOMPLETE-01}
+  \verify{FRE-COMPLIANCE.PARTIALABORT-01}
+  \verify{FRE-COMPAT.STARTRECLAIM-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPLIANCE.REPLACE-01}[draft][verify]{Stores replace atomically}
+
+  \localreqdiagram*{tc17}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Storing a new response under an occupied key replaces the
+  old object atomically; readers and racing writers are never torn.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store object A under a key and attach a reader mid-stream on A's body.
+    \item Store object B --- different metadata and a different, larger body ---
+      under the same key; run lookups while B's store is in flight, then let it
+      complete and look up again, including after a restart.
+    \item Drain the reader attached in step 1 and compare what it received.
+    \item Race two same-key stores (C and D) to completion and look up.
+  \end{enumerate}
+
+  \textbf{Expected result:} In-process lookups during B's store return a
+  partial hit of B (\reqref{FRE-COMPAT.STREAMING-01}), and a lookup that
+  cannot see B's in-flight write returns A whole; after B's
+  store completes, every lookup --- also after the restart --- returns B in its
+  entirety, never A's metadata with B's body or any other mixture; the reader
+  of A receives exactly A's bytes to a clean end of body (or a clean error),
+  never bytes of B, and A's space is reclaimed only once no reader references
+  it; after the race, lookups return exactly one winner (the last published),
+  intact.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPLIANCE.REPLACE-01}
+  \verify{FRE-COMPLIANCE.READERISOLATION-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Persistence.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-PERSISTENCE.CRASHSAFE-01}[draft][verify]{Host crash serves no bad content}
+
+  \localreqdiagram*{tc27}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} In every state a host crash or power loss could leave on
+  disk, the restarted cache serves no object whose content differs from what
+  was stored and no object whose purge it had acknowledged; objects that did
+  not survive are misses.
+
+  \textbf{Setup:} The cache directory on an ext4 file system whose block device
+  is a device-mapper \texttt{log-writes} target, which logs every write with its
+  flush and FUA ordering so that the device can be replayed to any point a power
+  failure could have left it;\footnote{\href{https://docs.kernel.org/admin-guide/device-mapper/log-writes.html}{Linux
+  kernel documentation: ``dm-log-writes''}, with its replay tool at
+  \url{https://github.com/josefbacik/log-writes}.} the backend driven directly
+  through the \texttt{Storage} interface, with the log marked after each
+  operation the backend acknowledges.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store a set of objects of known content and varied sizes, including
+      bodies spanning many file-system blocks; leave one further store
+      unfinished.
+    \item Purge a subset of the stored objects, and apply metadata updates to
+      another subset, both in place and withdrawing the record.
+    \item Replay the log to each flush and FUA point in turn. For each replayed
+      state: mount the file system (replaying its journal), construct the
+      backend and let its restart procedure complete, look up every key, and
+      read every hit's body in full.
+  \end{enumerate}
+
+  \textbf{Expected result:} In every replayed state: every hit's metadata and
+  body are exactly one version the backend stored --- for an updated object,
+  the version before or after an update, never a mixture; no object
+  whose purge was acknowledged before that state's point is served; the
+  unfinished store and every temporary are never served; every other object is
+  either served as stored or a miss.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-PERSISTENCE.CRASHSAFE-01}
+  \verify{FRE-COMPLIANCE.INCOMPLETE-01}
+  \verify{FRE-COMPLIANCE.PURGEDURABLE-01}
+  \verify{FRE-COMPLIANCE.METAPERSIST-01}
+\end{requirement}
+
+\begin{requirement}{TC-PERSISTENCE.RESTART-01}[draft][verify]{Objects survive a process exit}
+
+  \localreqdiagram*{tc28}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Every cached object whose storage completed before the
+  cache process exited --- in an orderly way or by crashing --- is served by
+  the process that starts next.
+
+  \textbf{Setup:} The test-subject proxy with the file-system backend, its
+  upstream pointed at an origin that counts the requests it receives.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Through the proxy, cache a set of objects: varied body sizes,
+      \texttt{Vary} variants, and objects whose metadata was then updated by
+      revalidation.
+    \item Stop the proxy gracefully; start it again on the same cache
+      directory; request every object.
+    \item Cache a further set; as soon as the last store completes, kill the
+      proxy; start it again; request every object from both sets.
+  \end{enumerate}
+
+  \textbf{Expected result:} After each restart every object is served from the
+  cache, byte for byte and with its latest metadata, and the origin receives
+  no request for any of them.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-PERSISTENCE.DURABLE-01}
+\end{requirement}
+
+\begin{requirement}{TC-PERSISTENCE.CAPACITY-01}[draft][verify]{Cache larger than host RAM}
+
+  \localreqdiagram*{tc29}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The cache holds, and serves, a set of objects whose total
+  size exceeds the RAM installed on its host.
+
+  \textbf{Setup:} The test-subject proxy with the file-system backend in a
+  virtual machine with little RAM (e.g.\ 1~GiB) and ample disk, its eviction
+  budget configured above the total the test stores.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Cache objects through the proxy until their total size is at least
+      four times the machine's RAM, sampling the proxy's resident memory
+      throughout.
+    \item Restart the proxy and request every object.
+  \end{enumerate}
+
+  \textbf{Expected result:} Every store succeeds and no object is evicted;
+  after the restart every object is served from the cache intact; the proxy is
+  never killed for lack of memory, and its resident memory stays well below
+  the machine's RAM.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-PERSISTENCE.CAPACITY-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Efficiency.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-EFFICIENCY.SPACE-01}[draft][verify]{Space overhead measured}
+
+  \localreqdiagram*{tc33}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Measure the cache's on-disk space overhead as
+  \reqref{HLR-EFFICIENCY.SPACE-01} defines it and compare it with the 25\,\%
+  target.
+
+  \textbf{Setup:} The test-subject proxy with the file-system backend on a
+  dedicated file system, its upstream an origin serving three stated loads:
+  (a) a mix of object sizes recorded from, or modelled on, the intended
+  deployment; (b) only objects below 4~KiB; (c) only objects of 1~MiB and
+  more. A tool that walks the cache directory and sums, per record, the
+  metadata segments and body lengths the record header gives.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item For each load, fill the cache through the proxy until it holds at
+      least $10^5$ objects, then let it settle (no store in flight).
+    \item Measure the blocks the cache directory tree occupies (e.g.\
+      \texttt{du} in bytes), and the objects' own metadata and body bytes with
+      the tool; compute the overhead as their difference over the latter.
+  \end{enumerate}
+
+  \textbf{Expected result:} The overhead for each load is recorded. For the
+  deployment load (a) it is at most 25\,\%. While
+  \reqref{ADR-EFFICIENCY.COMPACTION-01}'s conflict stands, a result above the
+  target for loads dominated by small objects is known non-conformance, to be
+  reported with its measured value rather than treated as a regression.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-EFFICIENCY.SPACE-01}
+\end{requirement}
+
+\begin{requirement}{TC-PERFORMANCE.LOOKUP-01}[draft][verify]{Lookup latency flat with size}
+
+  \localreqdiagram*{tcperflookup01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The 99th-percentile lookup latency with $10^7$ objects
+  cached is no more than 25\,\% above that with $10^4$ objects cached, as
+  \reqref{HLR-PERFORMANCE.LOOKUP-01} requires.
+
+  \textbf{Setup:} A dedicated test host with the cache directory on an SSD and
+  the file system a deployment would use, idle apart from the test. The
+  backend is driven directly through the \texttt{Storage} interface, and the
+  time from calling \texttt{lookup} to its return --- a hit with its metadata
+  read, or a miss --- is recorded per call; the rest of the lookup path in
+  \texttt{pingora-cache} does not depend on how many objects are stored. Objects carry
+  uniformly distributed cache-key hashes and small bodies.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store $10^4$ objects.
+    \item \emph{Cold measurement:} drop the operating system's page cache,
+      then perform at least $10^5$ lookups of uniformly chosen keys, half of
+      them stored (hits) and half never stored (misses), recording each
+      latency.
+    \item \emph{Warm measurement:} repeat the same lookups immediately, so
+      that the looked-up records and directories are in the page cache.
+    \item Store further objects into the same cache directory until it holds
+      $10^7$ objects, then repeat steps 2 and 3 with a fresh uniform key
+      sample.
+    \item For each of the four runs, compute the 99th-percentile latency
+      separately for hits and for misses.
+  \end{enumerate}
+
+  \textbf{Expected result:} For hits and for misses, in both the cold and the
+  warm condition, the 99th-percentile lookup latency at $10^7$ objects is no
+  more than 1.25 times the corresponding value at $10^4$ objects.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-PERFORMANCE.LOOKUP-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Pingora compatibility.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-COMPAT.EVICTION-01}[draft][verify]{Exact eviction state after restart}
+
+  \localreqdiagram*{tc11}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Once the backend reports its restart procedure
+  complete, the eviction manager's view of admitted objects is consistent
+  with the durably published objects.
+
+  \textbf{Setup:} The backend with the stock \texttt{simple\_lru} eviction
+  manager and Eviction Recovery, driven by a test harness that can read the
+  manager's entries and totals.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Populate the cache with a known set of objects, including
+      \texttt{Vary} variants and objects of very different sizes.
+    \item Before restarting, also leave on disk: an object purged during the
+      previous run, a record damaged out of band, and a crash-orphaned
+      per-writer temporary; and remove one variant's primary.
+    \item Restart the process and wait until the backend reports its restart
+      procedure complete.
+    \item Inspect the manager's \texttt{total\_items} and \texttt{total\_size} and
+      its per-entry view; compare each entry's size with the length of the
+      file that stores the object.
+    \item Store one more object; confirm the size it is admitted with is also
+      its record file length.
+  \end{enumerate}
+
+  \textbf{Expected result:} Every durably published object, the variant whose
+  primary was removed included, is represented exactly once with its record
+  size and freshness deadline; no entry exists for the purged object, the
+  damaged record, the temporary, or the removed primary; the reported totals
+  equal the count and aggregate record size of the
+  published set; a store completed after the restart is admitted with the same
+  size definition.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.EVICTION-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPAT.HOTUPGRADE-01}[draft][verify]{Cache consistent across hot upgrade}
+
+  \localreqdiagram*{tc12}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Once the outgoing process receives the Pingora upgrade
+  signal, its backend makes no further durable change and refuses purges and
+  metadata updates; the incoming process's activity never makes unreadable an
+  object the outgoing process holds open; and the hot-upgrade helper starts
+  the incoming process's restart scan only once the server has taken over
+  the listening sockets and the close timeout has elapsed.
+
+  \textbf{Setup:} Two builds of the test-subject proxy with the file-system
+  backend and its hot-upgrade helper installed, run as real Pingora server
+  processes sharing one cache directory. From step 6 on, a Pingora server
+  run inside the test harness with the helper installed, the harness
+  standing in for the outgoing process.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Run an old process serving normally, with streaming responses in
+      progress against existing objects and a store of a slow upstream
+      response in flight.
+    \item Start a new process and send the old one the Pingora upgrade signal
+      (\texttt{SIGQUIT}), letting the listening sockets transfer.
+    \item Through the old process, while it still accepts or drains: let the
+      in-flight store complete, and request a purge and trigger a
+      revalidation metadata update for existing keys.
+    \item Through the new process: purge an object the old process is
+      streaming, and drive stores, metadata updates, and eviction.
+    \item Let the old process finish draining and exit; restart nothing, and
+      inspect the cache directory and the new process's lookups.
+    \item Start a server that takes over its listening sockets from an
+      outgoing process, bootstrapping as a service, with the helper given
+      that service's handle; hand a listening socket over only some time
+      after the server has started. Then start an ordinary server, taking
+      over no socket, with the helper installed.
+    \item Send one server with the helper installed the upgrade signal,
+      though it has no socket to hand over, and another a graceful
+      terminate.
+    \item Start the helper's recovery service, and shut its server down
+      while the service waits to scan; then, over other caches, once the
+      scan has admitted its first record, and once its walk is done, with
+      a record removed meanwhile.
+  \end{enumerate}
+
+  \textbf{Expected result:} The store the old process completed after the
+  signal is not durably published; its purge and metadata update fail with an
+  error and change nothing on disk; every response it was streaming completes
+  byte for byte, including the one whose object the new process purged; the
+  new process's lookups see only objects published before the signal or by
+  the new process; the restart scan of step 6's first server begins no
+  sooner than the close timeout after the hand-over, and the ordinary
+  server's without waiting for it; in step 7, the upgrade signal makes
+  its server's backend read-only, and the terminate leaves the other's
+  writable; in step 8, the first service starts no scan and says so, the
+  second scan admits no further record, and the third skips its ghost-entry
+  checks, keeping the removed record's entry, both summary lines saying the
+  server was shutting down.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.HOTUPGRADE-01}
+  \verify{FDS-COMPAT.READONLY-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPAT.STREAMING-01}[draft][verify]{Followers stream a partial hit}
+
+  \localreqdiagram*{tc16}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The backend advertises streaming partial writes
+  (\reqref{FRE-COMPAT.STREAMFLAG-01}), and while a leader writes an object,
+  concurrent requests are served by partial hits bound to the most recently
+  opened writer when several are in flight (\reqref{FRE-COMPAT.STREAMING-01}),
+  streamed within the chunk-delivery latency bound
+  (\reqref{FRE-COMPAT.STREAMDELIVERY-01}) and ending normally when the store
+  completes (\reqref{FRE-COMPAT.STREAMEND-01}), from a single upstream fetch.
+
+  \textbf{Setup:} A proxy with the file-system backend and no
+  \texttt{CacheLock} configured, so that a second same-key store can open
+  while the first is still in flight (with a lock configured, the same
+  overlap needs the lock's age timeout to expire), on a test host that is not
+  CPU-saturated, with at least ten followers and a body of at least a
+  thousand chunks, so the delivery percentile rests on enough samples.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Query the backend's \texttt{support\_streaming\_partial\_write}.
+    \item On a second proxy instance identical but for a \texttt{CacheLock}
+      being configured, drive a cache miss from a slow upstream; once the
+      miss handler opens, and before the body is written, record whether
+      the cache lock for the key is still held.
+    \item Drive a cache miss from an upstream that emits a large body in
+      throttled chunks; let the miss handler open.
+    \item While that store is still in flight, start a second store under
+      the same key from a distinct upstream response, staggered so both
+      writers' write windows overlap; let its miss handler open too.
+    \item Issue a lookup for the key now that both writers are open; confirm
+      the returned partial hit is backed by the second writer's --- the most
+      recently opened --- temporary object, not the first's.
+    \item Issue further concurrent lookups for the same key while the second
+      store is in flight; confirm each returns a partial hit backed by that
+      same temporary object.
+    \item Observe the followers' streams as the second writer appends,
+      timestamping each chunk's \texttt{write\_body} return and each
+      follower's \texttt{read\_body} return with that chunk, before that
+      store completes.
+    \item Let the second store complete; drain the followers' streams
+      (across the concluding atomic rename) and compare the received bodies
+      to its upstream body.
+    \item Count upstream fetches: exactly one for each writer, including the
+      first, whose output was superseded before ever being streamed to a
+      follower.
+  \end{enumerate}
+
+  \textbf{Expected result:} \texttt{support\_streaming\_partial\_write}
+  returns \texttt{true}, and the cache lock is released once the leader's
+  miss handler opens, before its body is written. A lookup issued while
+  several same-key writes are in flight resolves to the most recently opened one, never an earlier
+  writer. Followers receive body chunks as that writer writes them, with at
+  least 99\,\% of all chunk deliveries, across every follower, within 10~ms
+  of the chunk's \texttt{write\_body} return --- no follower waits for the
+  whole object; every follower's body is
+  byte-identical to its upstream response and ends with a normal end of
+  body, including for followers still reading when the object is renamed to
+  its canonical name; each writer's upstream is fetched exactly
+  once.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.STREAMFLAG-01}
+  \verify{FRE-COMPAT.STREAMING-01}
+  \verify{FRE-COMPAT.STREAMDELIVERY-01}
+  \verify{FRE-COMPAT.STREAMEND-01}
+  \verify{FDS-STORAGE.PARTIAL-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPAT.UNSIZED-01}[draft][verify]{Unsized body accepted and persisted}
+
+  \localreqdiagram*{tc19}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A body whose total length is not declared when the
+  store begins is persisted completely, and every chunk is in the store's
+  temporary before its \texttt{write\_body} call returns, so the backend
+  holds no body bytes beyond the chunk being written, as
+  \reqref{FRE-COMPAT.UNSIZED-01} requires.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness that can read the store's temporary in the
+  cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Open a store and stream a body in irregular, unevenly-sized chunks
+      without declaring its length, so the total length is unknowable when
+      the store opens.
+    \item After each \texttt{write\_body} call returns, compare the
+      temporary's length with the length of its header, key, and metadata
+      region plus the body bytes streamed so far.
+    \item Once the stream ends, retrieve the object and compare its persisted
+      length and bytes to the total streamed.
+    \item Repeat with a body whose size happens to be zero (empty), and with
+      bodies large enough to span multiple write chunks and file-system block
+      boundaries.
+  \end{enumerate}
+
+  \textbf{Expected result:} Every store succeeds; after every
+  \texttt{write\_body} call the temporary holds exactly the header, key,
+  metadata region, and the body bytes streamed so far; the persisted
+  object's length and bytes equal exactly what was streamed in every case,
+  including the empty-body and multi-chunk boundary cases.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.UNSIZED-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPAT.CONCURRENT-01}[draft][verify]{Same-key writes stay isolated}
+
+  \localreqdiagram*{tc20}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Concurrent writes of the same key never interleave
+  their bytes, and each is durably published as a complete object or not
+  at all, while in-process lookups may see a partial hit of one in-flight
+  writer. (Convergence on a single winner is covered separately by
+  \reqref{TC-COMPLIANCE.REPLACE-01}.)
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory, with a second backend instance in a separate
+  process for the cross-process case.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Start two concurrent stores under the same key, each with a
+      distinctive, easily distinguishable byte pattern and a different
+      length, staggered so their write windows overlap.
+    \item While both stores are in flight, issue concurrent lookups for the
+      key.
+    \item Let both stores run to completion.
+    \item Repeat with same-key writers started within the same process (not
+      only across processes), exercising the same-process race the cache
+      lock's age timeout permits.
+  \end{enumerate}
+
+  \textbf{Expected result:} No lookup ever observes a body mixing bytes from
+  more than one writer; every lookup either returns one writer's object whole
+  (or a partial hit of one in-flight writer, per
+  \reqref{FRE-COMPAT.STREAMING-01}) or reports a miss --- never a torn
+  or interleaved result. Once both stores complete, the backend has converged
+  on exactly one whole, uncorrupted object.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.CONCURRENT-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPAT.FORMATUPGRADE-01}[draft][verify]{Foreign records are misses}
+
+  \localreqdiagram*{tc30}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A record written under another record format version is
+  reported as a miss and never decoded, while a record written under the
+  current one is returned exactly; and the \texttt{pingora-cache} release in
+  use encodes metadata exactly as the current format version relies on.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface, instrumentation recording every metadata decode, and a fixed
+  \texttt{CacheMeta} together with the bytes \texttt{pingora-cache} 0.9.0
+  encodes it to.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Construct the backend; store a set of objects.
+    \item Construct it again over the same directory; look every object up.
+    \item Store a fresh set; rewrite each record's \texttt{version} field to
+      another value, resealing its \texttt{header\_crc}; construct the backend
+      again; look every object up; inspect the cache directory once its
+      restart procedure completes.
+    \item Encode the fixed \texttt{CacheMeta} with the \texttt{pingora-cache}
+      in use and compare the result with the fixed bytes; decode the fixed
+      bytes and compare every field with the fixed \texttt{CacheMeta}.
+  \end{enumerate}
+
+  \textbf{Expected result:} Step 2 returns every object exactly as stored.
+  Step 3 reports every rewritten object as a miss, and the instrumentation
+  shows no attempt to decode their metadata; the foreign records are
+  reclaimed by the restart procedure (\reqref{FDS-STORAGE.RECLAIM-01}). In
+  step 4 both comparisons are equal. A difference means the release in use
+  changed the encoding the current format relies on, and the format version
+  must be reconsidered before that release is adopted.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.FORMATUPGRADE-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPAT.WRITEFAIL-01}[draft][verify]{Write failures fail the store}
+
+  \localreqdiagram*{tc31}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A failure writing or synchronising a store's data is
+  returned as an error from the call during which it occurred, and nothing is
+  published.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface, with its cache directory on a small file system (e.g.\ a
+  loop-mounted image of a few megabytes) over a device-mapper
+  \texttt{flakey} target able to fail writes on demand.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Stream a body larger than the file system's free space.
+    \item On a file system with space, stream a complete body, switch the
+      device to failing writes, and call \texttt{finish}.
+    \item Remove, from outside the backend, a shard directory the backend has
+      already created; store an object into that shard.
+    \item Remove that shard directory again and make its first-level parent
+      directory read-only, so it cannot be recreated; store another object
+      into it.
+    \item After each case, look the key up.
+  \end{enumerate}
+
+  \textbf{Expected result:} Step 1's \texttt{write\_body} and step 2's
+  \texttt{finish} each return an error; step 3's store succeeds after the
+  backend recreates the directory once; step 4's store returns an error; no
+  failed store is ever published, so each such lookup reports a miss.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.WRITEFAIL-01}
+  \verify{FDS-LAYOUT.STARTUP-01}
+\end{requirement}
+
+\begin{requirement}{TC-COMPAT.ABORTSPACE-01}[draft][verify]{Aborted stores release space}
+
+  \localreqdiagram*{tc32}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A store that ends without being published loses its
+  temporary no later than when its miss handler is dropped, and the storage
+  it consumed is freed without a restart, however it ended.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface, as in \reqref{TC-COMPAT.WRITEFAIL-01}.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Stream part of a large body, then drop the miss handler without
+      finishing, as \texttt{HttpCache} does after an upstream failure or a
+      cancellation; inspect the cache directory and free space.
+    \item Repeat with a partial-hit reader attached to the store before the
+      handler is dropped; read its stream to the end.
+    \item Repeat with a store ended by a write failure.
+    \item Repeat step 1 a thousand times in a row.
+  \end{enumerate}
+
+  \textbf{Expected result:} After each dropped handler the store's temporary is
+  gone at once, and the free space it held is available again once the
+  backend has closed the file, without a restart; the attached reader's
+  stream ends with an error; after the thousand aborts the cache directory's
+  disk usage is back to what it was before them.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.ABORTSPACE-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Eviction-state reconstruction mechanism.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-EVICTION.RECONSTRUCT-01}[draft][verify]{Reconstruction converges exactly}
+
+  \localreqdiagram*{tc13}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} When \texttt{recover()} returns, the manager reflects
+  the published set exactly, with record sizes --- whether serving waited for
+  it or ran alongside it --- with no snapshot or delta log involved.
+
+  \textbf{Setup:} The backend with the stock \texttt{simple\_lru} eviction
+  manager and Eviction Recovery behind an \texttt{HttpCache}, driven by a test
+  harness with hooks that pause \texttt{recover()} at chosen points.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Populate a large known set of objects and restart the process;
+      call \texttt{recover()} without serving, and let it return.
+    \item Restart again, and this time begin serving at once. With test
+      hooks pausing \texttt{recover()} at chosen points, drive live traffic
+      that: replaces an object after the scan has read it but before it is
+      admitted; removes an object's record after the scan admitted it,
+      leaving its entry in the manager, as a live eviction's purge does when
+      it lands after the scan admitted its victim again; republishes a key
+      after the scan admitted it and a purge removed it;
+      and stores objects the scan never reaches.
+    \item Let \texttt{recover()} return; compare the manager's entries,
+      sizes, \texttt{total\_items} and \texttt{total\_size} with the files on
+      disk.
+    \item Trace file-system activity throughout both runs.
+    \item Make the backend read-only, then call \texttt{recover()}, with a
+      test hook pausing it after it reads any record.
+  \end{enumerate}
+
+  \textbf{Expected result:} After each run, every published object is
+  represented exactly once with its current record size, no entry exists for
+  a removed object, and the totals equal the count and aggregate record size
+  of the published set --- including after each interleaving in step 2; no
+  snapshot file or append-only log is read or written at any point; a scan of
+  a read-only backend returns without reading any record or admitting
+  anything.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-EVICTION.STARTUP-01}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.PUBLISH-01}[draft][verify]{Atomic same-directory publication}
+
+  \localreqdiagram*{tc21}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The per-writer temporary and rename publish atomically,
+  keep concurrent writers isolated, never reuse another writer's file,
+  synchronise before publishing, report the record size, and publish nothing
+  once the backend is read-only.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface, with system calls traced (e.g.\ with \texttt{strace}).
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Start two concurrent same-key writers; confirm each writes its own
+      temporary, named with the writer identity and counter
+      \reqref{FDS-STORAGE.PUBLISH-01} specifies, and neither's bytes appear in
+      the other's file.
+    \item Before a store opens, create a file at exactly the temporary name
+      its counter will produce next; open the store.
+    \item Let a store run to completion; confirm the object becomes visible
+      under its canonical name only at the rename, and inspect the traced
+      system-call order and the size \texttt{finish} reports.
+    \item Crash a writer mid-store, before rename; confirm the abandoned
+      temporary is never served or promoted under the canonical name; restart
+      the process and confirm the temporary is gone after its restart-time
+      scan.
+    \item Trigger a replacement store under an existing key; confirm a
+      reader already streaming the outgoing object completes undisturbed
+      while the new object publishes, and subsequent lookups return only
+      the new object.
+    \item Make the backend read-only (\reqref{FDS-COMPAT.READONLY-01}) while a
+      store is in flight; let it complete.
+    \item Inspect the implementation and the tree layout: every temporary is
+      created in the directory of its canonical name, and no code path
+      publishes by copying.
+  \end{enumerate}
+
+  \textbf{Expected result:} Concurrent writers' bytes are never interleaved;
+  the pre-existing file at the temporary name is left untouched and the store
+  uses the next counter value; the temporary's data is synchronised before the
+  rename, and \texttt{finish} reports the published file's full length; a
+  crash leaves no promoted incomplete object; the rename is the sole point of
+  visibility; replacement converges to a single winner without disturbing
+  in-flight readers of the old object; the store completing once the backend
+  is read-only
+  reports success, publishes nothing, and leaves no temporary; the inspection
+  finds no cross-directory staging and no copy-based publication.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-STORAGE.PUBLISH-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Purge: canonical-name unlink only.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-STORAGE.PURGE-01}[draft][verify]{Purge unlinks canonical name only}
+
+  \localreqdiagram*{tc25}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Purge resolves and unlinks only the canonical path
+  derived from the presented target key's combined hash, reports the outcome
+  the framework distinguishes, is idempotent and a harmless no-op
+  on an absent key, ends a same-key store in flight when it invalidates and
+  leaves it alone when it evicts, and disturbs no reader already streaming
+  the file.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store an object together with a \texttt{Vary} variant under the
+      same primary key; purge the primary; confirm only the primary's
+      canonical file is removed from disk and the variant's own file is
+      untouched.
+    \item Store a primary and a variant again; purge using the variant's
+      own (varianced) \texttt{CompactCacheKey}, as
+      \texttt{HttpCache::spawn\_async\_purge} can present it; confirm only
+      the variant's canonical file is removed and the primary's is
+      untouched.
+    \item Purge the same key a second time, and purge a key that was never
+      stored; confirm both report \texttt{NotFound}, with no error and no
+      side effect on any other object.
+    \item Purge a stored key through each target kind in turn --- an
+      \texttt{Active} target, and an \texttt{Exact} target holding a
+      \texttt{KeyOnly} entry key --- and confirm each removes that key's
+      canonical file and reports \texttt{Purged(None)}, never an entry
+      identifier (\reqref{ADR-COMPAT.ENTRYID-01}).
+    \item Purge a stored key through an \texttt{Exact} target holding an
+      \texttt{Identified} entry key; confirm it reports \texttt{NotFound}
+      and the file is still on disk.
+    \item Start a same-key store and let it reach the point of holding an
+      open per-writer temporary, and attach a partial-hit reader to it;
+      invalidate the key; look the key up, with and without the store's
+      streaming write tag; let the store complete; look the key up; then
+      store the key afresh. Invalidate a key that holds nothing but a store
+      in flight. Repeat the first case with a purge made to evict instead of
+      the invalidation.
+    \item Attach a reader mid-stream on an already-published object; purge
+      its key while the read is in progress; confirm the reader runs to
+      the end of the body it already opened, never an error and never
+      another object's bytes, and a subsequent lookup reports a miss.
+    \item Race an invalidation, and then a purge made to evict, against a
+      same-key store's completion, from both orderings: the purge before the
+      store's rename, and after it.
+    \item With system calls traced, purge an existing object; then, with
+      directory synchronisation made to fail (e.g.\ over a device-mapper
+      \texttt{flakey} target), purge another. With synchronisation still
+      failing, evict an existing object, then invalidate the evicted key,
+      and invalidate a key whose shard directory does not exist.
+    \item Make the backend read-only (\reqref{FDS-COMPAT.READONLY-01}) and
+      purge an existing object.
+    \item Put a directory where a key's record would be, so that the
+      \texttt{unlink} fails whatever the test's privileges, and purge the
+      key.
+  \end{enumerate}
+
+  \textbf{Expected result:} Only the presented target key's canonical path is
+  ever named or opened by purge; a primary purge never touches a \texttt{Vary}
+  variant, a variant purge never touches its primary, and a purge never
+  touches a writer's own temporary; an \texttt{Active} and a
+  \texttt{KeyOnly} \texttt{Exact} target resolve identically and report
+  \texttt{Purged(None)}, while an \texttt{Identified} \texttt{Exact} target
+  reports \texttt{NotFound} without touching the file; repeated and
+  never-stored purges report \texttt{NotFound} harmlessly; a concurrent reader completes or fails cleanly, never
+  crossing into another object's bytes; an invalidation ends a same-key
+  store in flight: an untagged lookup then misses while a tagged one still
+  finds the store, the reader attached to it gets the whole body, and the
+  store's completion publishes nothing and reports an error, its temporary
+  removed, while a store begun after the purge publishes as usual; the
+  invalidation of a key holding only a store in flight reports
+  \texttt{Purged(None)}; a purge made to evict leaves the store to publish;
+  racing a store, an invalidation leaves the key absent in either order,
+  and a purge made to evict leaves whichever of the two landed last; an
+  invalidation
+  synchronises the shard directory after the unlink, or after finding
+  nothing, before it reports, and fails with an error when the
+  synchronisation does, while a purge made to evict does not synchronise and
+  so still removes its record, and an invalidation whose shard directory does
+  not exist has nothing to synchronise and reports \texttt{NotFound};
+  the purge once the backend is read-only fails with an error and leaves
+  the file in place; and the purge whose \texttt{unlink} fails reports an
+  error and leaves the path as it was.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-STORAGE.PURGE-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Reclaim: crash-orphaned temporaries, and damaged and withdrawn records.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-STORAGE.EXPIRE-01}[draft][verify]{Expire keeps the body readable}
+
+  \localreqdiagram*{tc34}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} An expiry stops the object being served as a fresh hit
+  while leaving its body byte-identical and readable for the revalidation that
+  follows, takes the in-place metadata path whatever headroom the record has
+  left, and reports the outcome each case calls for.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness, with the record's file checked so a write in
+  place can be told from a new file, and with the metadata headroom
+  configurable per instance (\reqref{SDS-LAYOUT.OBJECTFILE-01}).
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store an object with a known body and a freshness lifetime well in
+      the future; expire its key; look the key up and read the body to the
+      end.
+    \item Expire the same key a second time, and expire a key that was never
+      stored.
+    \item Expire a stored key through an \texttt{Exact} target holding an
+      \texttt{Identified} entry key.
+    \item With headroom configured, expire an object and compare the file's
+      identity (device and inode) and length before and after; then repeat
+      against an instance configured with zero headroom, for an object whose
+      freshness deadline falls on a whole second, expired at an instant well
+      inside a second.
+    \item Store an object whose response sets a
+      \texttt{stale-while-revalidate} window; expire it; inspect the metadata
+      the next lookup returns.
+    \item Start a same-key store and let it reach the point of holding an open
+      per-writer temporary; expire the key concurrently; let the store
+      complete; look the key up.
+    \item Attach a reader mid-stream on an already-published object; expire its
+      key while the read is in progress.
+    \item Pause an expiry between reading the record's metadata and writing it
+      back; from another task, run a metadata update on the same key; resume the
+      expiry; inspect the resulting metadata.
+    \item Make the backend read-only (\reqref{FDS-COMPAT.READONLY-01}) and
+      expire an existing object.
+    \item Expire a stored key whose record has been damaged, truncated,
+      rewritten under another format version, or withdrawn
+      (\reqref{SDS-LAYOUT.OBJECTFILE-01}), comparing the record's bytes
+      before and after; look the key up.
+  \end{enumerate}
+
+  \textbf{Expected result:} After an expiry the lookup still finds the record
+  and its body reads back byte-identical, while the metadata it returns is no
+  longer fresh at any instant after the expiry; a second expiry is
+  idempotent and a never-stored key reports \texttt{NotFound}, neither an error
+  nor a side effect; an \texttt{Identified} \texttt{Exact} target reports
+  \texttt{NotFound} and leaves the record untouched; the expiry writes the
+  metadata in place, leaving the file's device, inode and length unchanged,
+  with headroom and without, the whole-second deadline included; the
+  object's serve-stale window is still open after the expiry, so the stored
+  body remains servable while the revalidation runs; the concurrent store's
+  completing rename replaces the expired record with its fresh object; a
+  reader streaming the object completes its body undisturbed; the paused
+  expiry and the concurrent metadata update serialise on the publication
+  lock, so the record ends carrying one of the two complete metadata sets
+  and never a mixture;
+  the expiry once the backend is read-only fails with an error, leaving the
+  stored metadata unchanged; and each unreadable record is reported
+  \texttt{NotFound} and left byte for byte as it was, and a lookup of it
+  misses.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FRE-COMPAT.EXPIRE-01}
+  \verify{FDS-STORAGE.EXPIRE-01}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.EXECUTOR-01}[draft][verify]{Storage never blocks the worker}
+
+  \localreqdiagram*{tc35}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} No \texttt{Storage} call, hit-handler read, or
+  miss-handler write holds the executor thread that polls it for the
+  operation's duration, nor does the restart scan, so a request sharing that
+  worker is not delayed by another request's file I/O.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface on a \emph{single-worker} runtime --- the Pingora default for a
+  service --- with a second task on the same worker ticking on a short timer
+  and recording the longest gap between its ticks. That gap is what a
+  co-resident request would have waited.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Start the ticking task and let it settle.
+    \item Drive a sequence of complete cache operations against bodies large
+      enough that reads and writes are real work: store, look up and read the
+      body to its end, update the metadata, expire, and purge.
+    \item Open a store and attach a partial-hit reader to it, then alternate
+      \texttt{write\_body} and \texttt{read\_body} so the write and read
+      paths are both active, and finish the store.
+    \item Read the longest inter-tick gap after each scenario.
+    \item Repeat both scenarios against a build whose blocking work runs
+      inline on the worker instead of on the blocking pool.
+    \item Run Eviction Recovery (\reqref{FDS-EVICTION.STARTUP-01}) on a
+      single worker over a damaged record, a stopped writer's temporary, and
+      a record the eviction manager evicts as soon as it is admitted. With a
+      test hook holding each removal where it frees its file, ask another
+      task on that worker to answer.
+    \item Run Eviction Recovery on a single worker beside another task that
+      notes each turn it gets, over records whose files are all removed
+      between the walk and the ghost-entry check, and note each call the
+      scan makes into the eviction manager.
+  \end{enumerate}
+
+  \textbf{Expected result:} In both scenarios the longest gap stays within a
+  bound far below what one operation's file I/O costs, showing the worker was
+  free throughout; the inline build exceeds it in both, so the measurement is
+  shown to detect the condition it exists to rule out. While the restart
+  scan frees a file it removed, the other task on its worker answers, and it
+  gets a turn between any two calls the scan makes into the eviction manager
+  --- one admission and one removal per record. The bound is a
+  \emph{stall} bound, not a latency figure for the operations themselves,
+  which \reqref{TC-PERFORMANCE.LOOKUP-01} measures.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-STORAGE.EXECUTOR-01}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.RECLAIM-01}[draft][verify]{Orphan reclaim at restart}
+
+  \localreqdiagram*{tc26}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The restart-time scan reclaims a temporary exactly when
+  its writer is not running, with that writer's lease, and a damaged, foreign
+  or withdrawn record --- never admitting what it reclaims, never reclaiming a
+  \texttt{Vary} variant, whatever its primary holds, never unlinking a record
+  a live store has just replaced, and reporting what it reclaimed.
+
+  \textbf{Setup:} The backend with the stock \texttt{simple\_lru} eviction
+  manager and Eviction Recovery, driven by a test harness with a hook that
+  pauses the scan between classifying and unlinking an entry.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Leave temporaries named after writers that are not running: one
+      whose lease does not exist, and one whose lease exists but is not
+      locked, as a crashed writer leaves it. Construct the backend (running
+      its restart procedure); confirm both temporaries are unlinked, and so
+      is the unlocked lease.
+    \item Leave a temporary named after a lease the harness holds locked, as
+      a live peer would; construct the backend; confirm the temporary and
+      its lease are left untouched, then confirm a later scan reclaims both
+      once the harness releases the lease.
+    \item Leave a record damaged out of band (as in
+      \reqref{TC-LAYOUT.OBJECTFILE-01}), a record of another format version,
+      and a withdrawn record (\reqref{FDS-STORAGE.METAUPDATE-01}); also copy
+      one key's record to the path of a key never stored, and another's,
+      under its own name, into a shard directory that name does not select;
+      construct the backend; confirm all five are unlinked, the withdrawn one
+      counted under its own class and the others as damaged, none is
+      admitted, and the records at their own paths are.
+    \item Store four primaries, each with a \texttt{Vary} variant. Remove the
+      first primary's file out of band (simulating a completed purge or
+      eviction), damage the second's (as in
+      \reqref{TC-LAYOUT.OBJECTFILE-01}), store the third variant with an
+      artificially earlier \texttt{created} timestamp than its primary's
+      own, and the fourth with one at or after it; construct the backend;
+      confirm every variant is admitted, with the same size a directly
+      stored object would receive, and only the damaged primary is
+      reclaimed.
+    \item With a test hook pausing the scan between classifying a damaged
+      record and unlinking it, publish a fresh record at that path through
+      a live store; resume the scan. Then, with a metadata update paused
+      between its two writes (\reqref{FDS-STORAGE.METAUPDATE-01}), run the
+      scan over that record and let the update finish.
+    \item Read the reclaim counters once the backend is built; then read
+      them and the scan's log summary after the scan.
+    \item Repeat steps 1 and 3 in a build without the backend's
+      \texttt{metrics} feature; read the log and the registry.
+    \item Make the backend read-only, run the scan, and read its log summary.
+    \item Make one shard directory unlistable and one record unreadable, run
+      the scan, and read what it returns and logs.
+  \end{enumerate}
+
+  \textbf{Expected result:} A temporary is reclaimed exactly when its writer
+  is not running, and a running writer's is never touched; a stopped
+  writer's lease is removed and a running writer's kept; damaged, foreign,
+  misplaced and withdrawn records are reclaimed; every variant is admitted, whatever
+  its primary holds; no reclaimed entry, of any class, is ever admitted into the
+  eviction manager; the fresh record published during the pause survives the
+  resumed scan; the record read in the middle of a metadata update is
+  admitted once the update finishes, not reclaimed; once the backend is
+  built the counters read zero for every class, and after the scan they and
+  the log summary report each class's reclaimed files and bytes; without
+  the \texttt{metrics} feature the log summary is still written while no
+  reclaim counter is registered; a scan
+  of a read-only backend says in its summary that it stopped; the
+  unlistable directory and the unreadable record are each skipped, named in
+  a warning, and counted in what the scan returns and in its summary, and
+  every other record is admitted;
+  the scan requires no second pass over the tree beyond
+  \reqref{TC-EVICTION.RECONSTRUCT-01}'s own.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-STORAGE.RECLAIM-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Directory sharding: shard-path derivation.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-LAYOUT.SHARDING-01}[draft][verify]{Shard layout and directory bound}
+
+  \localreqdiagram*{tc22}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The sharded path derived from an object's full
+  \texttt{CacheKey} (used on lookup and store) is identical to the path
+  derived from its \texttt{CompactCacheKey} (used on purge), for keys with and
+  without a variance; the two-level split always falls on hex characters
+  one-two and three-four of the object's name; the layout keeps every
+  directory within the bound \reqref{REQ-EFFICIENCY.DIRSCALE-01} sets; and
+  keys that differ only in their user tag are separate objects.
+
+  \textbf{Setup:} The backend driven through the \texttt{Storage} interface,
+  with a test hook that lets a test choose the name a key resolves to (a real
+  hash cannot be steered to a chosen value).
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store an object under its \texttt{CacheKey}; record the shard
+      path the store resolves to.
+    \item Purge the same object using only its \texttt{CompactCacheKey};
+      confirm the purge resolves to the identical shard path recorded in
+      step~1.
+    \item Repeat steps 1--2 for a variant: a key carrying a variance, purged
+      through its own varianced \texttt{CompactCacheKey}.
+    \item Through the hash hook, repeat with combined hashes that probe the
+      split boundary (e.g.\ a hash whose first four characters repeat, and one
+      where characters two and three differ sharply); confirm the first-level
+      directory is always exactly characters one-two and the second-level
+      directory always exactly characters three-four, for both key forms.
+    \item Analysis: from the layout's fan-out, compute the expected and the
+      high-percentile maximum entries per leaf directory for $10^8$ uniformly
+      hashed objects, adding the temporaries a leaf can hold at peak
+      concurrency.
+    \item Store a large sample of objects with real hashes (e.g.\ $10^6$);
+      count the entries in every first- and second-level directory and compare
+      the distribution per leaf with the analysis scaled to the sample.
+    \item Store two objects under keys for the same URL that differ only in
+      their user tag; look both up; run the restart-time scan over the cache
+      directory; then purge one and look both up again.
+  \end{enumerate}
+
+  \textbf{Expected result:} The path derived from the \texttt{CacheKey} and
+  from the \texttt{CompactCacheKey} never diverge for the same object, with or
+  without a variance; the shard boundary is exactly hex characters one-two
+  (first level) and three-four (second level); the analysis shows fewer than
+  2,000 entries in every directory at $10^8$ objects; the sample shows at most
+  256 entries in every first-level directory and a per-leaf distribution
+  consistent with the analysis; in step 7 each tagged key has a file of its
+  own, each lookup returns its own body, the scan admits one eviction entry
+  for each key, and after the purge only the purged key is a miss.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{SDS-LAYOUT.SHARDING-01}
+  \verify{REQ-EFFICIENCY.DIRSCALE-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Shard-directory cache: startup rebuild and on-demand growth.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-LAYOUT.DIRCACHE-01}[draft][verify]{Shard cache matches disk at start}
+
+  \localreqdiagram*{tc23}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} After construction, all 256 first-level directories
+  exist and the in-memory cache exactly matches the second-level
+  directories actually present on disk; concurrent first-time stores into
+  the same new shard all succeed and leave it cached exactly once.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Pre-populate a subset of second-level directories directly on
+      disk (bypassing the backend), then construct the backend; confirm
+      all 256 first-level directories exist and the cache contains exactly
+      the pre-populated second-level directories --- no more, no fewer.
+    \item From multiple threads concurrently, store objects that resolve
+      to the same, previously-unseen shard; confirm every store succeeds,
+      the directory is created exactly once, and the cache ends up with
+      exactly one entry for that shard.
+    \item Restart the backend (a fresh construction) with objects now
+      present under previously-created shards; confirm the newly built
+      cache reflects them and that no second-level directory creation is
+      attempted for them (first-level directories are always ensured at
+      construction, per \reqref{FDS-LAYOUT.STARTUP-01}).
+  \end{enumerate}
+
+  \textbf{Expected result:} The in-memory cache never diverges from what
+  is actually on disk; concurrent first-time stores into the same shard
+  never fail or double-create; a restart always rebuilds an accurate cache
+  from scratch.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-LAYOUT.STARTUP-01}
+\end{requirement}
+
+% ---------------------------------------------------------------------
+% Object-file record layout: damage and truncation detection.
+% ---------------------------------------------------------------------
+\begin{requirement}{TC-LAYOUT.OBJECTFILE-01}[draft][verify]{Damaged records treated as a miss}
+
+  \localreqdiagram*{tc24}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A reader accepts a published record only when its
+  magic, version, header and metadata CRCs, and stored key all validate, its
+  header's lengths fit the record and the file, and its length is exactly
+  the computed body offset plus \texttt{body\_len}; any single violation is a miss that leaves the file in
+  place; a corrupted body is read to a normal end, and logged when the
+  read-time body check is on; and a metadata read racing an in-place update
+  sees one complete version.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface by a test harness; a ``restart'' constructs a new backend instance
+  over the same cache directory. The steps run in the default build and again
+  in a build with the \texttt{body-crc-verify} feature.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store an object normally, then flip a byte in its on-disk
+      \texttt{magic} or \texttt{version} field; look it up.
+    \item Store an object, then flip a byte within the header or metadata
+      region without updating the corresponding CRC; look it up.
+    \item Store an object, then overwrite its \texttt{version} with another
+      value and a matching \texttt{header\_crc}, as a record written by
+      another format revision would carry; look it up.
+    \item Store an object, then copy its file over another key's canonical
+      path, so the stored key differs from the looked-up one; look up that
+      other key.
+    \item Store an object, then truncate its file short of, and separately
+      extend it past, the computed body offset plus \texttt{body\_len}; look
+      it up.
+    \item Store an object whose body spans several read chunks, then flip a
+      byte within its body without changing its length; look it up and read
+      the whole body. In the \texttt{body-crc-verify} build, repeat with the
+      read-time body check switched on, and with it on also read an intact
+      body whole and the corrupted body from a sought position.
+    \item Repeatedly apply in-place metadata updates to one object while
+      concurrent lookups read it.
+    \item Store an object, then rewrite one of its header's lengths with a
+      matching \texttt{header\_crc}: \texttt{meta\_capacity} so small that
+      the metadata segments no longer fit, and, separately,
+      \texttt{key\_len} so large that the key and the body would lie past
+      the end of the file; look it up after each.
+  \end{enumerate}
+
+  \textbf{Expected result:} Each lookup in steps 1--5 and 8 reports a miss, and the
+  damaged file is still present afterwards; every body read in step 6 ends
+  normally, and the backend logs an error naming the file for the whole read
+  of the corrupted body with the check on, and for no other read; every
+  lookup in step 7 returns
+  either the metadata before an update or after it, never a mixture and never
+  a miss while no update is running. A store that never
+  reaches completion is covered separately
+  (\reqref{TC-COMPLIANCE.INCOMPLETE-01}): it is never visible under the
+  canonical name at all, so this test case's scope is damage to an
+  already-published record, not incompleteness.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{SDS-LAYOUT.OBJECTFILE-01}
+\end{requirement}
+
+\begin{requirement}{TC-LAYOUT.KEYSEGMENT-01}[draft][verify]{Key segment round trip}
+
+  \localreqdiagram*{tc36}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A key is stored in exactly the encoding
+  \reqref{SDS-LAYOUT.KEYSEGMENT-01} specifies and decodes back to the same
+  key; a key segment that does not follow the encoding is rejected, and the
+  restart-time scan reclaims its record.
+
+  \textbf{Setup:} For steps 1 and 2, the key segment's encoder and decoder
+  driven directly by unit tests. For step 3, the backend driven through the
+  \texttt{Storage} interface, and its restart-time scan run over the same
+  cache directory.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Encode keys with and without a variance hash, each with an empty
+      and a non-empty tag; inspect each encoding, then decode it.
+    \item Decode a segment shorter than the primary hash and the variance
+      flag; a segment whose flag is 1 but which ends before the variance hash
+      does; a segment whose flag is 2; and a segment whose tag is not valid
+      UTF-8.
+    \item Store an object, then set its stored key's variance flag to 2 and
+      reseal the record's metadata and header checksums over the change; run
+      the restart-time scan.
+  \end{enumerate}
+
+  \textbf{Expected result:} In step 1 every field lies at the offset the
+  encoding specifies, the tag runs to the end of the segment, and every key
+  decodes to itself; every decode in step 2 fails; in step 3 the scan
+  reclaims the record as damaged and does not admit it.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{SDS-LAYOUT.KEYSEGMENT-01}
+\end{requirement}

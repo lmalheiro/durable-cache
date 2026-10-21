@@ -1,0 +1,47 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 The durable-cache authors
+# SPDX-License-Identifier: Apache-2.0
+
+#
+# pre-push — refuse a push whose commits touch docs/ if the specification no
+# longer builds. Opt-in, per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# It only checks; it never commits the rebuilt PDF, which is yours to commit
+# with the change. The build runs on the working tree, so commit or stash
+# docs/ changes you do not mean to push first. Skip it once with
+# `git push --no-verify`.
+
+zero=0000000000000000000000000000000000000000
+docs_changed=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # A deleted ref pushes no commits.
+    [ "$local_sha" = "$zero" ] && continue
+    if [ "$remote_sha" = "$zero" ]; then
+        # A new remote branch: the commits no remote branch has yet.
+        changed=$(git log --format= --name-only "$local_sha" --not --remotes -- docs)
+    else
+        changed=$(git log --format= --name-only "$remote_sha..$local_sha" -- docs)
+    fi
+    [ -n "$changed" ] && docs_changed=1
+done
+
+[ "$docs_changed" -eq 0 ] && exit 0
+
+if ! command -v latexmk >/dev/null 2>&1; then
+    echo "pre-push: docs/ changed but latexmk is not installed; see setup-debian.sh" >&2
+    exit 1
+fi
+
+echo "pre-push: docs/ changed; building the specification" >&2
+repo_root=$(git rev-parse --show-toplevel)
+log="$repo_root/docs/build/pre-push-latexmk.log"
+mkdir -p "$repo_root/docs/build"
+if ! (cd "$repo_root/docs" && latexmk -pdf durable-cache) >"$log" 2>&1; then
+    tail -n 30 "$log" >&2
+    echo "pre-push: the specification does not build (full log: $log)" >&2
+    exit 1
+fi
+echo "pre-push: specification builds" >&2

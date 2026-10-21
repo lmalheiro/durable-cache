@@ -1,0 +1,168 @@
+This appendix details
+\href{https://github.com/http-tests/cache-tests}{\texttt{http-tests/cache-tests}},
+the external test suite the compliance test-case chapter's opening note
+relies on for \reqref{TC-COMPLIANCE.RFC-01}. It covers what the suite is, how
+it is structured, and exactly which parts of it cover which
+\texttt{FRE-COMPLIANCE.*} requirement --- and which parts do not, so its
+adoption is not mistaken for retiring the hand-written test cases it
+complements. Citations below are pinned to commit
+\texttt{b55b8bd}\footnote{\href{https://github.com/http-tests/cache-tests/commit/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba}{\texttt{http-tests/cache-tests}, commit \texttt{b55b8bd} (2026-07-20), the suite's \texttt{main} branch as of this writing}}
+rather than \texttt{main}, matching this document's practice elsewhere of
+citing a fixed revision (e.g.\ \texttt{\textbackslash pgsrc} pinning to
+Pingora tag \texttt{0.9.0}) rather than a moving branch.
+
+\section{What It Is}
+
+\texttt{cache-tests} evaluates the behaviour of HTTP caches --- browsers,
+proxy caches, and CDNs alike --- against RFC 9111 and RFC 9110, publishing
+results at \href{https://cache-tests.fyi}{cache-tests.fyi} interleaved with
+the specification text itself. It is distributed under the BSD-3-Clause
+licence and has seen continuous, active maintenance (over 1,100 commits as of
+this writing). The project is explicit that it is \emph{not} a conformance
+test suite in the formal sense --- it is a tool to assess how a cache
+behaves, with results including not just pass/fail but ``suboptimal'' and
+observation-only outcomes where the specification leaves room for
+implementation choice. That framing matters here: a reported failure does not,
+on its own, distinguish a deviation the file-system backend introduced from a
+pre-existing gap in the (admittedly incomplete) RFC~9111 conformance of
+\texttt{pingora-cache} itself. \reqref{TC-COMPLIANCE.RFC-01} therefore never takes the
+suite's verdict on its own: it runs the suite against the same proxy with the
+stock \texttt{MemCache} as a reference, and counts only outcomes that are
+worse with the file-system backend.
+
+\section{Architecture}
+
+The suite has four moving parts:
+
+\begin{itemize}
+    \item \textbf{Origin server} (\texttt{test-engine/server}) --- a Node.js
+          HTTP server, listening on port 8000 by default, that every test
+          case addresses with a unique identifier and that answers with
+          exactly the headers, timing, and body bytes that test needs. This
+          \emph{is} the ``mocked upstream'' the compliance test-case
+          chapter's opening note calls for --- it does not need to be built.
+    \item \textbf{CLI client} (\texttt{test-engine/cli.mjs}) --- drives
+          requests through a cache-under-test and records, per test ID, a
+          pass, fail, ``suboptimal'', or observation-only result. Invoked as
+          \texttt{npm run cli --base=<proxy-url>} against a reverse proxy or
+          CDN, or with \texttt{HTTP\_PROXY} set against a forward proxy.
+          Results can be exported to JSON, which is the mechanism the ``run
+          cache-tests once per backend, diff the two result sets''
+          comparison in the compliance test-case chapter depends on.
+    \item \textbf{Browser harness} (\texttt{test-browser.html}) --- runs the
+          same tests against a browser's own cache; not applicable to this
+          project.
+    \item \textbf{Docker harness} (\texttt{docker/}, image
+          \texttt{mnot/proxy-cache-tests}) --- pre-wires configurations for
+          Squid, nginx, Apache Traffic Server, Apache httpd, Varnish, Caddy,
+          and HAProxy that each point their upstream at the origin server on
+          the Docker host, then exposes each proxy on its own mapped port for
+          the CLI client to target. This is a directly-imitable pattern for
+          how the Pingora test-subject proxy should be wired: origin fixed,
+          proxy configuration the only variable.
+\end{itemize}
+
+Each topic under \texttt{tests/*.mjs} exports a named suite of
+individually-identified cases (e.g.\ \texttt{freshness-max-age},
+\texttt{vary-no-match}).
+
+\section{Mapping to \texttt{FRE-COMPLIANCE.*}}
+% Test IDs and file names below are long identifiers set with \path so
+% they can wrap: within this group, a line may also break after a hyphen.
+\begingroup
+\sloppy
+\expandafter\def\expandafter\UrlBreaks\expandafter{\UrlBreaks\do\-}
+\label{app:cache-tests-mapping}
+
+\begin{itemize}
+    \item \reqref{FRE-COMPLIANCE.HEADERS-01} ---
+          \path{tests/headers.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/headers.mjs}{\texttt{tests/headers.mjs}}}
+          (its per-header round-trip cases; its omission cases, such as
+          dropping fields listed in \texttt{Connection}, exercise
+          the header handling in \path{pingora-cache} itself, which both runs share)
+          and
+          \path{tests/cc-response.mjs}/\path{cc-parse.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/cc-response.mjs}{\texttt{tests/cc-response.mjs}}}
+          for \path{Cache-Control} field-parsing fidelity.
+    \item \reqref{FRE-COMPLIANCE.FRESHNESS-01} ---
+          \path{tests/cc-freshness.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/cc-freshness.mjs}{\texttt{tests/cc-freshness.mjs}}},
+          \path{tests/expires-freshness.mjs},
+          \path{tests/age-parse.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/age-parse.mjs}{\texttt{tests/age-parse.mjs}}},
+          and \path{tests/heuristic-freshness.mjs}, including
+          \path{freshness-max-age-max}/\path{-max-minus-1}/\path{-max-plus}
+          (the \texttt{2147483648}-second overflow cap
+          \reqref{FRE-COMPLIANCE.FRESHNESS-01} calls out by name),
+          \path{age-parse-large}/\path{-large-minus-one}, and the
+          \path{freshness-max-age-s-maxage-*} shared-vs-private precedence
+          cases.
+    \item \reqref{FRE-COMPLIANCE.VALIDATORS-01} ---
+          \path{tests/conditional-etag.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/conditional-etag.mjs}{\texttt{tests/conditional-etag.mjs}}}
+          and \path{tests/conditional-lm.mjs}, covering weak/strong,
+          quoted/unquoted, and obs-text \texttt{ETag} variants and
+          \path{If-Modified-Since} matching.
+    \item \reqref{FRE-COMPLIANCE.REVALIDATION-01} ---
+          \path{tests/update304.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/update304.mjs}{\texttt{tests/update304.mjs}}}
+          (\path{304-lm-use-stored-*}, \path{304-etag-update-response-*})
+          and \path{tests/updateHead.mjs} (\path{head-200-update},
+          \path{head-200-freshness-update}).
+    \item \reqref{FRE-COMPLIANCE.VARY-01} ---
+          \path{tests/vary.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/vary.mjs}{\texttt{tests/vary.mjs}}}
+          and \path{tests/vary-parse.mjs} (\path{vary-match},
+          \path{vary-no-match}, \path{vary-omit-stored},
+          \path{vary-cache-key}, and the two-way \texttt{Vary} cases).
+    \item \reqref{FRE-COMPLIANCE.BODY-01}'s seek fidelity ---
+          \path{tests/partial.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/partial.mjs}{\texttt{tests/partial.mjs}}}
+          through its cases that serve a range from a complete stored
+          response (\path{partial-store-complete-reuse-partial} and its
+          \path{-no-last}/\path{-suffix} variants). Its cases that store a
+          \texttt{206 (Partial Content)} response and reuse it
+          (\path{partial-store-partial-reuse-partial},
+          \path{partial-use-stored-headers}) exercise combining partial
+          content, which neither backend does
+          (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}), so both runs report them
+          alike.
+    \item Cacheable non-\texttt{200} status codes, whose faithful round trip
+          \reqref{FRE-COMPLIANCE.HEADERS-01} requires ---
+          \path{tests/status.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/status.mjs}{\texttt{tests/status.mjs}}}
+          (\path{status-<code>-fresh}/\path{-stale},
+          \path{status-599-must-understand},
+          \path{status-200-must-understand}).
+\end{itemize}
+
+\section{Coverage Gaps}
+
+cache-tests does not cover every \path{FRE-COMPLIANCE.*} requirement; the
+following remain the sole responsibility of the corresponding hand-written
+\path{TC-COMPLIANCE.*} test case:
+
+\begin{itemize}
+    \item \reqref{FRE-COMPLIANCE.TRAILERS-01} --- cache-tests drives requests
+          over plain HTTP clients that never expose trailer fields.
+    \item \reqref{FRE-COMPLIANCE.PURGE-01}, with
+          \reqref{FRE-COMPLIANCE.PURGEABSENT-01} and
+          \reqref{FRE-COMPLIANCE.PURGEDURABLE-01} ---
+          \path{tests/invalidation.mjs}\footnote{\href{https://github.com/http-tests/cache-tests/blob/b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba/tests/invalidation.mjs}{\texttt{tests/invalidation.mjs}}}
+          tests RFC~9111 \S4.4 \emph{automatic} invalidation on unsafe
+          methods (\texttt{PUT}, \texttt{POST}, \texttt{DELETE}), which this
+          specification places explicitly out of scope: \path{pingora-cache}
+          invalidates only on an explicit purge request, never on an unsafe
+          method, leaving that RFC~9111 duty to the proxy application. Same
+          name, different feature --- not real coverage of \emph{explicit}
+          purge.
+    \item \reqref{FRE-COMPLIANCE.REPLACE-01}'s concurrent-writer race
+          behaviour, \reqref{FRE-COMPLIANCE.READERISOLATION-01},
+          \reqref{FRE-COMPLIANCE.METAATOMIC-01},
+          \reqref{FRE-COMPLIANCE.PARTIALABORT-01}, and
+          \reqref{FRE-COMPLIANCE.INCOMPLETE-01}'s crash/torn-write handling
+          --- cache-tests treats the cache as an HTTP black box; it cannot
+          orchestrate concurrent same-key access, pause a store mid-body, or
+          kill the process under test mid-store.
+    \item \reqref{FRE-COMPLIANCE.METAABSENT-01} and
+          \reqref{FRE-COMPLIANCE.VARYISOLATION-01} --- reaching them needs
+          direct \texttt{Storage} calls, or a per-variant mutation sequence,
+          that an HTTP client cannot drive.
+    \item Every restart-survival assertion, including all of
+          \reqref{FRE-COMPLIANCE.METAPERSIST-01}, across the
+          \path{FRE-COMPLIANCE.*} requirements --- cache-tests cannot
+          restart the process under test between requests.
+\end{itemize}
+\endgroup

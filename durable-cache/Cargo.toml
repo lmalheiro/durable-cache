@@ -1,0 +1,72 @@
+[package]
+name = "durable-cache"
+version = "0.1.0"
+description = "A file-system-backed, durable storage backend for Pingora®, implementing the pingora-cache Storage trait"
+# Both live at the workspace root: `readme` is copied into the package from
+# there, and LICENSE in this directory is a symlink to the root copy.
+readme = "../README.md"
+# The same minimum Rust as the Pingora release it builds on (pingora-cache
+# 0.9.0 declares 1.85); clippy.toml's msrv matches it, and CI builds the
+# library with 1.85 to keep the claim true.
+rust-version = "1.85"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+# The files in tests/ are not separate test crates: they compile into this
+# crate's own unit-test binary (see the `integration_tests` module at the end
+# of src/lib.rs), so they can use the `cfg(test)` test hooks.
+autotests = false
+
+[dependencies]
+pingora-cache.workspace = true
+pingora-core.workspace = true
+pingora-error.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+crc32c.workspace = true
+zerocopy.workspace = true
+# The file name of a key with a user tag (SDS-LAYOUT.SHARDING-01).
+blake2.workspace = true
+hex.workspace = true
+# `flock` on writer leases (ADR-STORAGE.WRITERID-01). Std's `File::try_lock`
+# needs Rust 1.89, above the declared rust-version.
+libc.workspace = true
+log.workspace = true
+# Only with the `metrics` feature: the counters are registered through the
+# `prometheus` crate that pingora-prometheus re-exports, so they land in the
+# registry that crate's exporter serves (ADR-OBSERVABILITY.METRICS-01).
+pingora-prometheus = { workspace = true, optional = true }
+thiserror.workspace = true
+# rt: spawn_blocking and yield_now; sync: broadcast and Notify; time: sleep.
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+pingora-http.workspace = true
+# The tests read the counters the designs name out of the default registry,
+# with or without the `metrics` feature (which makes the normal dependency
+# optional).
+pingora-prometheus.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[features]
+default = ["body-crc"]
+# Compute each body's CRC-32C while it is stored and record it in the header
+# (ADR-PERSISTENCE.DURABILITY-01). Serving a hit does not check it: integrity
+# at rest is the storage layer's. Without the feature (`default-features =
+# false`), a store skips the computation and its record carries zero.
+body-crc = []
+# Make a read-time check of the body CRC available, switched on at run time
+# with `FsCacheConfig::with_body_crc_verification`: a read that delivered a
+# whole body whose CRC does not match logs an error and still ends normally.
+# Implies `body-crc`, which records the CRC it checks.
+body-crc-verify = ["body-crc"]
+# Register the backend's counters in the `prometheus` default registry, the
+# one the pingora-prometheus exporter serves. Off by default: enable it where
+# that exporter runs, which is the integrator's to set up
+# (ADR-OBSERVABILITY.METRICS-01).
+metrics = ["dep:pingora-prometheus"]
+# Re-export, as `durable_cache::test_support`, the internals the
+# workspace's test crates use to tamper with records. Not API and exempt
+# from semver; it changes visibility only, never behaviour.
+test-support = []

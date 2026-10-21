@@ -1,0 +1,4 @@
+# The minimum supported Rust version, as durable-cache declares it in its
+# rust-version and as Pingora 0.9.0's own clippy.toml sets it: clippy then
+# suggests nothing newer. The two must agree, or clippy warns.
+msrv = "1.85"

@@ -1,0 +1,513 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{reqman}[2026/06/03 Requirements Management Package]
+
+\RequirePackage[T1]{fontenc}
+\RequirePackage{amssymb}
+\RequirePackage{array}
+\RequirePackage{tabularx}
+\RequirePackage{xltabular}  % longtable+tabularx: page-breaking captioned tables
+\RequirePackage{hyperref}
+\RequirePackage{xcolor}
+\RequirePackage{enumitem}
+\RequirePackage{pdfpages}
+\RequirePackage{xparse}
+\RequirePackage{tikz}
+\RequirePackage{colortbl}
+\RequirePackage{adjustbox}
+\RequirePackage{float}
+\RequirePackage{caption}  % provides \ContinuedFloat for \localreqdiagrams; load after float
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+
+% Long requirement IDs (e.g. in \reqref) are near-unbreakable tokens. The
+% \allowbreak points inserted by \reqman@breakid give TeX places to break; this
+% emergency stretch lets it accept the resulting slightly-loose line instead of
+% running the ID into the margin.
+\setlength{\emergencystretch}{3em}
+
+% Status colours used by generated tikz diagrams
+\definecolor{cFFFFFF}{HTML}{FFFFFF}
+\definecolor{cF0F0F0}{HTML}{F0F0F0}
+\definecolor{cFFF3CD}{HTML}{FFF3CD}
+\definecolor{cD4EDDA}{HTML}{D4EDDA}
+\definecolor{cF5C6CB}{HTML}{F5C6CB}
+\definecolor{cC3E6CB}{HTML}{C3E6CB}
+\definecolor{cE5E8E8}{HTML}{E5E8E8}
+\definecolor{cD6EAF8}{HTML}{D6EAF8}
+\definecolor{cA9DFBF}{HTML}{A9DFBF}
+\definecolor{cD7BDE2}{HTML}{D7BDE2}
+\definecolor{cFAD7A0}{HTML}{FAD7A0}
+\definecolor{cA3E4D7}{HTML}{A3E4D7}
+\definecolor{cF5B7B1}{HTML}{F5B7B1}
+\definecolor{cF9E79F}{HTML}{F9E79F}
+\definecolor{cCCCCCC}{HTML}{CCCCCC}
+% Edge colours
+\definecolor{cCC0000}{HTML}{CC0000}
+\definecolor{c007F00}{HTML}{007F00}
+\definecolor{c0066CC}{HTML}{0066CC}
+\definecolor{c7D3C98}{HTML}{7D3C98}
+\definecolor{cB06000}{HTML}{B06000}
+\definecolor{c8E44AD}{HTML}{8E44AD}
+\definecolor{cCC6600}{HTML}{CC6600}
+
+\definecolor{status-draft}{HTML}{F0F0F0}
+\definecolor{status-proposed}{HTML}{FFF3CD}
+\definecolor{status-accepted}{HTML}{D4EDDA}
+\definecolor{status-deprecated}{HTML}{F5C6CB}
+\definecolor{status-implemented}{HTML}{C3E6CB}
+\definecolor{type-feature}{HTML}{AED6F1}
+\definecolor{type-requirement}{HTML}{A9DFBF}
+\definecolor{type-usecase}{HTML}{F9E79F}
+\definecolor{type-adr}{HTML}{FADBD8}
+
+\newcounter{reqcounter}
+
+\newwrite\@reqman@artfile
+\newwrite\@reqman@depfile
+\newwrite\@reqman@reqfile
+\newwrite\@reqman@partfile
+\newwrite\@reqman@typefile
+\newwrite\@reqman@vocabfile
+
+% \reqmanoutdir{DIR}
+% Configure a subdirectory (relative to the main .tex file, must already
+% exist) where reqman.sty writes its CSV/body files and where it looks for
+% reqman-report.py's generated fragments. Call once, right after
+% \usepackage{reqman}. Defaults to "" (current directory) if never called.
+% Must match the directory latexmkrc creates and passes to reqman-report.py.
+\newcommand{\reqman@outdir}{}
+\newcommand{\reqmanoutdir}[1]{\renewcommand{\reqman@outdir}{#1}}
+\newcommand{\reqman@path}[1]{%
+  \ifx\reqman@outdir\@empty
+    \jobname-#1%
+  \else
+    \reqman@outdir/\jobname-#1%
+  \fi
+}
+
+% \reqmanlabel{sysml-type-name}{friendly display label}
+% Defines the LaTeX lookup entry and writes it to the vocab CSV so that
+% reqman-report.py can use the same labels in generated diagrams.
+% Call after \begin{document} to override a default or add a new stereotype.
+\newcommand{\reqmanlabel}[2]{%
+  \expandafter\def\csname reqman@label@#1\endcsname{#2}%
+  \immediate\write\@reqman@vocabfile{#1,"#2"}%
+}
+
+\newcommand{\reqman@friendly@label}[1]{%
+  \ifcsname reqman@label@#1\endcsname
+    \csname reqman@label@#1\endcsname
+  \else
+    #1%
+  \fi
+}
+
+\AtBeginDocument{%
+  \immediate\openout\@reqman@artfile=\reqman@path{artifacts.csv}
+  \immediate\write\@reqman@artfile{ID,Type,ReqType,Title,Status}
+  \immediate\openout\@reqman@depfile=\reqman@path{links.csv}
+  \immediate\write\@reqman@depfile{Source_ID,Target_ID,Rel_Type}
+  \immediate\openout\@reqman@reqfile=\reqman@path{coverage.csv}
+  \immediate\write\@reqman@reqfile{Source_ID,Required_Rel,Required_Prefix,Required_ID,Note}
+  \immediate\openout\@reqman@partfile=\reqman@path{partial-diagrams.csv}
+  \immediate\write\@reqman@partfile{Label,ShowNeighbors,IDs,MaxPerPart}
+  \immediate\openout\@reqman@typefile=\reqman@path{types.csv}
+  \immediate\write\@reqman@typefile{Prefix,ReqType,Description,Terminal}
+  \immediate\openout\@reqman@vocabfile=\reqman@path{reqtypes-vocab.csv}
+  \immediate\write\@reqman@vocabfile{Name,Label}
+  % Standard SysML stereotype labels — override with \reqmanlabel after this point.
+  \reqmanlabel{stakeholderRequirement}{stakeholder requirement}%
+  \reqmanlabel{functionalRequirement}{functional requirement}%
+  \reqmanlabel{interfaceRequirement}{interface requirement}%
+  \reqmanlabel{performanceRequirement}{performance requirement}%
+  \reqmanlabel{structuralRequirement}{structural requirement}%
+  \reqmanlabel{designConstraint}{design constraint}%
+  \reqmanlabel{useCase}{use case}%
+  \reqmanlabel{feature}{feature}%
+  \reqmanlabel{requirement}{requirement}%
+}
+
+\newcommand{\currentreqid}{}
+
+\newcommand{\deriveReqt}[1]{%
+  \reqman@parse@id{#1}%
+  \immediate\write\@reqman@depfile{\currentreqid,#1,deriveReqt}%
+}
+
+\newcommand{\satisfy}[1]{%
+  \reqman@parse@id{#1}%
+  \immediate\write\@reqman@depfile{\currentreqid,#1,satisfy}%
+}
+
+\newcommand{\refine}[1]{%
+  \reqman@parse@id{#1}%
+  \immediate\write\@reqman@depfile{\currentreqid,#1,refine}%
+}
+
+\newcommand{\verify}[1]{%
+  \reqman@parse@id{#1}%
+  \immediate\write\@reqman@depfile{\currentreqid,#1,verify}%
+}
+
+\newcommand{\trace}[1]{%
+  \reqman@parse@id{#1}%
+  \immediate\write\@reqman@depfile{\currentreqid,#1,trace}%
+}
+
+\newcommand{\copies}[1]{%
+  \reqman@parse@id{#1}%
+  \immediate\write\@reqman@depfile{\currentreqid,#1,copies}%
+}
+
+\newcommand{\conflictsWith}[1]{%
+  \reqman@parse@id{#1}%
+  \immediate\write\@reqman@depfile{\currentreqid,#1,conflicts with}%
+}
+
+% \reqcover{relation}{PREFIX}
+% Inside a requirement: demand coverage by an artifact of type PREFIX linked
+% to this requirement via <relation>, e.g.
+%   \reqcover{refine}{RFR}   % must be refined by an RFR
+%   \reqcover{verify}{TC}    % must be verified by a test case
+%   \reqcover{satisfy}{IMP}  % must be satisfied by an implementation
+% The obligation is met when at least one incoming link matches both the
+% prefix and the relation; reqman-report.py tracks it in the tracing report.
+% For a SPECIFIC, forward-declared target (possibly not written yet) with a
+% note on what it must specify, use \reqexpect instead.
+\newcommand{\reqcover}[2]{%
+  \immediate\write\@reqman@reqfile{\currentreqid,#1,#2,,}%
+}
+
+% \reqexpect{relation}{FULL-ID}{note}
+% Inside a requirement: forward-declare that a SPECIFIC artifact ID -- which
+% may not exist yet -- is expected to cover this requirement via <relation>,
+% and record what it must specify, e.g.
+%   \reqexpect{refine}{RFR-CACHE.CONTROL-01}{Should specify Cache-Control
+%     header parsing for stale-while-revalidate.}
+% Unlike \reqcover (any artifact of a class satisfies the obligation), this
+% is met only by a link from exactly FULL-ID. reqman-report.py lists unmet
+% \reqexpect obligations in the "Planned Requirements" section of the
+% tracing report, and exposes them (met or not) to any other artifact via
+% requirements.json so authors and reviewers can see what was expected
+% before FULL-ID existed.
+\newcommand{\reqexpect}[3]{%
+  \reqman@parse@id{#2}%
+  \immediate\write\@reqman@reqfile{\currentreqid,#1,,#2,"#3"}%
+}
+
+% \reqterminal[reason]
+% Inside a requirement: mark this artifact as terminal -- it deliberately
+% carries no coverage obligations (nothing further needs to refine, satisfy,
+% or verify it). The optional reason is recorded for the audit trail.
+% Artifacts that neither state a \reqcover obligation nor are terminal (by
+% type flag or this marker) are listed as unaccounted in the tracing report.
+\NewDocumentCommand{\reqterminal}{O{}}{%
+  \immediate\write\@reqman@reqfile{\currentreqid,terminal,,,"#1"}%
+}
+
+% \reqmantype{PREFIX}{sysml-reqtype}{Human-readable description}[flags]
+% Declare a type prefix so reqman-report.py can validate coverage and generate legends.
+% Call once per prefix, before or just after \begin{document}.
+%
+% The optional [flags] supports one flag: "terminal". A terminal type ends
+% the refinement chain (test cases, implementations): its artifacts are never
+% flagged as unaccounted for carrying no \reqcover obligations. Examples:
+%   \reqmantype{ADR}{designConstraint}{Architecture decision record}
+%   \reqmantype{TC}{verify}{Test case}[terminal]
+\NewDocumentCommand{\reqmantype}{m m m O{}}{%
+  \immediate\write\@reqman@typefile{#1,#2,"#3","#4"}%
+}
+
+\newcommand{\includereqtables}{%
+  \IfFileExists{\reqman@path{reqtables-\currentreqid.tex}}{%
+    \input{\reqman@path{reqtables-\currentreqid.tex}}%
+  }{}%
+}
+
+\newcommand{\reqman@statusbox}[1]{%
+  \ifcsname color@status-#1\endcsname
+    \colorbox{status-#1}{\texttt{#1}}%
+  \else
+    \texttt{#1}%
+  \fi
+}
+
+% Tracks the first \reqdiaglink within a requirement so a single space of one
+% character height (1em) is inserted before the diagram-link block (not between
+% individual links).
+\newif\ifreqman@diagfirst
+
+\newcommand{\reqman@start}[5]{%
+  \refstepcounter{reqcounter}%
+  \hypertarget{req:#2}{}%
+  \addcontentsline{toc}{section}{[#2]~#3}%
+  \label{req:#2}%
+  \renewcommand{\currentreqid}{#2}%
+  \global\reqman@diagfirsttrue%
+  \def\@reqtype{#5}%
+  \ifx\@reqtype\@empty
+    \immediate\write\@reqman@artfile{#2,#1,requirement,"#3",#4}%
+  \else
+    \immediate\write\@reqman@artfile{#2,#1,#5,"#3",#4}%
+  \fi
+  \noindent
+  \begin{minipage}{\linewidth}%
+    \vspace{0.3cm}%
+    \textbf{[\uppercase{#2}]}\\[4pt]%
+    \textbf{#3}%
+    \ifx\@reqtype\@empty
+      \hfill\small\reqman@statusbox{#4}%
+    \else
+      \hfill\small\textit{$\langle\langle$\reqman@friendly@label{\@reqtype}$\rangle\rangle$}\hfill\small\reqman@statusbox{#4}%
+    \fi
+  \end{minipage}%
+  \par\nopagebreak\medskip\noindent
+}
+
+\newcommand{\reqman@finish}{%
+    \bigskip
+    \includereqtables
+    \vspace{0.3cm}%
+    \noindent
+}
+
+% \reqdiaglink{diagram-label}{link-text}
+%   Hyperlink to this requirement's node in any named diagram.
+%   The global diagram uses the label "global".
+%   Example: \reqdiaglink{global}{\textit{See global context.}}
+%            \reqdiaglink{func-req}{\textit{Chapter diagram.}}
+\NewDocumentCommand{\reqdiaglink}{m m}{%
+  \ifreqman@diagfirst\global\reqman@diagfirstfalse\vspace{1em}\fi
+  \hyperlink{diag:#1:\currentreqid}{#2}%
+}
+
+% \reqref[display text]{requirement-id}
+%   Hyperlink to a requirement's definition (its \hypertarget{req:<id>}).
+%   Defaults to showing the ID itself as the link text.
+%   Example: \reqref{HLR-PERSISTENCE.DURABLE-01}
+%            \reqref[the durability requirement]{HLR-PERSISTENCE.DURABLE-01}
+% \reqman@breakid (defined in the expl3 block below) inserts zero-width
+% breakpoints after each '-' and '.' so a long ID can wrap mid-word instead of
+% overflowing the line. Only applied to the auto-shown ID, never to custom text.
+\NewDocumentCommand{\reqref}{o m}{%
+  \hyperlink{req:#2}{\IfNoValueTF{#1}{\reqman@breakid{#2}}{#1}}%
+}
+
+% \rfcsec{rfc-number}{section}[gloss]
+%   Hyperlink to a section of an RFC on the RFC Editor's canonical HTML, using
+%   its stable "#section-X.Y" anchor scheme. The optional gloss is shown in
+%   parentheses after the link. Change \reqman@rfcbase below to retarget every
+%   reference at once (e.g. to datatracker or a local PDF).
+%   Example: \rfcsec{9111}{3.1}[storing header fields]
+\newcommand{\reqman@rfcbase}{https://www.rfc-editor.org/rfc/rfc}
+\NewDocumentCommand{\rfcsec}{m m o}{%
+  \href{\reqman@rfcbase#1.html\#section-#2}{RFC~#1 Section~#2}%
+  \IfValueT{#3}{\,(#3)}%
+}
+
+% Parse and validate the single-argument ID: TYPE-SUBID-VERSION (exactly 2 hyphens).
+% Splits on every hyphen, so SUBID may contain dots (e.g. REQ-ENCRYPT.ANONYMOUS-00).
+\ExplSyntaxOn
+\seq_new:N \l__reqman_id_seq
+\tl_new:N  \l__reqman_type_tl
+\newwrite\g__reqman_body_write
+\cs_new_protected:Nn \__reqman_parse_id:n
+  {
+    \seq_set_split:Nnn \l__reqman_id_seq { - } { #1 }
+    \int_compare:nNnF { \seq_count:N \l__reqman_id_seq } = { 3 }
+      {
+        \PackageError { reqman }
+          { ID~`#1'~must~have~exactly~3~parts:~TYPE-SUBID-VERSION }
+          { Correct~examples:~REQ-AUTH-01,~UC-LOGIN-01,~ADR-CACHE-01. }
+      }
+    \seq_get_left:NN \l__reqman_id_seq \l__reqman_type_tl
+  }
+% Alias with a @-only name so it can be called from outside \ExplSyntaxOn.
+\cs_set_eq:NN \reqman@parse@id \__reqman_parse_id:n
+% Re-emit an ID with a zero-width breakpoint after every '-' and '.', so long
+% IDs shown by \reqref can line-break instead of running into the margin. No
+% character is inserted at the break (the ID keeps its own hyphens/dots).
+\cs_new_protected:Nn \__reqman_breakid:n
+  {
+    \tl_map_inline:nn { #1 }
+      {
+        ##1
+        \str_case:nnF { ##1 } { { - } { \allowbreak } { . } { \allowbreak } } { }
+      }
+  }
+\cs_set_eq:NN \reqman@breakid \__reqman_breakid:n
+\ExplSyntaxOff
+% Public, @-free wrapper around \reqman@breakid: names containing '@' only
+% tokenize as one control sequence where catcode 11 is active for '@' (inside
+% this package file, under \usepackage's implicit \makeatletter). reqman-report.py
+% writes plain .tex fragments that get \input from the document body, where
+% '@' is just an ordinary character again -- so those fragments must call this
+% wrapper, never \reqman@breakid directly, or "\reqman@breakid" tokenizes as
+% the undefined \reqman followed by literal text "@breakid...".
+\newcommand{\reqbreakid}[1]{\reqman@breakid{#1}}
+\ExplSyntaxOn
+% Write the literal (un-expanded) requirement body to its own per-ID file,
+% one open/write/close per requirement, so reqman-report.py can turn it
+% into plain prose for the consolidated requirements JSON export.
+% NOTE: bodies must not contain \verb / verbatim-style catcode-changing
+% content -- the body-grab below cannot coexist with that.
+\cs_new_protected:Nn \__reqman_write_body:nn
+  {
+    \immediate\openout\g__reqman_body_write = \reqman@path{reqbody-#1.tex} \relax
+    \immediate\write\g__reqman_body_write { \detokenize{#2} }
+    \immediate\closeout\g__reqman_body_write
+  }
+\NewDocumentEnvironment { requirement } { m O{draft} O{} m +b }
+  {
+    \__reqman_parse_id:n { #1 }
+    % Expose the ID (#1) and description (#4) to the body so authors can
+    % reference them via \reqid / \reqdesc instead of repeating the literals.
+    \cs_set:Npn \reqid { #1 }
+    \cs_set:Npn \reqdesc { #4 }    
+    \exp_args:NV \reqman@start
+      \l__reqman_type_tl { #1 } { #4 } { #2 } { #3 }
+    \__reqman_write_body:nn { #1 } { #5 }
+    #5
+  }
+  { \reqman@finish }
+\ExplSyntaxOff
+
+\newcommand{\includetracingreport}{%
+  \IfFileExists{\reqman@path{tracing-report.tex}}{\input{\reqman@path{tracing-report.tex}}}{%
+    \textbf{[Tracing report not yet generated -- recompile]}%
+  }%
+}
+
+% \includereqstereotypes
+% Standalone table of the declared artifact types and their SysML stereotypes,
+% generated by reqman-report.py from the \reqmantype declarations -- not
+% bundled into \includetracingreport -- so it can be placed wherever is most
+% useful in the document (e.g. next to the prose that first explains the
+% artifact types), rather than only at the end. The table is a float
+% (placement [tb]), so it may land at the top or bottom of this page or the
+% next; refer to it by \ref{tab:sysml-requirement-stereotypes}.
+\newcommand{\includereqstereotypes}{%
+  \IfFileExists{\reqman@path{stereotypes.tex}}{\input{\reqman@path{stereotypes.tex}}}{%
+    \textbf{[Requirement stereotypes reference not yet generated -- recompile]}%
+  }%
+}
+
+% \reqdiagram[*]{id1; id2; ...}
+%   Writes a partial-diagram request to <jobname>-partial-diagrams.csv, then
+%   includes the generated <jobname>-partial-<label>-tikz.tikz on pass 2+.
+%   The starred form also renders directly-connected nodes outside the list
+%   in gray, showing the immediate neighbourhood of the selected nodes.
+%   The optional [caption] argument, when non-empty, adds a styled caption.
+%   Use label "global" with empty IDs to include the full requirements diagram.
+\NewDocumentCommand{\reqdiagram}{s m m}{%
+  \IfBooleanTF{#1}{%
+    \immediate\write\@reqman@partfile{#2,true,#3,}%
+  }{%
+    \immediate\write\@reqman@partfile{#2,false,#3,}%
+  }%
+  \IfFileExists{\reqman@path{partial-#2-tikz.tikz}}{%
+    \input{\reqman@path{partial-#2-tikz.tikz}}%
+  }{%
+    \textbf{[Partial diagram ``#2'' not yet generated -- recompile]}%
+  }%
+}
+
+% \reqdiagrams[*]{label}{id1; id2; ...}{maxPerPart}
+%   Registers a *partitioned* partial-diagram request. Like \reqdiagram, but the
+%   neighbour nodes (only meaningful with the starred form) are split across
+%   several sub-diagrams of at most <maxPerPart> neighbours each, so a focus node
+%   with many relations stays readable. reqman-report.py emits one
+%   partial-<label>-p<k>-tikz.tikz per part; the focus node(s) repeat in every
+%   part and every neighbour lands in exactly one part. This command only writes
+%   the request -- rendering the parts is left to the document-level wrapper
+%   (e.g. \localreqdiagrams), which loops with \reqmanpartexists.
+\NewDocumentCommand{\reqdiagrams}{s m m m}{%
+  \IfBooleanTF{#1}{%
+    \immediate\write\@reqman@partfile{#2,true,#3,#4}%
+  }{%
+    \immediate\write\@reqman@partfile{#2,false,#3,#4}%
+  }%
+}
+
+% \reqmanpartexists{label}{k}{<if present>}{<if absent>}
+%   Branches on whether the k-th part tikz of a partitioned diagram exists yet.
+\NewDocumentCommand{\reqmanpartexists}{m m m m}{%
+  \IfFileExists{\reqman@path{partial-#1-p#2-tikz.tikz}}{#3}{#4}%
+}
+
+% \reqdiagrampartinput{label}{k} -- input the k-th part tikz (assumes it exists).
+\newcommand{\reqdiagrampartinput}[2]{%
+  \input{\reqman@path{partial-#1-p#2-tikz.tikz}}%
+}
+
+% \localreqdiagram*[max width]{label}{ids}{caption}
+%   Local diagram of the artifacts in <ids>. The starred form, used for a
+%   focus artifact's neighbourhood, is laid out by reqman-report.py as a star:
+%   the artifacts the focus points to in a row above it, those pointing to it
+%   in a row below, at most three per row. A larger neighbourhood is split into
+%   parts, each repeating the focus, rendered as figures chained with
+%   \ContinuedFloat so they share one figure number, caption, and \label. Each
+%   part is drawn at natural size, shrunk only when wider than <max width>
+%   (default \linewidth).
+\newcounter{reqman@partno}
+\NewDocumentCommand{\localreqdiagram}{s O{\linewidth} m m m}{%
+  \IfBooleanTF{#1}%
+      { \reqdiagrams*{#3}{#4}{} }%
+      { \reqdiagrams{#3}{#4}{} }%
+  \reqman@partsfigure{#2}{#3}{#5}%
+}
+
+% \localreqdiagrams*[max width]{label}{ids}{maxPerPart}{caption}
+%   Kept for compatibility: the star layout splits a neighbourhood by row
+%   capacity, so <maxPerPart> is recorded but no longer changes the split.
+\NewDocumentCommand{\localreqdiagrams}{s O{\linewidth} m m m m}{%
+  \IfBooleanTF{#1}%
+      { \reqdiagrams*{#3}{#4}{#5} }%
+      { \reqdiagrams{#3}{#4}{#5} }%
+  \reqman@partsfigure{#2}{#3}{#6}%
+}
+
+\newcommand{\reqman@partsfigure}[3]{%
+  \reqmanpartexists{#2}{1}%
+      { \setcounter{reqman@partno}{1}\reqman@diagramsloop{#1}{#2}{#3} }%
+      {%
+          \begin{figure}[H]%
+              \centering%
+              \textbf{[Diagram ``#2'' not yet generated -- recompile]}%
+              \caption{#3}\label{#2}%
+          \end{figure}%
+      }%
+}
+
+% Recursive renderer: emit one figure per existing part, advancing the counter.
+% Part 1 carries the caption and \label; later parts continue the float number.
+\newcommand{\reqman@diagramsloop}[3]{%
+  \reqmanpartexists{#2}{\arabic{reqman@partno}}{%
+      \begin{figure}[H]%
+          \ifnum\value{reqman@partno}>1\relax\ContinuedFloat\fi
+          \centering%
+          \adjustbox{max width=#1}{\reqdiagrampartinput{#2}{\arabic{reqman@partno}}}%
+          \ifnum\value{reqman@partno}=1\relax
+              \caption{#3}\label{#2}%
+          \else
+              \caption[]{#3\space(cont.)}%
+          \fi
+      \end{figure}%
+      \stepcounter{reqman@partno}%
+      \reqman@diagramsloop{#1}{#2}{#3}%
+  }{}%
+}
+
+\newcommand{\includecoveragereport}{%
+  \IfFileExists{\reqman@path{coverage-\currentreqid.tex}}{\input{\reqman@path{coverage-\currentreqid.tex}}}{}%
+}
+
+\usetikzlibrary{arrows.meta, matrix, fit, backgrounds, calc}
+
+\AtEndDocument{%
+  \immediate\closeout\@reqman@artfile
+  \immediate\closeout\@reqman@depfile
+  \immediate\closeout\@reqman@reqfile
+  \immediate\closeout\@reqman@partfile
+  \immediate\closeout\@reqman@typefile
+  \immediate\closeout\@reqman@vocabfile
+}
