@@ -12,6 +12,10 @@ rust-version = "1.85"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+# Pingora is a Cloudflare trademark, which may not serve as a search term,
+# so the keywords leave it out; the description names it.
+keywords = ["cache", "http-cache", "disk-cache", "proxy", "storage"]
+categories = ["caching", "filesystem", "network-programming", "web-programming::http-server"]
 # The files in tests/ are not separate test crates: they compile into this
 # crate's own unit-test binary (see the `integration_tests` module at the end
 # of src/lib.rs), so they can use the `cfg(test)` test hooks.
@@ -70,3 +74,10 @@ metrics = ["dep:pingora-prometheus"]
 # workspace's test crates use to tamper with records. Not API and exempt
 # from semver; it changes visibility only, never behaviour.
 test-support = []
+
+[package.metadata.docs.rs]
+# The crate builds on Unix only, so docs.rs builds it for Linux alone rather
+# than for its default targets, which include Windows.
+targets = ["x86_64-unknown-linux-gnu"]
+# Document the optional API too; test-support is not API and stays off.
+features = ["body-crc-verify", "metrics"]

@@ -3,10 +3,16 @@
 
 //! A file-system-backed, durable storage backend for Pingora®: an
 //! implementation of the `pingora-cache` `Storage` trait, for the Pingora
-//! release its manifest requires. See
-//! `docs/durable-cache.pdf` in the workspace root for the full specification this crate implements;
-//! module-level docs cite the specific requirement IDs (ADR-*/FDS-*/SDS-*)
-//! each one realises.
+//! release its manifest requires.
+//!
+// The specification of this very version: the link names its release tag.
+#![doc = concat!(
+    "The [specification](https://github.com/lmalheiro/durable-cache/blob/v",
+    env!("CARGO_PKG_VERSION"),
+    "/docs/durable-cache.pdf) this crate implements is in its repository;"
+)]
+//! module-level docs cite the specific requirement IDs (`ADR-*`, `FDS-*`,
+//! `SDS-*`) each one realises.
 //!
 //! Construction: [`FsCache::new`] builds the cache itself. Separately, call
 //! [`recover`] once at process start to reconstruct the
