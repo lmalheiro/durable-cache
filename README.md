@@ -231,12 +231,14 @@ test scaffolding, or tooling.
 │
 ├── xtask/                     cargo xtask cache-tests | trace-report | headers
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
-├── .github/workflows/         ci.yml, compliance.yml, deny.yml and pr-title.yml (see below)
+├── .github/workflows/         ci.yml, compliance.yml, deny.yml, pr-title.yml and
+│                              release-plz.yml (see below)
 ├── .githooks/pre-push         opt-in check that the specification still builds
 ├── .claude/skills/            AI-assistant skills for writing and querying the
 │                              specification (reqman-context is used below)
 ├── setup-debian.sh            installs the build and test dependencies on Debian 13
 ├── deny.toml                  cargo-deny policy: advisories, licences, sources
+├── release-plz.toml           release settings (see Releasing, below)
 ├── flake.nix                  toolchain: Rust, Node, OpenSSL; inputs pinned by commit
 ├── rust-toolchain.toml        the pinned Rust toolchain
 ├── AUTHORS                    the copyright holders
@@ -323,6 +325,27 @@ cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 | `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
+| `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date; when one is merged, publishes the crate, tags it and creates the GitHub release (see below) |
+
+### Releasing
+
+release-plz keeps a release pull request open on `main`: the next version of
+`durable-cache`, chosen from the commit subjects since the last release
+(cargo-semver-checks flags breaking API changes), and its changelog entry.
+Nothing is published until that pull request is merged. To release:
+
+1. Rebuild the specification on the release pull request's branch with the
+   version's tag, so its source links point at that release:
+   `cd docs && REQMAN_SOURCE_REF=v<version> latexmk -g -pdf durable-cache`,
+   then commit and push the PDF.
+2. Close and reopen the release pull request: one the workflow opens does not
+   start CI on its own.
+3. Merge it. release-plz then publishes the crate to crates.io, tags
+   `v<version>` and creates the GitHub release.
+
+Publishing needs a crates.io token in the repository's `CARGO_REGISTRY_TOKEN`
+secret until the crate has its first version on crates.io and trusted
+publishing is set up for it.
 
 ## The specification
 

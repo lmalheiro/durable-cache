@@ -1,0 +1,66 @@
+name: Release-plz
+# release-plz keeps a release pull request open: the next version of
+# durable-cache, chosen from the conventional commit subjects since the last
+# release (cargo-semver-checks flags API breaks), and its changelog entry.
+# Merging that PR releases it: the crate is published to crates.io, tagged
+# v<version>, and given a GitHub release. release-plz.toml has the settings;
+# the README's "Releasing" section, the steps.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  # Publishes, tags and releases the version on main if it is not on
+  # crates.io yet, but only when the commit on main merged a release PR
+  # (release_always = false): an ordinary push publishes nothing.
+  release-plz-release:
+    name: Release-plz release
+    if: github.repository_owner == 'lmalheiro'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # To tell whether the commit on main merged a release PR.
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A crates.io token, scoped to publishing durable-cache: a new
+          # crate's first version cannot use trusted publishing. Once that
+          # is set up for the crate, this job gets `id-token: write` and
+          # loses the token.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Opens or updates the release PR. A PR this workflow opens does not start
+  # other workflows, so CI runs on it only once someone closes and reopens it.
+  release-plz-pr:
+    name: Release-plz PR
+    if: github.repository_owner == 'lmalheiro'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

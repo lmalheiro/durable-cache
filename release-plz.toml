@@ -1,0 +1,9 @@
+# release-plz settings (.github/workflows/release-plz.yml runs it). Only
+# durable-cache is released: every other member has `publish = false`.
+
+[workspace]
+# Release only when a release PR is merged, never on an ordinary push to
+# main: publishing stays a decision, made by merging that PR.
+release_always = false
+# The one released crate's tags read v0.1.0, as the crate docs link them.
+git_tag_name = "v{{ version }}"
