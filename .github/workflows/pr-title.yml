@@ -1,0 +1,32 @@
+name: PR title
+# Pull requests are squash-merged, so a PR's title becomes the subject of its
+# one commit on main, and release-plz reads those subjects to write the
+# changelog and to choose the next version. The title must therefore be a
+# conventional commit subject: `type(scope)!: description`, the scope and the
+# `!` (a breaking change) optional.
+
+on:
+  pull_request:
+    # `edited` re-checks a corrected title; `synchronize` reports the check
+    # on every new head commit, as a required check must be.
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: The title is a conventional commit subject
+        env:
+          # Through the environment, never spliced into the script: a title
+          # is untrusted input.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+          if printf '%s\n' "$TITLE" | grep -Eq "^($types)(\([a-z0-9._/-]+\))?!?: [^[:space:]]"; then
+            echo "ok: $TITLE"
+          else
+            echo "::error::A PR title becomes the commit subject on main, so it must read 'type(scope): description', the scope optional, with one of these types: ${types//|/, }"
+            exit 1
+          fi
