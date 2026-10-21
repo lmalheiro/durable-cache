@@ -8,8 +8,9 @@
 //! remains after the fixed part *is* the tag. Each key has exactly one
 //! encoding, which is what lets a lookup compare a stored key byte for byte.
 
-use pingora_cache::key::{CompactCacheKey, HashBinary};
 use std::mem::size_of;
+
+use pingora_cache::key::{CompactCacheKey, HashBinary};
 
 // IMP-LAYOUT.KEYSEGMENT-01: satisfy SDS-LAYOUT.KEYSEGMENT-01
 /// The length of each hash in the segment, the primary and the variance.

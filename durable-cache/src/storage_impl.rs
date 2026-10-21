@@ -5,15 +5,9 @@
 //! `format`/`record`/`sharding`/`dircache`/`inflight`/`publish`/`miss`/
 //! `lookup`/`metaupdate`/`purge`/`reclaim`.
 
-use crate::config::FsCacheConfig;
-use crate::dircache::ShardDirCache;
-#[cfg(test)]
-use crate::hooks::Hooks;
-use crate::inflight::InFlightRegistry;
-use crate::locks::ChangeLocks;
-use crate::metrics;
-use crate::sharding;
-use crate::writerid::WriterLease;
+use std::any::Any;
+use std::path::{Path, PathBuf};
+
 use async_trait::async_trait;
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::{
@@ -22,8 +16,15 @@ use pingora_cache::storage::{
 use pingora_cache::trace::SpanHandle;
 use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{ErrorType, OrErr, Result};
-use std::any::Any;
-use std::path::{Path, PathBuf};
+
+use crate::config::FsCacheConfig;
+use crate::dircache::ShardDirCache;
+#[cfg(test)]
+use crate::hooks::Hooks;
+use crate::inflight::InFlightRegistry;
+use crate::locks::ChangeLocks;
+use crate::writerid::WriterLease;
+use crate::{metrics, sharding};
 
 pub struct FsCache {
     pub(crate) config: FsCacheConfig,

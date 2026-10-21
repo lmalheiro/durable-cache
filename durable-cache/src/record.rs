@@ -5,11 +5,13 @@
 //! makes a damaged or foreign record a miss rather than a corrupt read. The
 //! format it validates, the header included, is defined in `format.rs`.
 
-use crate::format::{self, HeaderError, RecordHeader};
 use std::fs::File;
 use std::io;
 use std::os::unix::fs::{FileExt, MetadataExt};
+
 use zerocopy::{FromZeros, IntoBytes};
+
+use crate::format::{self, HeaderError, RecordHeader};
 
 /// How many times a reader reads the header and metadata region on a CRC
 /// mismatch: the first read plus three more (SDS-LAYOUT.OBJECTFILE-01,
@@ -191,9 +193,10 @@ fn read_record_part(file: &File, buf: &mut [u8], offset: u64) -> Result<(), Read
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Write;
     use std::mem::size_of;
+
+    use super::*;
 
     /// A complete record with a 3-byte key, 4-byte internal segment, 5-byte
     /// header segment, 64-byte capacity, and 10-byte body.

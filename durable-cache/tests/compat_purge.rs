@@ -13,13 +13,13 @@
 //! any other record, until eviction removes them (FRE-COMPLIANCE.PURGE-01).
 //! This file proves the backend's half, driving `Storage` directly.
 
-use super::support;
-
 use durable_cache::recovery::recover;
 use durable_cache::FsCache;
 use pingora_cache::eviction::simple_lru::Manager;
 use pingora_cache::eviction::EvictionManager;
 use pingora_cache::storage::{PurgeOutcome, Storage};
+
+use super::support;
 
 // IMP-TC.COMPLIANCE.PURGE-01: satisfy TC-COMPLIANCE.PURGE-01
 

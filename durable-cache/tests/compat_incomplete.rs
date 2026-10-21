@@ -14,12 +14,12 @@
 //! marker for this TC lives there rather than here: neither file alone is
 //! a comprehensive closure, but the two together are.
 
-use super::support;
-
 use bytes::Bytes;
 use durable_cache::sharding::shard_path;
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::{HandleHit, Storage};
+
+use super::support;
 
 async fn drain(mut handler: Box<dyn HandleHit + Send + Sync>) -> Vec<u8> {
     let mut out = Vec::new();

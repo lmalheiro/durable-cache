@@ -14,23 +14,22 @@
 //! for instance without the `metrics` feature, so unused ones must not warn.
 #![allow(dead_code)]
 
+use std::io::{Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
 use bytes::Bytes;
-use durable_cache::format;
 use durable_cache::format::RecordHeader;
 use durable_cache::hooks::HookConfig;
-use durable_cache::key_codec;
 use durable_cache::writerid::WriterId;
-use durable_cache::{FsCache, FsCacheConfig};
+use durable_cache::{format, key_codec, FsCache, FsCacheConfig};
 use pingora_cache::eviction::CacheEntryKey;
 use pingora_cache::key::{CacheKey, CompactCacheKey};
 use pingora_cache::storage::{HitHandler, PurgeOutcome, PurgeTarget, PurgeType, Storage};
 use pingora_cache::trace::{Span, SpanHandle};
 use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
-use std::io::{Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
 
 // --- process isolation ------------------------------------------------------
 

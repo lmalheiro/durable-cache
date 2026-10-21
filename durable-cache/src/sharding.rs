@@ -10,11 +10,12 @@
 //! `CompactCacheKey` (purge) carry the hash and the tag, so the two key
 //! forms resolve to one path — TC-LAYOUT.SHARDING-01 requires them to agree.
 
+use std::mem::size_of;
+use std::path::{Path, PathBuf};
+
 use blake2::digest::consts::U16;
 use blake2::{Blake2b, Digest};
 use pingora_cache::key::HashBinary;
-use std::mem::size_of;
-use std::path::{Path, PathBuf};
 
 // IMP-LAYOUT.SHARDING-01: satisfy SDS-LAYOUT.SHARDING-01
 
@@ -186,8 +187,9 @@ pub fn shard_index(name: &str) -> Result<usize, ShardKeyError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pingora_cache::key::{CacheHashKey, CacheKey};
+
+    use super::*;
 
     /// A name's path: its first two hex characters name the first-level
     /// directory, the next two the second-level one, and the file keeps the

@@ -56,15 +56,14 @@
 //! such as with leading zeros, but a file named like that was not written by
 //! this backend, and the scan must not remove it.
 
-use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::hash::{BuildHasher, RandomState};
-use std::io;
 use std::mem::size_of;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
+use std::{fmt, io};
 
 /// The directory under the cache root that holds the leases.
 pub const LEASE_DIR: &str = "writers";

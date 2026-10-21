@@ -233,7 +233,8 @@ test scaffolding, or tooling.
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
 ├── .github/workflows/         ci.yml, compliance.yml, deny.yml, pr-title.yml and
 │                              release-plz.yml (see below)
-├── .githooks/pre-push         opt-in check that the specification still builds
+├── .githooks/                 opt-in hooks: pre-commit checks formatting, pre-push
+│                              that the specification still builds
 ├── .claude/skills/            AI-assistant skills for writing and querying the
 │                              specification (reqman-context is used below)
 ├── setup-debian.sh            installs the build and test dependencies on Debian 13
@@ -241,6 +242,9 @@ test scaffolding, or tooling.
 ├── release-plz.toml           release settings (see Releasing, below)
 ├── flake.nix                  toolchain: Rust, Node, OpenSSL; inputs pinned by commit
 ├── rust-toolchain.toml        the pinned Rust toolchain
+├── rustfmt.toml               formatting, with nightly-only import options
+├── .config/                   nextest.toml; rustfmt-toolchain, the nightly that
+│                              formats the workspace
 ├── AUTHORS                    the copyright holders
 └── LICENSE                    Apache-2.0
 ```
@@ -271,6 +275,25 @@ cargo deny --manifest-path durable-cache/Cargo.toml --exclude-dev check
 committed: build the specification first (see
 [The specification](#the-specification)), and rebuild it after editing a
 `.tex` file, or the report checks a stale list of test cases.
+
+**Formatting.** `rustfmt.toml` sorts imports into std, external and crate
+groups and merges them per module, with options only nightly rustfmt has.
+`cargo xtask fmt` formats the workspace with the nightly pinned in
+`.config/rustfmt-toolchain`, and `cargo xtask fmt --check` is what CI runs.
+The Nix shell and `setup-debian.sh` provide that rustfmt; with rustup alone,
+install it once:
+
+```bash
+rustup toolchain install "$(cat .config/rustfmt-toolchain)" --profile minimal --component rustfmt
+```
+
+A stable `cargo fmt` warns about those options and leaves imports as they
+are; so does an editor's format-on-save unless it runs that nightly (for
+rust-analyzer, `rust-analyzer.rustfmt.extraArgs` set to `["+<the pin>"]`).
+The repository's git hooks are opt-in, once per clone,
+`git config core.hooksPath .githooks`: `pre-commit` then refuses a commit
+that changes Rust code while the workspace is not formatted, and `pre-push`
+one that touches `docs/` while the specification does not build.
 
 Every feature build must pass: FDS-OBSERVABILITY.HEADROOM-01 and
 FDS-STORAGE.RECLAIM-01 each require the log to carry what the counters would
@@ -321,7 +344,7 @@ cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 
 | Workflow          | Runs on                                   | What it does |
 |-------------------|-------------------------------------------|--------------|
-| `ci.yml`          | pushes to `main`, pull requests           | fmt, SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, the library built with its minimum Rust (1.85), and `cargo publish --dry-run` |
+| `ci.yml`          | pushes to `main`, pull requests           | rustfmt (the pinned nightly), SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, the library built with its minimum Rust (1.85), and `cargo publish --dry-run` |
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 | `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
@@ -376,7 +399,8 @@ a LaTeX toolchain. Nothing rebuilds it automatically: after editing a `.tex`
 file, rebuild and commit `docs/durable-cache.pdf` with the change.
 
 To have `git push` refuse commits that touch `docs/` when the specification no
-longer builds, enable the repository's hooks once per clone:
+longer builds, enable the repository's hooks once per clone (they also check
+formatting before each commit; see [Building and testing](#building-and-testing)):
 
 ```bash
 git config core.hooksPath .githooks

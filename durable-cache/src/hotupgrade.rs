@@ -25,9 +25,8 @@
 //! neither gets two independent writers during the upgrade window, which
 //! FRE-COMPAT.EVICTION-01 rules out.
 
-// IMP-COMPAT.READONLY-01: satisfy FDS-COMPAT.READONLY-01
-use crate::recovery;
-use crate::FsCache;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use pingora_cache::eviction::EvictionManager;
 use pingora_core::server::{ExecutionPhase, Server, ShutdownWatch};
@@ -35,8 +34,11 @@ use pingora_core::services::background::{
     background_service, BackgroundService, GenBackgroundService,
 };
 use pingora_core::services::ServiceHandle;
-use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
+
+use crate::{recovery, FsCache};
+
+// IMP-COMPAT.READONLY-01: satisfy FDS-COMPAT.READONLY-01
 
 /// How long the incoming process of a hot upgrade waits, once it holds the
 /// listening sockets, before its restart scan: until the outgoing process's
@@ -224,10 +226,11 @@ fn recovery_delay(server: &Server) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::FsCacheConfig;
     use pingora_cache::eviction::simple_lru::Manager;
     use pingora_core::services::ServiceWithDependents;
+
+    use super::*;
+    use crate::FsCacheConfig;
 
     /// How much of a thread's name Linux keeps: `TASK_COMM_LEN` (16) bytes,
     /// less the terminating NUL.

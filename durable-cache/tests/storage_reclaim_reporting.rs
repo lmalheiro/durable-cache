@@ -8,10 +8,10 @@
 //! running in parallel in the same process would be indistinguishable from
 //! this one's.
 
-use super::support;
-
 use durable_cache::recovery::recover;
 use pingora_cache::eviction::simple_lru::Manager;
+
+use super::support;
 
 // IMP-TC.STORAGE.RECLAIM-02: satisfy TC-STORAGE.RECLAIM-01 -- the reporting
 // half; storage_reclaim.rs covers the classification steps.

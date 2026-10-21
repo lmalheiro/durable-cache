@@ -13,13 +13,13 @@
 //! of the outgoing object completes undisturbed) by `compat_replace.rs`.
 //! Step 7 is an inspection; its test here checks the part a test can.
 
-use super::support;
-
 use bytes::Bytes;
 use durable_cache::hooks::FaultPoint;
 use durable_cache::writerid;
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::Storage;
+
+use super::support;
 
 // IMP-TC.STORAGE.PUBLISH-02: satisfy TC-STORAGE.PUBLISH-01
 
@@ -271,9 +271,10 @@ async fn tc_storage_publish_01_temporary_shares_the_canonical_directory() {
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_replacing_store_frees_the_old_record_after_releasing_the_lock() {
+    use std::time::Duration;
+
     use durable_cache::hooks::PausePoint;
     use pingora_cache::storage::PurgeOutcome;
-    use std::time::Duration;
 
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/replace-then-free");
@@ -321,8 +322,9 @@ async fn a_replacing_store_frees_the_old_record_after_releasing_the_lock() {
 /// runtime's only worker free to run other tasks.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn a_store_drops_its_handler_off_the_worker() {
-    use durable_cache::hooks::PausePoint;
     use std::time::Duration;
+
+    use durable_cache::hooks::PausePoint;
 
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-dropped-off-worker");

@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-use bytes::Bytes;
 use std::time::Duration;
+
+use bytes::Bytes;
 
 /// One scripted response: a status, a header set, and a body delivered as
 /// a sequence of chunks, each optionally delayed — enough to drive

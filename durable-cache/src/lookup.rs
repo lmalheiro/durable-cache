@@ -14,15 +14,13 @@
 //! reclaims it. The exception is a damaged temporary that a tagged lookup
 //! names, which is an error (see `lookup`).
 
-// IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-01 -- the read
-// protocol (validation order, retry, optional body check, seek); miss.rs's
-// IMP-STORAGE.PUBLISH-01 covers the writer half.
-// IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
-use crate::blocking;
-use crate::inflight::{InFlightWriter, WriteOutcome};
-use crate::key_codec;
-use crate::record::{self, ReadError, RecordError, RecordKind};
-use crate::FsCache;
+use std::any::Any;
+use std::fs::File;
+use std::os::unix::fs::{FileExt, MetadataExt};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use pingora_cache::eviction::CacheEntryId;
@@ -31,12 +29,15 @@ use pingora_cache::storage::{HandleHit, Storage};
 use pingora_cache::trace::SpanHandle;
 use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{Error, ErrorType, OrErr, Result};
-use std::any::Any;
-use std::fs::File;
-use std::os::unix::fs::{FileExt, MetadataExt};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
+
+use crate::inflight::{InFlightWriter, WriteOutcome};
+use crate::record::{self, ReadError, RecordError, RecordKind};
+use crate::{blocking, key_codec, FsCache};
+
+// IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-01 -- the read
+// protocol (validation order, retry, optional body check, seek); miss.rs's
+// IMP-STORAGE.PUBLISH-01 covers the writer half.
+// IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
 
 const CHUNK_SIZE: u64 = 64 * 1024;
 

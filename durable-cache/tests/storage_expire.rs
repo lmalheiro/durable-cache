@@ -11,9 +11,8 @@
 //! processes: what is under test is the backend's own contract
 //! (FDS-STORAGE.EXPIRE-01), not how `pingora-cache` uses it.
 
-use super::support;
-
-// IMP-TC.STORAGE.EXPIRE-01: satisfy TC-STORAGE.EXPIRE-01
+use std::os::unix::fs::MetadataExt;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use durable_cache::format;
 use durable_cache::hooks::PausePoint;
@@ -21,8 +20,10 @@ use pingora_cache::eviction::{CacheEntryId, CacheEntryKey};
 use pingora_cache::storage::{PurgeOutcome, PurgeTarget, Storage};
 use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
-use std::os::unix::fs::MetadataExt;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use super::support;
+
+// IMP-TC.STORAGE.EXPIRE-01: satisfy TC-STORAGE.EXPIRE-01
 
 /// Metadata that is fresh well into the future, so "no longer fresh" after
 /// an expiry is unambiguous rather than a timing accident.

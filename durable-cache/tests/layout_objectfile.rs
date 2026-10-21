@@ -14,11 +14,12 @@
 //! `src/record.rs`, close to the format they exercise; this file drives the
 //! real `Storage` API.
 
-use super::support;
+use std::time::Duration;
 
 use durable_cache::{format, FsCacheConfig};
 use pingora_cache::storage::Storage;
-use std::time::Duration;
+
+use super::support;
 
 // IMP-TC.LAYOUT.OBJECTFILE-01: satisfy TC-LAYOUT.OBJECTFILE-01
 

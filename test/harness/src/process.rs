@@ -6,12 +6,13 @@
 //! checks — the primitives every Group D scenario needs (crash
 //! simulation, hot-upgrade drain, restart-and-reconstruct).
 
-use anyhow::{anyhow, Context, Result};
-use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, Context, Result};
+use nix::sys::signal::{kill, Signal};
+use nix::unistd::Pid;
 
 /// An ephemeral localhost port, free at the moment of the call. Inherently
 /// racy against another process grabbing it first (the listener is

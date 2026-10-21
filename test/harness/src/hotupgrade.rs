@@ -26,12 +26,14 @@
 //! `--cache-dir`, so two processes given the same cache directory already
 //! agree on the handoff path with no extra flag needed.
 
-use crate::fixture_proxy::{FixtureProxyHandle, FixtureProxyOptions};
-use crate::process::ManagedChild;
-use anyhow::Result;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
+
+use anyhow::Result;
+
+use crate::fixture_proxy::{FixtureProxyHandle, FixtureProxyOptions};
+use crate::process::ManagedChild;
 
 /// After handing its listening fd over on `SIGQUIT`, a Pingora process
 /// does not exit once its connections drain: it sleeps a hardcoded 5s

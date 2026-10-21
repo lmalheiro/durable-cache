@@ -8,6 +8,10 @@
 
 pub mod script;
 
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
+
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
@@ -15,9 +19,6 @@ use axum::response::Response;
 use axum::routing::any;
 use axum::Router;
 use script::Scenario;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
 
 #[derive(Default, Clone)]
 struct SharedState {

@@ -11,6 +11,9 @@
 //! `x-cache-status`, which says whether the cache answered it. `README.md`
 //! shows how to run it.
 
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::path::PathBuf;
+
 use async_trait::async_trait;
 use clap::Parser;
 use durable_cache::{hotupgrade, FsCache, FsCacheConfig};
@@ -26,8 +29,6 @@ use pingora_core::prelude::{HttpPeer, Opt, Server};
 use pingora_error::Result;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{http_proxy_service, ProxyHttp, Session};
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::path::PathBuf;
 
 /// The size of the cache, in bytes of records on disk. Once the cached
 /// objects outgrow it, the least recently used are evicted.

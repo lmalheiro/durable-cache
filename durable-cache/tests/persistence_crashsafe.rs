@@ -25,12 +25,12 @@
 //! - a purge whose directory entry was written but whose object file's
 //!   blocks were not.
 
-use super::support;
-
 use durable_cache::recovery::recover;
 use pingora_cache::eviction::simple_lru::Manager;
 use pingora_cache::eviction::EvictionManager;
 use pingora_cache::storage::{PurgeOutcome, Storage};
+
+use super::support;
 
 // IMP-TC.PERSISTENCE.CRASHSAFE-01: satisfy TC-PERSISTENCE.CRASHSAFE-01
 

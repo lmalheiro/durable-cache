@@ -9,15 +9,17 @@
 //! bounded retry absorbs a reader catching it mid-write (see
 //! `metaupdate.rs`'s and `lookup.rs`'s own doc comments).
 
-// IMP-TC.COMPLIANCE.REVALIDATION-01: satisfy TC-COMPLIANCE.REVALIDATION-01
-use super::support;
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use durable_cache::{format, FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
 use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
-use std::time::{Duration, SystemTime};
+
+use super::support;
+
+// IMP-TC.COMPLIANCE.REVALIDATION-01: satisfy TC-COMPLIANCE.REVALIDATION-01
 
 fn meta_with_header(name: &'static str, value: &str) -> CacheMeta {
     let mut header = ResponseHeader::build(200, None).unwrap();

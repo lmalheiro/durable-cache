@@ -14,12 +14,13 @@
 //! (a shard directory removed behind the backend's back) need no special
 //! device and are exercised here directly.
 
-use super::support;
+use std::os::unix::fs::PermissionsExt;
 
 use bytes::Bytes;
 use durable_cache::hooks::FaultPoint;
 use pingora_cache::storage::Storage;
-use std::os::unix::fs::PermissionsExt;
+
+use super::support;
 
 // IMP-TC.COMPAT.WRITEFAIL-01: satisfy TC-COMPAT.WRITEFAIL-01
 

@@ -8,7 +8,12 @@
 //! an integrator installs it; where a step needs an outgoing process, the
 //! test stands in for it.
 
-use super::support;
+use std::net::TcpListener;
+use std::os::fd::AsRawFd;
+use std::path::Path;
+use std::sync::OnceLock;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant, SystemTime};
 
 use durable_cache::hooks::PausePoint;
 use durable_cache::hotupgrade::{self, CLOSE_TIMEOUT};
@@ -19,13 +24,9 @@ use pingora_cache::CacheKey;
 use pingora_core::server::configuration::{Opt, ServerConf};
 use pingora_core::server::{Fds, RunArgs, Server, ShutdownSignal, ShutdownSignalWatch};
 use pingora_core::services::background::BackgroundService;
-use std::net::TcpListener;
-use std::os::fd::AsRawFd;
-use std::path::Path;
-use std::sync::OnceLock;
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, Mutex};
+
+use super::support;
 
 // IMP-TC.COMPAT.HOTUPGRADE-02: satisfy TC-COMPAT.HOTUPGRADE-01 -- the
 // helper's steps; test/compat/tests/hotupgrade.rs covers the two processes.

@@ -10,12 +10,13 @@
 //! file, answers an invalidation only once the shard directory is
 //! synchronised, and fails once the backend is read-only.
 
-use super::support;
+use std::time::Duration;
 
 use bytes::Bytes;
 use durable_cache::hooks::{FaultPoint, PausePoint};
 use pingora_cache::storage::{PurgeOutcome, PurgeTarget, PurgeType, Storage};
-use std::time::Duration;
+
+use super::support;
 
 // IMP-TC.STORAGE.PURGE-01: satisfy TC-STORAGE.PURGE-01
 

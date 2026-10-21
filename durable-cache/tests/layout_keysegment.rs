@@ -8,11 +8,11 @@
 //! key does not decode is reclaimed by the restart-time scan as damaged,
 //! and never admitted.
 
-use super::support;
-
 use durable_cache::recovery::recover;
 use pingora_cache::eviction::simple_lru::Manager;
 use pingora_cache::eviction::EvictionManager;
+
+use super::support;
 
 // IMP-TC.LAYOUT.KEYSEGMENT-01: satisfy TC-LAYOUT.KEYSEGMENT-01
 

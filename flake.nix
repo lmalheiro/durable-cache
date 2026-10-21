@@ -30,6 +30,16 @@
         # can't drift apart.
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
+        # rustfmt.toml's import options are nightly-only, so formatting runs
+        # the nightly pinned in .config/rustfmt-toolchain, minimal plus
+        # rustfmt; `cargo fmt` finds it through RUSTFMT. The pin must be a
+        # date this rust-overlay commit knows.
+        rustfmtToolchain = pkgs.rust-bin.nightly.${
+          pkgs.lib.removePrefix "nightly-"
+            (pkgs.lib.removeSuffix "\n" (builtins.readFile ./.config/rustfmt-toolchain))
+        }.minimal.override { extensions = [ "rustfmt" ]; };
+        rustfmt = "${rustfmtToolchain}/bin/rustfmt";
+
         # pingora-cache/pingora-core both default to *no* TLS backend
         # (`default = []`), so durable-cache itself never touches
         # a TLS backend at all. Only fixture-proxy actually builds a
@@ -56,6 +66,8 @@
           # openssl-sys needs this on some platforms even with pkg-config
           # present; harmless to set unconditionally.
           OPENSSL_NO_VENDOR = "1";
+
+          RUSTFMT = rustfmt;
         };
 
         # Sandbox-safe, network-free checks only — the actual test suite
@@ -63,7 +75,10 @@
         # which fight `nix flake check`'s build sandbox. CI runs
         # `nix develop -c cargo nextest run ...` explicitly instead; see
         # .github/workflows/{ci,compliance}.yml.
-        checks.fmt = pkgs.runCommand "cargo-fmt-check" { buildInputs = [ rustToolchain ]; } ''
+        checks.fmt = pkgs.runCommand "cargo-fmt-check" {
+          buildInputs = [ rustToolchain ];
+          RUSTFMT = rustfmt;
+        } ''
           cd ${self}
           cargo fmt --all -- --check
           touch $out

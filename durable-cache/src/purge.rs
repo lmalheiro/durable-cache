@@ -10,14 +10,15 @@
 //! its answer survives a host crash (FRE-COMPLIANCE.PURGEDURABLE-01). A
 //! purge made to evict does neither.
 
-use crate::error::{refuse_read_only, Op};
-use crate::publish;
-use crate::FsCache;
+use std::io;
+
 use pingora_cache::eviction::CacheEntryKey;
 use pingora_cache::key::CompactCacheKey;
 use pingora_cache::storage::{PurgeOutcome, PurgeTarget, PurgeType};
 use pingora_error::{Error, ErrorType, Result};
-use std::io;
+
+use crate::error::{refuse_read_only, Op};
+use crate::{publish, FsCache};
 
 /// Resolve a purge target to the key whose canonical path it names, or
 /// `None` when this backend cannot act on it.

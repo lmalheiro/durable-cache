@@ -14,6 +14,8 @@
 
 mod proxy;
 
+use std::path::PathBuf;
+
 use clap::Parser;
 use durable_cache::{hotupgrade, recover, test_support, FsCache, FsCacheConfig};
 use pingora_cache::eviction::simple_lru::Manager as EvictionManager;
@@ -22,7 +24,6 @@ use pingora_core::prelude::{Opt, Server};
 use pingora_core::server::configuration::ServerConf;
 use pingora_proxy::http_proxy_service;
 use proxy::FixtureProxy;
-use std::path::PathBuf;
 
 /// Which `Storage` implementation the fixture hosts. `MemCache` is the
 /// reference HLR-COMPLIANCE.RFC-01 measures against: the same proxy, the

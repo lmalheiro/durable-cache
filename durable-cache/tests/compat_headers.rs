@@ -11,15 +11,17 @@
 //! this TC requires and a case-insensitive/unordered map could silently
 //! paper over.
 
-// IMP-TC.COMPLIANCE.HEADERS-01: satisfy TC-COMPLIANCE.HEADERS-01
-use super::support;
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
 use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
-use std::time::{Duration, SystemTime};
+
+use super::support;
+
+// IMP-TC.COMPLIANCE.HEADERS-01: satisfy TC-COMPLIANCE.HEADERS-01
 
 /// Every field shape TC-COMPLIANCE.HEADERS-01 names: repeated names in a
 /// deliberate order, an unrecognised field, an empty value, an obs-text

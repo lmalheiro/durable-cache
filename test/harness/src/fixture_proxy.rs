@@ -5,12 +5,14 @@
 //! pointed at whatever upstream the test needs (cache-tests' origin or
 //! `durable-cache-mock-origin`).
 
-use crate::process::ManagedChild;
-use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
+
+use anyhow::{Context, Result};
+
+use crate::process::ManagedChild;
 
 pub struct FixtureProxyHandle {
     pub proxy: ManagedChild,

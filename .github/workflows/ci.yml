@@ -29,8 +29,8 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: Swatinem/rust-cache@v2
 
-      - name: cargo fmt --check
-        run: nix develop -c cargo fmt --all -- --check
+      - name: rustfmt, the nightly pinned in .config/rustfmt-toolchain
+        run: nix develop -c cargo xtask fmt --check
 
       - name: SPDX headers
         run: nix develop -c cargo xtask headers

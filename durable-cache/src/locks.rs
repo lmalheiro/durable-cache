@@ -83,10 +83,11 @@
 //! to one directory only during a hot upgrade, before the old one becomes
 //! read-only, and FDS-STORAGE.METAUPDATE-01 accepts the race there.
 
-use crate::sharding::RADIX;
 #[cfg(debug_assertions)]
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+
+use crate::sharding::RADIX;
 
 /// How many leading hex digits of a key's name pick its stripe.
 const STRIPE_DIGITS: usize = 3;
@@ -301,12 +302,14 @@ fn stripe_index(name: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::sharding;
-    use pingora_cache::key::{CacheHashKey, CacheKey};
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier, TryLockError};
     use std::time::Duration;
+
+    use pingora_cache::key::{CacheHashKey, CacheKey};
+
+    use super::*;
+    use crate::sharding;
 
     /// A name of the backend's length, 32 hex digits, starting with
     /// `prefix`.

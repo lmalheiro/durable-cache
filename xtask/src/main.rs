@@ -4,14 +4,15 @@
 //! `cargo xtask <cmd>` — repo-local dev tooling. Not published, not part
 //! of the deliverable crate.
 
-use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
 use std::collections::BTreeMap;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+use anyhow::{bail, Context, Result};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 struct Cli {
@@ -60,6 +61,17 @@ enum Cmd {
     /// `SPDX-FileCopyrightText` line naming the durable-cache authors
     /// (see AUTHORS), then `SPDX-License-Identifier: Apache-2.0`.
     Headers,
+    /// Format the workspace with the nightly rustfmt pinned in
+    /// `.config/rustfmt-toolchain`, since rustfmt.toml's import options are
+    /// nightly-only. In the Nix shell, `RUSTFMT` names that rustfmt already;
+    /// elsewhere rustup runs it, once installed with
+    /// `rustup toolchain install <pin> --profile minimal --component rustfmt`.
+    Fmt {
+        /// Report unformatted files instead of formatting them, as CI and
+        /// the pre-commit hook do.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn workspace_root() -> Result<PathBuf> {
@@ -80,6 +92,7 @@ fn main() -> Result<()> {
         } => cache_tests(results_out.as_deref(), verbose, passes),
         Cmd::TraceReport => trace_report(),
         Cmd::Headers => check_headers(),
+        Cmd::Fmt { check } => fmt(check),
     }
 }
 
@@ -723,4 +736,38 @@ fn check_headers() -> Result<()> {
     }
     println!("headers: all {checked} source files carry the SPDX header");
     Ok(())
+}
+
+fn fmt(check: bool) -> Result<()> {
+    let root = workspace_root()?;
+    let mut cargo = Command::new("cargo");
+    // The Nix shell points `RUSTFMT` at the pinned rustfmt, which `cargo fmt`
+    // then runs; with rustup, `+<pin>` selects it.
+    let pin = if std::env::var_os("RUSTFMT").is_none_or(|rustfmt| rustfmt.is_empty()) {
+        let pin = std::fs::read_to_string(root.join(".config/rustfmt-toolchain"))
+            .context("failed to read .config/rustfmt-toolchain")?;
+        let pin = pin.trim().to_owned();
+        cargo.arg(format!("+{pin}"));
+        Some(pin)
+    } else {
+        None
+    };
+    cargo.args(["fmt", "--all"]).current_dir(&root);
+    if check {
+        cargo.args(["--", "--check"]);
+    }
+    let status = cargo.status().context("failed to run cargo fmt")?;
+    if status.success() {
+        return Ok(());
+    }
+    if let Some(pin) = pin {
+        eprintln!(
+            "(the nightly rustfmt installs with \
+             `rustup toolchain install {pin} --profile minimal --component rustfmt`)"
+        );
+    }
+    if check {
+        bail!("the workspace is not formatted: run `cargo xtask fmt`");
+    }
+    bail!("cargo fmt failed");
 }

@@ -21,11 +21,13 @@
 
 #[cfg(feature = "metrics")]
 mod imp {
-    use crate::reclaim::ReclaimClass;
+    use std::sync::OnceLock;
+
     use pingora_prometheus::prometheus::{
         self, register_int_counter, register_int_counter_vec, IntCounter, IntCounterVec,
     };
-    use std::sync::OnceLock;
+
+    use crate::reclaim::ReclaimClass;
 
     const HEADROOM_EXCEEDED: &str = "durable_cache_meta_headroom_exceeded_total";
     const RECLAIMED_FILES: &str = "durable_cache_reclaimed_files_total";
