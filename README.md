@@ -18,13 +18,20 @@ atomic `rename(2)`. Every lookup validates the header and metadata by
 CRC-32C, so a torn, truncated, or foreign record is reported as a cache miss
 instead of being served.
 
-[`pingora-cache`]: https://github.com/cloudflare/pingora
+[`pingora-cache`]: https://docs.rs/pingora-cache
 
 **Specification:** [PDF][spec-pdf], committed alongside its LaTeX sources.
 
 [spec-pdf]: docs/durable-cache.pdf
 
 ## Status
+
+**Work in progress.** Nothing has been released yet: the first version,
+0.1.0, is being prepared. The crate has not run in production, and its API
+may change before 1.0. Every artifact of the specification is still `draft`,
+pending the authors' review; the human review of the tests and tooling
+continues in [#14](https://github.com/lmalheiro/durable-cache/issues/14), and
+the known gaps are [open issues](https://github.com/lmalheiro/durable-cache/issues).
 
 The crate implements the full `Storage` surface — `lookup`, `get_miss_handler`,
 `purge`, `update_meta`, plus streaming partial hits and `expire`,
@@ -35,21 +42,20 @@ rebuilds the eviction manager's view from disk at startup, and
 `hotupgrade::install` wires that recovery, and the switch that makes the
 outgoing process's backend read-only, into a Pingora server.
 
-The specification's 100 artifacts are all traced — every one of its 33 test
-cases has a test function or an `IMP` marker — as checked by
-`cargo xtask trace-report` and by the specification's own traceability report.
-That report's one open obligation is deliberate:
-`REQ-EFFICIENCY.FRAGMENTATION-01` has no satisfying decision, because
-`ADR-EFFICIENCY.COMPACTION-01` defers compaction and declares the conflict.
-Every artifact is still `draft`; re-acceptance is the owner's to give. See
-[Caveats](#caveats) for the test cases that need root, a scratch device, or a
-scale a laptop cannot reach.
+Every artifact of the specification is traced, and every test case has a test
+function or an `IMP` marker, as `cargo xtask trace-report` and the
+specification's own traceability report check. That report's one open
+obligation is deliberate: `REQ-EFFICIENCY.FRAGMENTATION-01` has no satisfying
+decision, because `ADR-EFFICIENCY.COMPACTION-01` defers compaction and
+declares the conflict. See [Caveats](#caveats) for the test cases that need
+root, a scratch device, or a scale a laptop cannot reach.
 
 ## Using it
 
 ```toml
 [dependencies]
-durable-cache = { path = "durable-cache" }
+# Not on crates.io yet.
+durable-cache = { git = "https://github.com/lmalheiro/durable-cache" }
 ```
 
 ```rust
@@ -62,7 +68,7 @@ server.bootstrap();
 
 // `Storage`'s methods take `&'static self`, so the backend is held for the
 // process's whole lifetime.
-let config = FsCacheConfig::new("/var/cache/pingora", None);
+let config = FsCacheConfig::new("/var/cache/durable-cache", None);
 let cache: &'static FsCache = Box::leak(Box::new(FsCache::new(config)?));
 let eviction: &'static Manager = Box::leak(Box::new(Manager::new(usize::MAX)));
 
@@ -145,6 +151,9 @@ by construction. Without the feature, this crate links neither crate and
 registers nothing; the warning logs beside each counter are unconditional
 (`ADR-OBSERVABILITY.METRICS-01`).
 
+`test-support` exposes internals to this workspace's own test crates. It is
+not API and is exempt from semver: do not enable it.
+
 ## Repository layout
 
 Only `durable-cache/` ships. Everything else is specification, test
@@ -174,6 +183,7 @@ scaffolding, or tooling.
 │   │   ├── lookup.rs            read path: lookup / HandleHit, incl. partial hits
 │   │   ├── publish.rs           sync, atomic rename, discard; holds the old record open
 │   │   ├── metaupdate.rs        update_meta: in place, or withdraws when outgrown
+│   │   ├── expire.rs            expire: marks an object stale in place, keeping its body
 │   │   ├── purge.rs             unlink the canonical name; an invalidation also syncs the shard dir
 │   │   ├── inflight.rs          in-flight registry backing partial reads
 │   │   ├── reclaim.rs           classifies orphaned temps and leases, damaged and withdrawn records
@@ -215,9 +225,13 @@ scaffolding, or tooling.
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
 ├── .github/workflows/         ci.yml, compliance.yml and deny.yml (see below)
 ├── .githooks/pre-push         opt-in check that the specification still builds
+├── .claude/skills/            AI-assistant skills for writing and querying the
+│                              specification (reqman-context is used below)
+├── setup-debian.sh            installs the build and test dependencies on Debian 13
 ├── deny.toml                  cargo-deny policy: advisories, licences, sources
 ├── flake.nix                  toolchain: Rust, Node, OpenSSL; inputs pinned by commit
 ├── rust-toolchain.toml        the pinned Rust toolchain
+├── AUTHORS                    the copyright holders
 └── LICENSE                    Apache-2.0
 ```
 
@@ -225,8 +239,9 @@ scaffolding, or tooling.
 
 The Nix flake provides the exact toolchain (`nix develop`). On Debian 13,
 `sudo ./setup-debian.sh` installs everything below and is safe to re-run.
-Otherwise you need the Rust toolchain pinned in `rust-toolchain.toml`, Node ≥ 14.8 for the RFC suite, and OpenSSL — on macOS,
-`export OPENSSL_DIR="$(brew --prefix openssl@3)"` and
+Otherwise you need the Rust toolchain pinned in `rust-toolchain.toml`, Node ≥ 14.8
+for the RFC suite, and OpenSSL. On macOS, which CI does not check (see
+[Caveats](#caveats)), set `export OPENSSL_DIR="$(brew --prefix openssl@3)"` and
 `PKG_CONFIG_PATH="$OPENSSL_DIR/lib/pkgconfig"` for a cold build.
 
 ```bash
@@ -295,7 +310,7 @@ cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 
 | Workflow          | Runs on                                   | What it does |
 |-------------------|-------------------------------------------|--------------|
-| `ci.yml`          | pushes to `main`, pull requests           | fmt, clippy, crate tests with and without `metrics`, compat tests, and the library built with its minimum Rust (1.85) |
+| `ci.yml`          | pushes to `main`, pull requests           | fmt, SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, and the library built with its minimum Rust (1.85) |
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 
@@ -355,6 +370,12 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
 
 ## Caveats
 
+- **Linux is the one tested platform.** CI builds and tests on Linux only.
+  The crate relies on Unix file APIs (`flock`, positional reads and
+  writes), so it does not build on Windows; other Unix systems, macOS
+  included, are untested
+  ([#6](https://github.com/lmalheiro/durable-cache/issues/6),
+  [#7](https://github.com/lmalheiro/durable-cache/issues/7)).
 - **The hot-upgrade tests are Linux-only.** `test/compat/tests/hotupgrade.rs`
   needs the Pingora fd transfer, which `pingora-core` implements only on Linux.
   It is `#![cfg(target_os = "linux")]` and compiles to nothing elsewhere, so
@@ -441,8 +462,11 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
 
 The code was written with AI assistance (Anthropic's Claude), directed and
 reviewed by the human authors listed in [AUTHORS](AUTHORS), who hold its
-copyright. Every source file carries an SPDX header naming them and the
-licence; `cargo xtask headers` checks it, and CI runs it.
+copyright. Before the first release, the crate's own source had a
+file-by-file human review; the review of its tests and tooling continues in
+[#14](https://github.com/lmalheiro/durable-cache/issues/14). Every source
+file carries an SPDX header naming the authors and the licence;
+`cargo xtask headers` checks it, and CI runs it.
 
 ## Licence
 
