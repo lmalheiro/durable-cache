@@ -2,9 +2,11 @@ name: Release-plz
 # release-plz keeps a release pull request open: the next version of
 # durable-cache, chosen from the conventional commit subjects since the last
 # release (cargo-semver-checks flags API breaks), and its changelog entry.
-# Merging that PR releases it: the crate is published to crates.io, tagged
-# v<version>, and given a GitHub release. release-plz.toml has the settings;
-# the README's "Releasing" section, the steps.
+# Merging that PR releases it: the version is tagged v<version>, published
+# to crates.io, and given a GitHub release. The crates.io token lives in the
+# `crates-io` environment, which only runs on main may use, and only the
+# release job, only for that merge, reads it. release-plz.toml has the
+# settings; the README's "Releasing" section, the steps.
 
 on:
   push:
@@ -13,13 +15,37 @@ on:
 permissions: {}
 
 jobs:
-  # Publishes, tags and releases the version on main if it is not on
-  # crates.io yet, but only when the commit on main merged a release PR
-  # (release_always = false): an ordinary push publishes nothing.
-  release-plz-release:
-    name: Release-plz release
+  # Whether this push merged a release PR: release-plz opens them from
+  # branches named release-plz-*. Only then does the release job start, so
+  # no other push reaches the token, or records a deployment to crates-io.
+  release-pr-merged:
     if: github.repository_owner == 'lmalheiro'
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      merged: ${{ steps.check.outputs.merged }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          branch=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+            --jq '[.[] | select(.merged_at != null)][0].head.ref // ""')
+          if [[ $branch == release-plz-* ]]; then merged=true; else merged=false; fi
+          echo "merged=$merged" >> "$GITHUB_OUTPUT"
+
+  # Tags, publishes and releases the version on main if it is not on
+  # crates.io yet. release-plz checks again that the commit merged a release
+  # PR (release_always = false): an ordinary push publishes nothing.
+  release-plz-release:
+    name: Release-plz release
+    needs: release-pr-merged
+    if: needs.release-pr-merged.outputs.merged == 'true'
+    runs-on: ubuntu-latest
+    environment: crates-io
     permissions:
       contents: write
       # To tell whether the commit on main merged a release PR.
@@ -35,14 +61,15 @@ jobs:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # A crates.io token, scoped to publishing durable-cache: a new
-          # crate's first version cannot use trusted publishing. Once that
-          # is set up for the crate, this job gets `id-token: write` and
-          # loses the token.
+          # The crates-io environment's secret: a token scoped to publishing
+          # durable-cache, since a new crate's first version cannot use
+          # trusted publishing. Once that is set up for the crate, this job
+          # gets `id-token: write` and the token goes.
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  # Opens or updates the release PR. A PR this workflow opens does not start
-  # other workflows, so CI runs on it only once someone closes and reopens it.
+  # Opens or updates the release PR. Pushes this workflow makes start no
+  # other workflow, so CI runs on the release PR once a maintainer pushes to
+  # it, or closes and reopens it.
   release-plz-pr:
     name: Release-plz PR
     if: github.repository_owner == 'lmalheiro'
