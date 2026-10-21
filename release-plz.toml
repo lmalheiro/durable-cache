@@ -7,3 +7,47 @@
 release_always = false
 # The one released crate's tags read v0.1.0, as the crate docs link them.
 git_tag_name = "v{{ version }}"
+
+[changelog]
+# A changelog for the crate's users: what they get, grouped by kind of
+# change, in this order (the HTML comments sort the groups; the body strips
+# them). CI, tooling, formatting and test-only commits change nothing a user
+# gets, so they are left out, unless one is a breaking change.
+protect_breaking_commits = true
+commit_parsers = [
+    { message = "^chore: release", skip = true },
+    { message = "^feat", group = "<!-- 0 -->Added" },
+    { message = "^fix", group = "<!-- 1 -->Fixed" },
+    { message = "^perf", group = "<!-- 2 -->Performance" },
+    { message = "^refactor", group = "<!-- 3 -->Changed" },
+    { message = "^revert", group = "<!-- 4 -->Reverted" },
+    { message = "^(build|chore)\\(deps\\)", group = "<!-- 5 -->Dependencies" },
+    { message = "^docs", group = "<!-- 6 -->Documentation" },
+    { message = "^(build|chore|ci|style|test)", skip = true },
+    { message = "^.*", group = "<!-- 7 -->Other" },
+]
+# release-plz's default body, but for the group heading, which strips the
+# sorting comments.
+body = """
+
+## [{{ version }}]\
+    {%- if release_link -%}\
+        ({{ release_link }})\
+    {% endif %} \
+    - {{ timestamp | date(format="%Y-%m-%d") }}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+
+    {% for commit in commits %}
+        {%- if commit.scope -%}
+            - *({{commit.scope}})* {% if commit.breaking %}[**breaking**] {% endif %}\
+                {{ commit.message }}\
+                {%- if commit.links %} \
+                    ({% for link in commit.links %}[{{link.text}}]({{link.href}}) {% endfor -%})\
+                {% endif %}
+        {% else -%}
+            - {% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message }}
+        {% endif -%}
+    {% endfor -%}
+{% endfor %}
+"""

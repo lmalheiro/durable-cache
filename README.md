@@ -348,27 +348,46 @@ cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 | `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
-| `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date; when one is merged, publishes the crate, tags it and creates the GitHub release (see below) |
+| `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date; when one is merged, tags the version, publishes it with the token in the `crates-io` environment and creates the GitHub release (see below) |
 
 ### Releasing
 
 release-plz keeps a release pull request open on `main`: the next version of
 `durable-cache`, chosen from the commit subjects since the last release
-(cargo-semver-checks flags breaking API changes), and its changelog entry.
-Nothing is published until that pull request is merged. To release:
+(cargo-semver-checks flags breaking API changes), and its changelog entry. The
+entry groups the changes a user gets (added, fixed, performance, changed,
+reverted, dependencies, documentation) and leaves out CI, tooling, formatting
+and test-only commits. Merging the pull request releases that version:
+release-plz tags it `v<version>`, publishes it to crates.io and creates the
+GitHub release, with the changelog entry as its notes. Any other push to `main`
+releases nothing. To release:
 
-1. Rebuild the specification on the release pull request's branch with the
-   version's tag, so its source links point at that release:
-   `cd docs && REQMAN_SOURCE_REF=v<version> latexmk -g -pdf durable-cache`,
-   then commit and push the PDF.
-2. Close and reopen the release pull request: one the workflow opens does not
-   start CI on its own.
-3. Merge it. release-plz then publishes the crate to crates.io, tags
-   `v<version>` and creates the GitHub release.
+1. Merge everything else the release should include first. When `main`
+   moves after you edit the release pull request, release-plz closes it and
+   opens a fresh one without your edits.
+2. On the release pull request's branch, edit `durable-cache/CHANGELOG.md` as
+   needed, and rebuild the specification with the version's tag, so its source
+   links point at that release:
+   `cd docs && REQMAN_SOURCE_REF=v<version> latexmk -g -pdf durable-cache`.
+   Commit and push: your push runs CI on the pull request. The workflow's own
+   pushes do not, so a release pull request you leave as it is needs closing
+   and reopening for CI to run.
+3. Merge it.
 
-Publishing needs a crates.io token in the repository's `CARGO_REGISTRY_TOKEN`
-secret until the crate has its first version on crates.io and trusted
-publishing is set up for it.
+Publishing reads a crates.io token from the repository's `crates-io`
+environment, which only runs on `main` may use, and only the release job reads
+it, only for that merge. Create the token on crates.io with the publish-new
+and publish-update scopes alone, for the crate `durable-cache`, with an expiry,
+and store it there:
+
+```bash
+gh secret set CARGO_REGISTRY_TOKEN --env crates-io
+```
+
+Once the crate has its first version on crates.io, trusted publishing can
+replace the token: configure it on crates.io for this repository, the workflow
+`release-plz.yml` and the environment `crates-io`, give the release job
+`id-token: write`, and delete the secret.
 
 ## The specification
 
