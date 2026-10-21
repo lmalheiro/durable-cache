@@ -79,6 +79,19 @@ jobs:
           name: nextest-junit-fast
           path: target/nextest/ci/junit.xml
 
+  package:
+    # What crates.io would receive: `cargo publish --dry-run` packages
+    # durable-cache and builds the package on its own, outside the workspace,
+    # with the toolchain rust-toolchain.toml pins.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish --dry-run
+        run: cargo publish --dry-run --locked -p durable-cache
+
   msrv:
     # durable-cache declares rust-version = "1.85", Pingora 0.9.0's own
     # minimum: building the library with that compiler keeps the claim true.

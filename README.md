@@ -319,7 +319,7 @@ cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 
 | Workflow          | Runs on                                   | What it does |
 |-------------------|-------------------------------------------|--------------|
-| `ci.yml`          | pushes to `main`, pull requests           | fmt, SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, and the library built with its minimum Rust (1.85) |
+| `ci.yml`          | pushes to `main`, pull requests           | fmt, SPDX headers, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, the library built with its minimum Rust (1.85), and `cargo publish --dry-run` |
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 | `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
@@ -467,6 +467,11 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
   the tree. A golden-bytes test fails if a `pingora-cache` release changes
   the metadata encoding records rely on, so that change always gets a
   decision.
+
+## Security
+
+Please report a vulnerability privately, as [SECURITY.md](SECURITY.md)
+describes, not in a public issue.
 
 ## Authors
 
