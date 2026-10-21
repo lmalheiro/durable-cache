@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 The durable-cache authors
+# SPDX-License-Identifier: Apache-2.0
+
+#
+# pre-commit — refuse a commit while the workspace is not formatted the way CI
+# checks it: rustfmt.toml, applied by the nightly rustfmt pinned in
+# .config/rustfmt-toolchain. Opt-in, per clone, like pre-push:
+#
+#     git config core.hooksPath .githooks
+#
+# It runs only when the commit changes Rust code or the formatting settings,
+# checks the working tree rather than only what is staged, and never formats
+# on its own: run `cargo xtask fmt` and stage the result. Skip it once with
+# `git commit --no-verify`.
+
+if git diff --cached --quiet -- '*.rs' rustfmt.toml .config/rustfmt-toolchain; then
+    exit 0
+fi
+
+if ! cargo -q xtask fmt --check; then
+    echo "pre-commit: not formatted; run \`cargo xtask fmt\` and stage the result" >&2
+    exit 1
+fi

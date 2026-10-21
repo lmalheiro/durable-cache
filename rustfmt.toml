@@ -1,0 +1,10 @@
+# rustfmt's defaults with the edition set, as in the .rustfmt.toml of
+# Pingora, plus two import options that only nightly rustfmt has:
+# `cargo xtask fmt` runs the nightly pinned in .config/rustfmt-toolchain. A
+# stable rustfmt warns about them and leaves imports as they are.
+edition = "2021"
+# One `use` per module path, its items merged into it.
+imports_granularity = "Module"
+# Imports from std, alloc and core first, then external crates, then this
+# crate, each group sorted.
+group_imports = "StdExternalCrate"

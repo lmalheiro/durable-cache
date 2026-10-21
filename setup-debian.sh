@@ -27,6 +27,9 @@
 #   * Rust   — Debian's rustup package, plus the toolchain pinned by
 #              rust-toolchain.toml (with rustfmt and clippy), installed for the
 #              invoking user rather than root.
+#   * rustfmt (nightly) — the nightly pinned by .config/rustfmt-toolchain,
+#              minimal plus rustfmt, for the same user: rustfmt.toml's import
+#              options are nightly-only, and `cargo xtask fmt` runs it.
 #   * C deps — a C compiler and pkg-config + libssl-dev for openssl-sys
 #              (the pingora-core `openssl` feature), cmake for libz-ng-sys.
 #   * nextest — cargo-nextest, which CI uses to run the test suites; not
@@ -88,6 +91,14 @@ if [ -z "$RUST_CHANNEL" ] || [ -z "$components" ]; then
     exit 1
 fi
 read -r -a RUST_COMPONENTS <<< "$(printf '%s' "$components" | tr -d '"' | tr ',' ' ')"
+
+# The nightly whose rustfmt formats the workspace, pinned by
+# .config/rustfmt-toolchain, the one place it is.
+RUSTFMT_TOOLCHAIN="$(tr -d '[:space:]' < "$REPO_ROOT/.config/rustfmt-toolchain" 2>/dev/null || true)"
+if [ -z "$RUSTFMT_TOOLCHAIN" ]; then
+    echo "ERROR: $REPO_ROOT/.config/rustfmt-toolchain must name the nightly that formats the workspace" >&2
+    exit 1
+fi
 
 # cargo-nextest release to install. Pinned so repeated runs converge on the
 # same binary; bump deliberately. The SHA-256 of each release tarball is the
@@ -174,6 +185,12 @@ rust_toolchain_ready() {
     done
 }
 
+# Succeeds when TARGET_USER has RUSTFMT_TOOLCHAIN installed with rustfmt.
+rustfmt_toolchain_ready() {
+    as_target_user rustup component list --installed \
+        --toolchain "$RUSTFMT_TOOLCHAIN" 2>/dev/null | grep -q "^rustfmt-"
+}
+
 # Print the version of the cargo-nextest at NEXTEST_BIN, or nothing.
 nextest_installed_version() {
     [ -x "$NEXTEST_BIN" ] || return 0
@@ -226,6 +243,12 @@ if [ "$DO_INSTALL" -eq 1 ]; then
             component_args+=(--component "$component")
         done
         as_target_user rustup toolchain install "$RUST_CHANNEL" --profile minimal "${component_args[@]}"
+    fi
+    if rustfmt_toolchain_ready; then
+        echo "==> rustfmt: $RUSTFMT_TOOLCHAIN already installed for $TARGET_USER"
+    else
+        echo "==> rustfmt: installing $RUSTFMT_TOOLCHAIN (minimal, rustfmt) for $TARGET_USER"
+        as_target_user rustup toolchain install "$RUSTFMT_TOOLCHAIN" --profile minimal --component rustfmt
     fi
 
     # --- cargo-nextest (system-wide) ---------------------------------------
@@ -365,6 +388,13 @@ if command -v rustup >/dev/null 2>&1 && rust_toolchain_ready; then
 else
     printf '  MISSING toolchain %s with %s for %s\n' "$RUST_CHANNEL" \
         "${RUST_COMPONENTS[*]}" "$TARGET_USER"
+    failures=$((failures + 1))
+fi
+if command -v rustup >/dev/null 2>&1 && rustfmt_toolchain_ready; then
+    printf '  ok      rustfmt from %s for %s: %s\n' "$RUSTFMT_TOOLCHAIN" "$TARGET_USER" \
+        "$(as_target_user rustup run "$RUSTFMT_TOOLCHAIN" rustfmt --version)"
+else
+    printf '  MISSING rustfmt from %s for %s\n' "$RUSTFMT_TOOLCHAIN" "$TARGET_USER"
     failures=$((failures + 1))
 fi
 if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists openssl; then
