@@ -26,6 +26,13 @@ instead of being served.
 
 ## Status
 
+**Work in progress.** Nothing has been released yet: the first version,
+0.1.0, is being prepared. The crate has not run in production, and its API
+may change before 1.0. Every artifact of the specification is still `draft`,
+pending the authors' review; the human review of the tests and tooling
+continues in [#14](https://github.com/lmalheiro/durable-cache/issues/14), and
+the known gaps are [open issues](https://github.com/lmalheiro/durable-cache/issues).
+
 The crate implements the full `Storage` surface — `lookup`, `get_miss_handler`,
 `purge`, `update_meta`, plus streaming partial hits and `expire`,
 which marks an object stale in place and keeps the body, so the revalidation
@@ -40,10 +47,8 @@ function or an `IMP` marker, as `cargo xtask trace-report` and the
 specification's own traceability report check. That report's one open
 obligation is deliberate: `REQ-EFFICIENCY.FRAGMENTATION-01` has no satisfying
 decision, because `ADR-EFFICIENCY.COMPACTION-01` defers compaction and
-declares the conflict. Every artifact's status is still `draft`, pending the
-authors' review of the specification. See
-[Caveats](#caveats) for the test cases that need root, a scratch device, or a
-scale a laptop cannot reach.
+declares the conflict. See [Caveats](#caveats) for the test cases that need
+root, a scratch device, or a scale a laptop cannot reach.
 
 ## Using it
 
