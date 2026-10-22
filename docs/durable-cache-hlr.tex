@@ -1,4 +1,4 @@
-\begin{requirement}{HLR-SCOPE.V1-01}[draft][stakeholderRequirement]{First Functional Version}
+\begin{requirement}{HLR-SCOPE.V1-01}[draft][stakeholderRequirement]{Fewest mechanisms, measured gains}
 
   \localreqdiagram*{hlr05}{\reqid}{\reqdesc}
 
@@ -6,15 +6,26 @@
   decision must meet, the decision shall adopt the alternative that requires
   this project to build the fewest mechanisms of its own --- counted as
   components, public interfaces, background tasks, and on-disk structures
-  built rather than adopted --- even at the cost of peak space or I/O
-  efficiency.
+  built rather than adopted --- unless an alternative with more mechanisms
+  improves, by at least 20\,\%, a figure that a performance test case of this
+  specification measures.
 
-  This specification targets a \emph{first functional version}: proven
-  components doing the heavy lifting are preferred to bespoke ones. The
-  requirement is verified by inspection --- each architecture decision
+  The first functional version, released as 0.1.0, applied this rule without
+  the exception: proven components doing the heavy lifting were preferred to
+  bespoke ones, even at the cost of peak space or I/O efficiency, and the
+  decisions taken that way stand. With that version working, the exception
+  admits optimisations, but only measured ones. \emph{Improves} means raises
+  a throughput or lowers a latency, as measured on the host and under the
+  conditions the performance test case sets
+  (\reqref{TC-PERFORMANCE.LOOKUP-01}, \reqref{TC-PERFORMANCE.HITRATE-01},
+  \reqref{TC-PERFORMANCE.STORERATE-01}); a gain no such test case measures,
+  or one below 20\,\%, does not count.
+
+  The requirement is verified by inspection --- each architecture decision
   record's \emph{Alternatives considered} section states what an alternative
-  rejected on these grounds would have required the project to build. A later
-  version of this specification may replace this requirement.
+  rejected on these grounds would have required the project to build, and a
+  decision that takes the exception names the mechanisms it adds, the
+  performance test case, and the figures measured for both alternatives.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
@@ -132,6 +143,77 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{deriveReqt}{REQ}
+  \reqcover{verify}{TC}
+\end{requirement}
+
+\begin{requirement}{HLR-PERFORMANCE.HITRATE-01}[draft][stakeholderRequirement]{Hit throughput near in-memory}
+
+  \localreqdiagram*{hlr09}{\reqid}{\reqdesc}
+
+  WHILE the objects it serves are resident in the host's memory, the cache
+  shall serve cache hits on objects of 1~KiB to 1~MiB at a request rate of at
+  least 60\,\% of the rate the same proxy reaches with the in-memory
+  \texttt{MemCache} backend of \texttt{pingora-cache}, on the same host under
+  the same load.
+
+  A cache that holds more than fits in memory
+  (\reqref{HLR-PERSISTENCE.CAPACITY-01}) still serves most of its hits from
+  objects the host keeps in memory, since the operating system keeps the
+  files it has recently read there. Serving such a hit costs a file-backed
+  cache little more than the in-memory backend: the bytes come from the
+  kernel's memory instead of the process's own, through a few more calls.
+  The bound leaves room for those calls, but not for work that costs as much
+  as the hit itself. \texttt{MemCache} is the reference
+  \reqref{HLR-COMPLIANCE.RFC-01} already compares against. The \emph{request
+  rate} is the number of requests completed per second; \emph{the same load}
+  means the same objects, requested over the same number of concurrent
+  client connections, from the same proxy configuration --- its worker
+  threads included --- running on the same processors.
+
+  The 60\,\% figure is proposed from measurements made on 22~October~2026
+  with the benchmark of \reqref{TC-PERFORMANCE.HITRATE-01}: with every file
+  operation on the blocking pool (\reqref{ADR-STORAGE.EXECUTOR-01}), hits ran
+  at 48--62\,\% of \texttt{MemCache}; with the reads the page cache answers
+  kept on the worker (\reqref{ADR-STORAGE.PAGECACHE-01}), at 69--113\,\%.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{ADR}
+  \reqcover{verify}{TC}
+\end{requirement}
+
+\begin{requirement}{HLR-PERFORMANCE.STORERATE-01}[draft][stakeholderRequirement]{Store rate with host-crash loss}
+
+  \localreqdiagram*{hlr10}{\reqid}{\reqdesc}
+
+  WHERE its integrator has configured the cache to forgo keeping stored
+  objects across a host crash, the cache shall store new objects of 4~KiB to
+  64~KiB at a request rate of at least 40\,\% of the rate the same proxy
+  reaches with the in-memory \texttt{MemCache} backend of
+  \texttt{pingora-cache}, on the same host under the same load.
+
+  By default the cache keeps what it has stored across a host crash or a
+  power loss, as far as \reqref{HLR-PERSISTENCE.CRASHSAFE-01} lets it, and
+  pays for that by waiting, for each store, until the storage device confirms
+  that it holds the data. On a consumer SSD that wait limits stores to about
+  a sixth of the in-memory rate. A deployment may prefer restarting empty
+  after a host crash, and refilling from the origin, to storing at the
+  device's pace; this configuration is for it.
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} and \reqref{HLR-PERSISTENCE.DURABLE-01}
+  hold in it unchanged: after a host crash the cache may come back without
+  its objects, never with wrong or purged ones, and a process exit still
+  loses nothing. A store request asks for an object not cached yet, which the
+  cache fetches from the origin and stores; the request rate and the same
+  load are as \reqref{HLR-PERFORMANCE.HITRATE-01} defines them.
+
+  The 40\,\% figure is proposed from measurements made on 22~October~2026
+  with the benchmark of \reqref{TC-PERFORMANCE.STORERATE-01}, on a consumer
+  SSD: stores ran at 15--16\,\% of \texttt{MemCache} when each waited for the
+  device, and at 46--49\,\% when none did.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{ADR}
   \reqcover{verify}{TC}
 \end{requirement}
 

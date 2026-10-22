@@ -158,7 +158,10 @@
       to the canonical name. The directory is not synced after the rename,
       so a host crash may lose a just-published object (the key then keeps
       its previous record, or misses), but the name can never refer to
-      data that is not on stable storage.
+      data that is not on stable storage. This is the \emph{strict}
+      configuration, the default: \reqref{ADR-PERSISTENCE.UNSYNCED-01}
+      adds one that skips the synchronisation and discards the cache
+      after a host restart instead.
     \item \emph{Invalidating purge:} \texttt{fsync} the shard directory
       after the \texttt{unlink}, or after finding nothing to unlink, before
       reporting the outcome. A purge made to evict is not synchronised: a
@@ -196,6 +199,8 @@
       over a zero-filled or short body whose header still passes validation,
       and an unsynced purge \texttt{unlink} can be lost, bringing a purged
       object back --- both forbidden by \reqref{HLR-PERSISTENCE.CRASHSAFE-01}.
+      \reqref{ADR-PERSISTENCE.UNSYNCED-01} offers it as an option, made safe
+      by discarding the cache after a host restart.
     \item \emph{Checksum only, without synchronisation}: detects a corrupted
       body, but only once a reader reaches its end, after the corrupted bytes
       have already gone to the client; and it does nothing for a lost purge.
@@ -227,9 +232,9 @@
       object.
     \item[+] Process crashes and orderly restarts lose nothing that had been
       published (\reqref{HLR-PERSISTENCE.DURABLE-01}).
-    \item[--] One \texttt{fdatasync} per completed store, paid when the store
-      finishes, and one directory \texttt{fsync} per invalidating purge;
-      evictions pay none.
+    \item[--] One \texttt{fdatasync} per completed store in the strict
+      configuration, paid when the store finishes, and one directory
+      \texttt{fsync} per invalidating purge; evictions pay none.
     \item[+] Serving a hit computes no checksum over the body.
     \item[--] The record header carries a body-checksum field, and every
       store computes a CRC-32C over its body, unless the build leaves it out.
@@ -261,6 +266,195 @@
   \trace{FRE-COMPLIANCE.INCOMPLETE-01}
   \trace{FRE-COMPLIANCE.PURGEDURABLE-01}
   \trace{FRE-COMPLIANCE.METAPERSIST-01}
+\end{requirement}
+
+\begin{requirement}{ADR-PERSISTENCE.UNSYNCED-01}[draft][designConstraint]{Unsynced stores, discard on crash}
+
+  \localreqdiagram*{adrunsynced01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{ADR-PERSISTENCE.DURABILITY-01} synchronises every
+  store's temporary before renaming it into place, so that a host crash can
+  never leave a published name over data that is not on stable storage.
+  Measured on 22~October~2026 with the benchmark of
+  \reqref{TC-PERFORMANCE.STORERATE-01}, on a consumer SSD under ext4, each
+  \texttt{fdatasync} took 16--25~ms with 4 to 64 stores syncing at once, and
+  stores completed only as fast as their syncs: 2{,}591 and 1{,}757 stores per
+  second for 4~KiB and 64~KiB bodies, 15--16\,\% of \texttt{MemCache}.
+  Without the sync, the same stores ran at 7{,}966 and 5{,}427 per second,
+  46--49\,\%. \reqref{HLR-PERFORMANCE.STORERATE-01} asks for 40\,\% where the
+  integrator gives up keeping stored objects across a host crash, while
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} and \reqref{HLR-PERSISTENCE.DURABLE-01}
+  still hold.
+
+  Without the sync, a host crash can leave a published name over a body that
+  never reached the device, zero-filled or short, under a header that still
+  passes validation --- the reason \reqref{ADR-PERSISTENCE.DURABILITY-01}
+  rejects process-crash safety alone --- and nothing in the record tells it
+  from a sound one. What the cache can tell is whether the host has restarted
+  since it last published a store without synchronising it: Linux gives every
+  boot a random identity, its boot
+  ID.\footnote{\href{https://man7.org/linux/man-pages/man4/random.4.html}{Linux
+  manual page: \texttt{random(4)}}, \texttt{/proc/sys/kernel/random/boot\_id}.}
+
+  \textbf{Decision:} A configuration option chooses how a store becomes
+  durable. \emph{Strict}, the default, is \reqref{ADR-PERSISTENCE.DURABILITY-01}
+  as it stands. \emph{Unsynchronised}, on Linux only, renames each store into
+  place without the \texttt{fdatasync}, and makes the cache start empty after
+  any host restart that may have lost what it published that way:
+  \begin{itemize}
+    \item Before it publishes a store unsynchronised, a backend instance that
+      has no marker writes one, durably, beside its writer lease
+      (\reqref{ADR-STORAGE.WRITERID-01}): the boot ID it runs under.
+    \item When it becomes read-only (\reqref{FDS-COMPAT.READONLY-01}), or the
+      integrator flushes it, the backend flushes the file system that holds
+      the cache and then removes, durably, its own marker and those of
+      instances no longer running: everything they published is then on
+      stable storage. A later unsynchronised store writes the marker again.
+    \item At construction, in either configuration, a marker naming a boot
+      other than the current one means the host restarted while stores
+      published unsynchronised could still be lost. The backend then discards
+      every record and temporary before it serves anything, and only then
+      removes the markers. Markers naming the current boot mean only a
+      process restarted, and the page cache kept everything: nothing is
+      discarded.
+    \item Invalidating purges synchronise their shard directory in both
+      configurations: a purge acknowledged while no marker exists must
+      survive a host crash that the next start will not detect.
+  \end{itemize}
+
+  Under \reqref{HLR-SCOPE.V1-01} this takes the exception: the mechanisms it
+  adds --- the option, the markers, the flush and the discard --- raised the
+  store rates \reqref{TC-PERFORMANCE.STORERATE-01} measures 3.1 times, from
+  15--16\,\% to 46--49\,\% of \texttt{MemCache}.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Unsynchronised stores alone}, trusting every record after a
+      host crash. Rejected: a zero-filled body can then be served, which
+      \reqref{HLR-PERSISTENCE.CRASHSAFE-01} forbids.
+    \item \emph{Check every record's body checksum after a host restart},
+      keeping the records that pass. Rejected: the cache could serve nothing
+      before reading every byte it holds, a wait that grows with the cache
+      (\reqref{HLR-PERSISTENCE.CAPACITY-01}); and a build that leaves the
+      checksum out has none to check.
+    \item \emph{Periodic sync points}: flush the file system every few
+      seconds, number each record with the last completed sync point, and
+      after a host crash discard only the records numbered after it. It loses
+      seconds of stores rather than the cache. Not adopted: it adds a field to
+      the record format, a background task, and a check of every record at
+      restart --- a candidate for a later version, once a measured figure
+      shows that the empty restart matters.
+    \item \emph{Asynchronous publication}: report a store complete at once,
+      then synchronise and rename it in the background, keeping every
+      guarantee of \reqref{ADR-PERSISTENCE.DURABILITY-01}. Rejected: a store
+      reported complete is then not yet visible by name, which changes what a
+      purge, the eviction manager's admission and the read-only drain see
+      (\reqref{FDS-STORAGE.PUBLISH-01}), each to be specified again.
+    \item \emph{Group commit}: one flush for a batch of stores. Rejected: each
+      store still waits for a flush, and ext4 already commits concurrent
+      \texttt{fdatasync} calls together, which the measurements above
+      include.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] A store no longer waits for the device: 3.1 times the store rate
+      on a consumer SSD.
+    \item[+] \reqref{HLR-PERSISTENCE.CRASHSAFE-01} holds in both
+      configurations: after a host restart that could have lost
+      unsynchronised data, the cache serves nothing it stored before.
+    \item[+] \reqref{HLR-PERSISTENCE.DURABLE-01} holds in both: a process
+      exit on the same boot discards nothing.
+    \item[--] After a host crash, or any host restart the integrator did not
+      prepare by flushing the backend, an unsynchronised cache starts empty
+      and refills from the origin.
+    \item[--] Linux only, for its boot ID and \texttt{syncfs}; elsewhere the
+      option cannot be chosen.
+    \item[--] A strict backend reads the markers too, so that a cache last
+      written unsynchronised is never trusted after a host crash.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-PERSISTENCE.CRASHDISCARD-01}{Specify the option, the
+  boot identity, when a marker is written and removed, the check at
+  construction, and how the discard keeps every record from being served.}
+
+  \refine{ADR-PERSISTENCE.DURABILITY-01}
+  \satisfy{HLR-PERFORMANCE.STORERATE-01}
+  \satisfy{HLR-PERSISTENCE.CRASHSAFE-01}
+  \trace{HLR-PERSISTENCE.DURABLE-01}
+  \trace{HLR-SCOPE.V1-01}
+\end{requirement}
+
+\begin{requirement}{FDS-PERSISTENCE.CRASHDISCARD-01}[draft][functionalRequirement]{Discard after a host restart}
+
+  \localreqdiagram*{fdscrashdiscard01}{\reqid}{\reqdesc}
+
+  IF the backend, at construction, finds an unsynchronised-store marker naming
+  a boot other than the host's current one, THEN the backend shall make every
+  record and temporary in the cache unreachable, by lookups and by the restart
+  scan, before it answers its first lookup
+  (\reqref{ADR-PERSISTENCE.UNSYNCED-01}).
+
+  \textbf{The option.} \texttt{FsCacheConfig} carries the durability of
+  stores: \texttt{Strict}, the default, or \texttt{NoStoreSync}. With
+  \texttt{NoStoreSync}, \texttt{finish} renames a store into place without
+  synchronising its temporary first (\reqref{FDS-STORAGE.PUBLISH-01});
+  everything else is as with \texttt{Strict}, the invalidating purge's
+  directory sync included (\reqref{FDS-STORAGE.PURGE-01}).
+  \texttt{NoStoreSync} is available on Linux only: elsewhere, constructing a
+  backend with it fails with an error that says so.
+
+  \textbf{The boot identity.} The current boot's identity is the content of
+  \texttt{/proc/sys/kernel/random/boot\_id}. IF the backend cannot read it,
+  THEN constructing a backend with \texttt{NoStoreSync} fails with an error
+  naming the file, and a strict backend that finds markers discards the cache,
+  since it cannot tell their boot from the current one.
+
+  \textbf{The marker.} Each backend instance has its own marker beside its
+  writer lease (\reqref{FDS-STORAGE.PUBLISH-01}),
+  \texttt{writers/<pid>-<nonce>.unsynced}, holding the boot identity. Before
+  a \texttt{NoStoreSync} store's rename, if the instance's marker does not
+  exist, the backend writes it --- a temporary, synchronised, renamed into
+  place, and the \texttt{writers} directory synchronised --- once, however
+  many stores reach that point together; the rename waits for it.
+
+  \textbf{Flushing.} The backend shall expose a \texttt{flush} operation,
+  which \texttt{set\_read\_only} (\reqref{FDS-COMPAT.READONLY-01}) also
+  performs. It flushes the file system that holds the cache with
+  \texttt{syncfs}, then removes the instance's own marker and the markers of
+  instances whose lease is no longer held --- the same flush made their data
+  durable --- and synchronises the \texttt{writers} directory. A
+  \texttt{NoStoreSync} store published afterwards writes the marker again
+  first. An integrator that shuts its server down in order calls
+  \texttt{flush} once the server has stopped; one that does not loses the
+  cache at the next host restart.
+
+  \textbf{At construction.} Before the shard-directory cache is built
+  (\reqref{FDS-LAYOUT.STARTUP-01}), the backend reads every marker. If any
+  names a boot other than the current one, it moves every first-level shard
+  directory into a new directory, \texttt{discarded-<nonce>}, under the cache
+  root, synchronises the root, and only then removes every marker and
+  synchronises the \texttt{writers} directory: a crash during the discard
+  leaves the markers, and with them the discard to be done again. The
+  shard-directory cache then starts from new, empty first-level directories,
+  and every \texttt{discarded-<nonce>} directory --- this start's, or one a
+  crash left behind --- is removed on the blocking pool in the background,
+  outside the tree the restart scan (\reqref{FDS-EVICTION.STARTUP-01}) walks.
+  Markers that all name the current boot are left in place: only a process
+  restarted, and the page cache kept everything.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+
+  \refine{ADR-PERSISTENCE.UNSYNCED-01}
+  \satisfy{HLR-PERSISTENCE.CRASHSAFE-01}
+  \trace{FDS-STORAGE.PUBLISH-01}
+  \trace{FDS-COMPAT.READONLY-01}
+  \trace{FDS-LAYOUT.STARTUP-01}
+  \trace{FDS-EVICTION.STARTUP-01}
 \end{requirement}
 
 \begin{requirement}{ADR-STORAGE.ATOMICPUBLISH-01}[draft][designConstraint]{Publish by same-directory rename}
@@ -512,7 +706,8 @@
   \textbf{Publishing.} WHEN a store completes, \texttt{finish} shall, in
   order: patch \texttt{body\_len} and \texttt{body\_crc}, recompute
   \texttt{header\_crc}, synchronise the temporary's data to stable storage
-  (\reqref{ADR-PERSISTENCE.DURABILITY-01}), and rename the temporary over the
+  (\reqref{ADR-PERSISTENCE.DURABILITY-01}) unless stores are unsynchronised
+  (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and rename the temporary over the
   canonical name, dropping the suffix, while holding the key's publication
   lock (\reqref{FDS-STORAGE.METAUPDATE-01}). The shard directory is not
   synchronised afterwards. The record the rename replaces is held open
@@ -616,7 +811,8 @@
     (\reqref{FDS-STORAGE.PARTIAL-01}); each \texttt{write\_body} call appends
     a chunk and advances the valid length a concurrent \texttt{Follower}
     streams from; and \texttt{finish} patches the header, synchronises the
-    temporary, and renames it over the canonical name --- the object's
+    temporary unless stores are unsynchronised, and renames it over the
+    canonical name --- the object's
     durable publication --- returning the record size.}\label{fig:fds-publish-seq}
   \end{figure}
 
@@ -1737,7 +1933,8 @@
       on the integrator.
     \item[--] One thread handoff per storage operation, which is charged
       against every lookup and every body chunk whether or not the data was
-      in the page cache.
+      in the page cache; on Linux, \reqref{ADR-STORAGE.PAGECACHE-01} keeps
+      the reads the page cache answers on the worker.
     \item[--] The blocking pool is shared with everything else in the process
       that uses it, and its size is the runtime's to decide, not this
       backend's.
@@ -1778,8 +1975,10 @@
     \item \texttt{get\_miss\_handler} --- creating the per-writer temporary
       and writing the record's fixed part (\reqref{FDS-STORAGE.PUBLISH-01});
     \item \texttt{write\_body} --- writing a chunk to the temporary;
-    \item \texttt{finish} --- patching the header, the \texttt{fdatasync},
-      and the rename (\reqref{ADR-PERSISTENCE.DURABILITY-01}), then
+    \item \texttt{finish} --- patching the header, the \texttt{fdatasync}
+      unless stores are unsynchronised
+      (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and the rename
+      (\reqref{ADR-PERSISTENCE.DURABILITY-01}), then
       dropping the miss handler, whose close frees the store's file if the
       file has lost its name meanwhile;
     \item \texttt{read\_body} --- each positional read, on both the published
@@ -1790,6 +1989,9 @@
       writing it back in place, or withdrawing or removing it
       (\reqref{FDS-STORAGE.METAUPDATE-01}, \reqref{FDS-STORAGE.EXPIRE-01}).
   \end{itemize}
+  On Linux, \reqref{FDS-STORAGE.PAGECACHE-01} keeps on the worker the lookup
+  of a published record, and the reads of its body, when no call has to
+  wait for the device.
 
   \textbf{What stays.} Work that touches no file stays on the worker, because
   a handoff would cost more than it saves: hashing the cache key, serialising
@@ -1855,6 +2057,161 @@
   \trace{FDS-STORAGE.PURGE-01}
   \trace{FDS-STORAGE.METAUPDATE-01}
   \trace{FDS-EVICTION.STARTUP-01}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.PAGECACHE-01}[draft][designConstraint]{Page-cache reads on the worker}
+
+  \localreqdiagram*{adrpagecache01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-01} runs every storage
+  operation on Tokio's blocking pool, and counts the cost among its
+  consequences: one thread handoff per operation, whether or not the data
+  was in the page cache. Measured on 22~October~2026 with the benchmark of
+  \reqref{TC-PERFORMANCE.HITRATE-01} (four workers, 64 connections), that cost
+  dominates a hit on an object the page cache holds. A 1~KiB hit took
+  116~microseconds of processor time against 59 with \texttt{MemCache}, 42 of
+  the difference on pool threads, for an \texttt{open} and a read the page
+  cache answered; the pool grew to about 100 threads; and hits ran at 48, 53
+  and 62\,\% of \texttt{MemCache} for 1~KiB, 64~KiB and 1~MiB bodies, short
+  of \reqref{HLR-PERFORMANCE.HITRATE-01} for the first two.
+
+  What \reqref{ADR-STORAGE.EXECUTOR-01} rules out is a worker waiting for the
+  device. A call the page cache answers does not wait, and Linux can report
+  in advance that a call would: \texttt{openat2} with
+  \texttt{RESOLVE\_CACHED} fails with \texttt{EAGAIN} unless every component
+  of the path is in the kernel's lookup
+  cache,\footnote{\href{https://man7.org/linux/man-pages/man2/openat2.2.html}{Linux
+  manual page: \texttt{openat2(2)}}, \texttt{RESOLVE\_CACHED} (since Linux
+  5.12).} and \texttt{preadv2} with \texttt{RWF\_NOWAIT} fails with
+  \texttt{EAGAIN} rather than wait for data the page cache does not
+  hold.\footnote{\href{https://man7.org/linux/man-pages/man2/preadv2.2.html}{Linux
+  manual page: \texttt{preadv2(2)}}, \texttt{RWF\_NOWAIT} (since Linux 4.14).}
+
+  \textbf{Decision:} On Linux, perform the lookup of a published record, and
+  each read of a published record's body, on the worker that polls it,
+  through calls that fail rather than wait: open the record with
+  \texttt{openat2} and \texttt{RESOLVE\_CACHED}, and read it with
+  \texttt{preadv2} and \texttt{RWF\_NOWAIT}. When one of these calls reports
+  that it would wait, or that the kernel lacks the call or the flag, run the
+  whole operation on the blocking pool, as \reqref{ADR-STORAGE.EXECUTOR-01}
+  decides; so too when a lookup meets a checksum mismatch, whose re-read takes
+  the key's publication lock (\reqref{SDS-LAYOUT.OBJECTFILE-01}). Every other
+  operation stays on the pool: partial hits, stores, purges, metadata
+  updates, expiries and the restart scan. On other systems every operation
+  stays on the pool. A configuration option sends every operation to the
+  pool on Linux as well; by default it does not.
+
+  Under \reqref{HLR-SCOPE.V1-01} this takes the exception: the mechanism it
+  adds --- a second path for reads, on the worker --- raised the hit rates
+  \reqref{TC-PERFORMANCE.HITRATE-01} measures by 43, 40 and 83\,\% for 1~KiB,
+  64~KiB and 1~MiB bodies, to 69, 75 and 113\,\% of \texttt{MemCache}.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Cap the blocking pool}
+      (\texttt{ServerConf::max\_blocking\_threads}): no code at all.
+      Rejected: four to eight threads raised hits by 14--34\,\% but cut
+      stores by 82--90\,\%, since each store's \texttt{fdatasync} holds a
+      pool thread for 16--25~ms on a consumer SSD and stores complete only as
+      fast as the pool lets their syncs run together; and the pool's size is
+      the integrator's setting, shared with the rest of the process.
+    \item \emph{A small pool of the backend's own for reads}, away from the
+      pool stores fill. Rejected: every read still costs a handoff, and four
+      threads --- the best cap measured --- left 1~KiB hits at 55\,\% of
+      \texttt{MemCache}, short of \reqref{HLR-PERFORMANCE.HITRATE-01}, for
+      one more component to build.
+    \item \emph{\texttt{io\_uring}}: no pool and no handoff for any
+      operation. Rejected for the reasons \reqref{ADR-STORAGE.EXECUTOR-01}
+      gives; it would also replace the pool for every operation, where this
+      decision moves only the reads that need not wait.
+    \item \emph{Map records into memory}, and check with \texttt{mincore}
+      that their pages are resident before copying them. Rejected: the kernel
+      can evict a page between the check and the copy, and the copy then
+      waits for the device on the worker.
+    \item \emph{Read the body's first chunk in the lookup's handoff}: halves
+      the handoffs of a hit on a body of up to 64~KiB. Not adopted: such a hit
+      still costs one handoff, and this decision removes both.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] A hit on a record the page cache holds makes no handoff, and the
+      pool stays at a few threads beside the workers.
+    \item[+] The worker still never waits for the device, so
+      \reqref{FDS-STORAGE.EXECUTOR-01} holds: a call that would wait says so
+      instead. The RFC 9111 differential on a single worker
+      (\reqref{TC-COMPLIANCE.RFC-01}) found no new deviation.
+    \item[--] Two read paths to keep equivalent, the worker's and the pool's.
+    \item[--] Linux only: other systems keep every read on the pool, and a
+      Linux kernel older than 5.12 keeps lookups there.
+    \item[--] A read the page cache cannot answer pays one failed call before
+      it reaches the pool.
+    \item[--] A direct dependency on \texttt{rustix}, which makes the two
+      calls without \texttt{unsafe} code.
+  \end{itemize}
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqexpect{refine}{FDS-STORAGE.PAGECACHE-01}{Specify which reads run on the
+  worker, through which calls, when the operation falls back to the blocking
+  pool, and the option that sends every read to the pool.}
+
+  \refine{ADR-STORAGE.EXECUTOR-01}
+  \satisfy{HLR-PERFORMANCE.HITRATE-01}
+  \trace{HLR-SCOPE.V1-01}
+  \trace{HLR-COMPLIANCE.RFC-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.PAGECACHE-01}[draft][functionalRequirement]{Reads from the page cache}
+
+  \localreqdiagram*{fdspagecache01}{\reqid}{\reqdesc}
+
+  WHERE page-cache reads are enabled on Linux, WHEN a lookup reaches a
+  published record or a hit reads a published record's body, the backend
+  shall perform that operation on the worker that polls it through file calls
+  that fail rather than wait for the storage device; an operation one of whose
+  calls fails so runs on the blocking pool from its start, as
+  \reqref{FDS-STORAGE.EXECUTOR-01} specifies
+  (\reqref{ADR-STORAGE.PAGECACHE-01}).
+
+  \textbf{The calls.} The lookup opens the canonical path
+  (\reqref{SDS-LAYOUT.SHARDING-01}) read-only with \texttt{openat2} and
+  \texttt{RESOLVE\_CACHED}, and reads the record's header, key and metadata
+  region (\reqref{SDS-LAYOUT.OBJECTFILE-01}) with \texttt{preadv2} and
+  \texttt{RWF\_NOWAIT}; a body read reads its chunk the same way. A read that
+  returns less than it asked for is continued from where it stopped. A call
+  \emph{fails rather than waits} when it returns \texttt{EAGAIN}; a kernel
+  that lacks \texttt{openat2}, \texttt{RESOLVE\_CACHED} or
+  \texttt{RWF\_NOWAIT} returns \texttt{ENOSYS}, \texttt{EINVAL} or
+  \texttt{EOPNOTSUPP}, which count the same. \texttt{fstat}, which reads the
+  open file's inode, and \texttt{close} are unchanged.
+
+  \textbf{What runs on the pool instead.} The lookup goes to the pool, and
+  starts there again from the open, when the open or a read of the record's
+  fixed part fails rather than waits; when the record's checksums do not
+  match, since the re-read under the key's publication lock
+  (\reqref{SDS-LAYOUT.OBJECTFILE-01}) waits for an in-place update to end; and
+  when a call fails with any other error, which the pool's attempt then
+  reports with its context. A path that the kernel's lookup cache knows not to
+  exist is a miss, answered on the worker, and so is a record that fails
+  validation for any reason other than a checksum mismatch. A body read goes
+  to the pool, and reads its whole chunk again, when its read fails for any
+  reason. Partial hits (\reqref{FDS-STORAGE.PARTIAL-01}), stores, purges,
+  metadata updates, expiries and the restart scan always run on the pool.
+
+  \textbf{The option.} \texttt{FsCacheConfig} carries a switch for page-cache
+  reads, on by default. Off, every lookup and body read runs on the pool as
+  \reqref{FDS-STORAGE.EXECUTOR-01} specifies. On systems other than Linux the
+  switch has no effect: every operation runs on the pool.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{verify}{TC}
+
+  \refine{ADR-STORAGE.PAGECACHE-01}
+  \satisfy{HLR-PERFORMANCE.HITRATE-01}
+  \trace{FDS-STORAGE.EXECUTOR-01}
+  \trace{SDS-LAYOUT.OBJECTFILE-01}
 \end{requirement}
 
 \begin{requirement}{ADR-STORAGE.RECLAIM-01}[draft][designConstraint]{Reclaim via the restart-time scan}

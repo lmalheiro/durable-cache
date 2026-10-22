@@ -557,6 +557,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
       state: mount the file system (replaying its journal), construct the
       backend and let its restart procedure complete, look up every key, and
       read every hit's body in full.
+    \item Repeat steps 1 to 3 with stores unsynchronised
+      (\reqref{ADR-PERSISTENCE.UNSYNCED-01}), constructing the backend in
+      each replayed state as after a host restart: under a boot identity
+      other than the one the stores ran under.
   \end{enumerate}
 
   \textbf{Expected result:} In every replayed state: every hit's metadata and
@@ -574,6 +578,51 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \verify{FRE-COMPLIANCE.INCOMPLETE-01}
   \verify{FRE-COMPLIANCE.PURGEDURABLE-01}
   \verify{FRE-COMPLIANCE.METAPERSIST-01}
+\end{requirement}
+
+\begin{requirement}{TC-PERSISTENCE.CRASHDISCARD-01}[draft][verify]{Discard after a host restart}
+
+  \localreqdiagram*{tccrashdiscard01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} A cache that published stores without synchronising
+  them serves none of its records after a host restart it was not flushed
+  for, and all of them after a process restart or a host restart it was
+  flushed for.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface on Linux, with a test hook that sets the boot identity the
+  backend reads, and another that makes synchronising a store's temporary
+  fail.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item With stores unsynchronised and the synchronisation of a temporary
+      made to fail, store objects, and leave one further store unfinished.
+    \item Construct a second backend on the same cache root, with the same
+      boot identity, and look up every key.
+    \item Construct a third with a different boot identity, look up every key,
+      and inspect the cache root.
+    \item Store objects again, flush the backend, construct another with yet
+      another boot identity, and look up every key.
+    \item With stores strict, store objects, construct another backend with a
+      different boot identity, and look up every key.
+    \item Construct a backend with stores unsynchronised and the boot identity
+      made unreadable.
+  \end{enumerate}
+
+  \textbf{Expected result:} In step 1 every finished store is published
+  without reaching the failing synchronisation, and the instance's marker
+  holds the boot identity. In step 2 every finished store is a hit. In step 3
+  every key is a miss, no marker remains, and the discarded tree is gone once
+  its background removal ends. In step 4 every object stored before the flush
+  is a hit. In step 5 no marker is written and every object is a hit. In
+  step 6 construction fails with an error naming the boot identity's source.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-PERSISTENCE.CRASHDISCARD-01}
 \end{requirement}
 
 \begin{requirement}{TC-PERSISTENCE.RESTART-01}[draft][verify]{Objects survive a process exit}
@@ -721,6 +770,76 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \reqcover{satisfy}{IMP}
 
   \verify{HLR-PERFORMANCE.LOOKUP-01}
+\end{requirement}
+
+\begin{requirement}{TC-PERFORMANCE.HITRATE-01}[draft][verify]{Hit throughput near in-memory}
+
+  \localreqdiagram*{tcperfhitrate01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Cache hits on objects the host keeps in memory run at
+  no less than 60\,\% of the request rate of the in-memory backend, for 1~KiB,
+  64~KiB and 1~MiB bodies, as \reqref{HLR-PERFORMANCE.HITRATE-01} requires.
+
+  \textbf{Setup:} A dedicated test host, idle apart from the test, with the
+  cache directory on an SSD and the file system a deployment would use. One
+  origin serves fixed bodies, marked cacheable. The fixture proxy runs once on
+  this backend, in its default configuration, and once on \texttt{MemCache},
+  each with one worker thread per processor it is given; both get the same
+  processors, and the load generator gets other physical cores.
+  \texttt{cargo xtask bench} is this harness.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item For each body size --- 1~KiB, 64~KiB and 1~MiB --- and each
+      backend, start the proxy with an empty cache, request each of 100
+      objects of that size until every one is stored, then request them in
+      random order over 64 concurrent connections for 10~s, recording the
+      number of requests completed per second.
+    \item Repeat for three rounds, changing the order of the backends each
+      round, and take the median rate of each backend for each size.
+  \end{enumerate}
+
+  \textbf{Expected result:} For each body size, this backend's median rate is
+  at least 0.60 times that of \texttt{MemCache}; no request fails, and the
+  origin receives no request during the measured runs.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-PERFORMANCE.HITRATE-01}
+\end{requirement}
+
+\begin{requirement}{TC-PERFORMANCE.STORERATE-01}[draft][verify]{Store rate with host-crash loss}
+
+  \localreqdiagram*{tcperfstorerate01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} With stores unsynchronised, storing new objects runs at
+  no less than 40\,\% of the request rate of the in-memory backend, for 4~KiB
+  and 64~KiB bodies, as \reqref{HLR-PERFORMANCE.STORERATE-01} requires.
+
+  \textbf{Setup:} As for \reqref{TC-PERFORMANCE.HITRATE-01}, with this backend
+  configured for unsynchronised stores (\reqref{ADR-PERSISTENCE.UNSYNCED-01}).
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item For each body size --- 4~KiB and 64~KiB --- and each backend, start
+      the proxy with an empty cache and request objects never requested
+      before over 64 concurrent connections, 20{,}000 of 4~KiB or 10{,}000 of
+      64~KiB, recording the number of requests completed per second.
+    \item Repeat for three rounds, changing the order of the backends each
+      round, and take the median rate of each backend for each size.
+  \end{enumerate}
+
+  \textbf{Expected result:} For each body size, this backend's median rate is
+  at least 0.40 times that of \texttt{MemCache}; no request fails, and the
+  origin receives every request once.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-PERFORMANCE.STORERATE-01}
 \end{requirement}
 
 % ---------------------------------------------------------------------
@@ -1446,6 +1565,48 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \reqcover{satisfy}{IMP}
 
   \verify{FDS-STORAGE.EXECUTOR-01}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.PAGECACHE-01}[draft][verify]{Page-cache reads on the worker}
+
+  \localreqdiagram*{tcpagecache01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} On Linux, the lookup and the body reads of a published
+  record the page cache holds complete on the worker, without a handoff to
+  the blocking pool; each falls back to the pool when a call would wait, and
+  the answer is the same either way.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface on Linux, with test hooks that count the operations handed to the
+  blocking pool, and that make the worker's open, or a given read, report
+  that it would wait.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store records with bodies of 1~KiB and of 200~KiB, the second
+      spanning several chunks; look each up and read its body to the end,
+      counting handoffs.
+    \item Make the worker's open report a wait, and repeat step 1.
+    \item Make the second body read of the larger record report a wait, and
+      repeat step 1.
+    \item Look up a key never stored, and a record whose metadata checksum
+      does not match.
+    \item Switch page-cache reads off in the configuration, and repeat
+      step 1.
+  \end{enumerate}
+
+  \textbf{Expected result:} In step 1 no operation is handed to the pool. In
+  step 2 each lookup is handed over once, and in step 3 the larger record's
+  second chunk once. In step 4 both lookups are misses, the damaged record's
+  reached through the pool's locked re-read. In step 5 every lookup and every
+  chunk is handed over once, as \reqref{FDS-STORAGE.EXECUTOR-01} specifies.
+  In every step, each hit's metadata and body are exactly those stored.
+
+  \reqdiaglink{global}{\textit{View complete diagram.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-STORAGE.PAGECACHE-01}
 \end{requirement}
 
 \begin{requirement}{TC-STORAGE.RECLAIM-01}[draft][verify]{Orphan reclaim at restart}
