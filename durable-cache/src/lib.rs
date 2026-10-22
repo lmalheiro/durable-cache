@@ -71,6 +71,8 @@ pub(crate) mod lookup;
 pub(crate) mod metaupdate;
 pub(crate) mod metrics;
 pub(crate) mod miss;
+#[cfg(target_os = "linux")]
+pub(crate) mod nowait;
 pub(crate) mod publish;
 pub(crate) mod purge;
 pub(crate) mod reclaim;
