@@ -132,6 +132,21 @@ fn workspace_root() -> Result<PathBuf> {
         .to_path_buf())
 }
 
+/// The target directory cargo builds the workspace into: `target/` under
+/// `root`, unless `CARGO_TARGET_DIR` or a cargo config names another.
+fn target_dir(root: &Path) -> Result<PathBuf> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(root)
+        .output()
+        .context("failed to run cargo metadata")?;
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    metadata["target_directory"]
+        .as_str()
+        .map(PathBuf::from)
+        .context("cargo metadata names no target directory")
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
@@ -368,7 +383,7 @@ fn run_suite(
     let cache_dir = tempfile::tempdir().context("failed to create a temp cache directory")?;
     let proxy = ChildGuard::spawn(
         "fixture-proxy",
-        Command::new(root.join("target/release/fixture-proxy"))
+        Command::new(target_dir(root)?.join("release/fixture-proxy"))
             .arg("--listen-addr")
             .arg(proxy_addr.to_string())
             .arg("--upstream-addr")

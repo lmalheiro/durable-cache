@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::{free_port, wait_until_listening, workspace_root, ChildGuard};
+use crate::{free_port, target_dir, wait_until_listening, workspace_root, ChildGuard};
 
 /// The cache-hit scenarios: body sizes, each over `HIT_OBJECTS` objects.
 const HIT_SIZES: [&str; 3] = ["1k", "64k", "1m"];
@@ -313,19 +313,6 @@ fn tool_version(program: &Path, flag: &str, name: &str) -> Result<String> {
     .trim()
     .to_owned();
     Ok(text)
-}
-
-fn target_dir(root: &Path) -> Result<PathBuf> {
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--no-deps"])
-        .current_dir(root)
-        .output()
-        .context("failed to run cargo metadata")?;
-    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    metadata["target_directory"]
-        .as_str()
-        .map(PathBuf::from)
-        .context("cargo metadata names no target directory")
 }
 
 /// Splits the machine's physical cores in two, with all the hardware threads
