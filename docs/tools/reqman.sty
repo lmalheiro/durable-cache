@@ -272,8 +272,10 @@
 
 % \reqdiaglink{diagram-label}{link-text}
 %   Hyperlink to this requirement's node in any named diagram.
-%   The global diagram uses the label "global".
-%   Example: \reqdiaglink{global}{\textit{See global context.}}
+%   The global diagram uses the label "global"; the domain overview
+%   (\reqoverviewdiagram), the label "overview", which lands on the
+%   requirement's domain.
+%   Example: \reqdiaglink{overview}{\textit{View the domain overview.}}
 %            \reqdiaglink{func-req}{\textit{Chapter diagram.}}
 \NewDocumentCommand{\reqdiaglink}{m m}{%
   \ifreqman@diagfirst\global\reqman@diagfirstfalse\vspace{1em}\fi
@@ -408,6 +410,22 @@
     \input{\reqman@path{partial-#2-tikz.tikz}}%
   }{%
     \textbf{[Partial diagram ``#2'' not yet generated -- recompile]}%
+  }%
+}
+
+% \reqoverviewdiagram
+%   The domain overview reqman-report.py writes at every run: one box per
+%   domain -- the part of an ID's sub-ID before the first dot, so
+%   HLR-PERSISTENCE.DURABLE-01 belongs to PERSISTENCE -- with how many
+%   artifacts of each type it holds, and one arrow per pair of domains that
+%   relationships other than trace link, labelled with how many there are of
+%   each kind. Each artifact's \reqdiaglink{overview}{...} lands on its
+%   domain's box.
+\newcommand{\reqoverviewdiagram}{%
+  \IfFileExists{\reqman@path{overview-tikz.tikz}}{%
+    \input{\reqman@path{overview-tikz.tikz}}%
+  }{%
+    \textbf{[Domain overview not yet generated -- recompile]}%
   }%
 }
 

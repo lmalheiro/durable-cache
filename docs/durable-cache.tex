@@ -39,9 +39,6 @@
   \stepcounter{seqlevel}%
 }
 \usepackage{float}
-% pass = keep the class's A4 layout untouched; loaded only so \newgeometry/
-% \restoregeometry can build the single oversized (A1) page at the end.
-\usepackage[pass]{geometry}
  % Necessary for subfigures; supports \ContinuedFloat
 \usepackage{subcaption}
 
@@ -179,43 +176,6 @@ gap it reports is \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s, deliberately
 left open by \reqref{ADR-EFFICIENCY.COMPACTION-01}'s declared conflict.
 
 \includetracingreport
-
-% \chapter{Requirements Diagram}
-
-% Figure~\ref{fig:reqdiagram-full} shows the complete requirements graph. 
-
-% % --- Full requirements graph on one oversized A1-landscape page (its
-% % natural size is ~61in x 17in; here it renders at ~52% scale). ---
-% % \newgeometry cannot change the paper size on its own: it begins by
-% % restoring the load-time (A4) paper dimensions and rejects papersize
-% % options. So the A1 dimensions are set directly and that restore
-% % (\Gm@restore@org) is neutralised for this one call. The physical PDF page
-% % (\pdfpagewidth/\pdfpageheight) must be set separately: geometry only
-% % touches it at \begin{document}, never from \newgeometry. The [p] float
-% % lands alone on the A1 page, vertically centred by the float-page glue.
-% \clearpage
-% \makeatletter
-% \paperwidth=841mm
-% \paperheight=594mm
-% \let\reqman@saved@Gm@restore@org\Gm@restore@org
-% \let\Gm@restore@org\relax
-% \newgeometry{margin=15mm}
-% \let\Gm@restore@org\reqman@saved@Gm@restore@org
-% \makeatother
-% \pdfpagewidth=\paperwidth
-% \pdfpageheight=\paperheight
-% \begin{figure}[p]%
-%     \centering%
-%     \resizebox{\textwidth}{!}{\reqdiagram{global}{}}%
-%     \caption{Requirements Diagram --- Full Graph}%
-%     \label{fig:reqdiagram-full}%
-% \end{figure}
-% \clearpage
-% % \restoregeometry brings back the A4 layout and paper dimensions but does
-% % not touch the physical PDF page size, so reset that from them.
-% \restoregeometry
-% \pdfpagewidth=\paperwidth
-% \pdfpageheight=\paperheight
 
 \appendix
 

@@ -83,6 +83,10 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> <ID>
 
 # Don't know the ID? Search titles/bodies by keyword first
 python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> --search "eviction"
+
+# The map: every domain, how many artifacts of each type it holds, and the
+# relationships between domains (trace left out)
+python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> --overview
 ```
 
 Example, from the repository root:
@@ -90,6 +94,18 @@ Example, from the repository root:
 ```bash
 python3 ./.claude/skills/reqman-context/scripts/reqman-context.py durable-cache HLR-SCOPE.V1-01
 ```
+
+## Getting oriented
+
+An ID names its *domain* between the type prefix and the first dot:
+`HLR-PERSISTENCE.DURABLE-01` belongs to PERSISTENCE. `--overview` prints the
+domain overview the PDF shows in its Introduction ("Domains") as two short
+Markdown tables: each domain with its artifact counts by type, and the
+relationships from one domain's artifacts to another's, counted by kind.
+Run it first when a task spans several requirements or you don't yet know
+where a concern lives; then fetch the IDs you need. For the impact of a
+change, follow the relationships instead: `--direction down --depth N` lists
+everything that refines, satisfies or verifies an artifact, N hops deep.
 
 ## Choosing depth
 

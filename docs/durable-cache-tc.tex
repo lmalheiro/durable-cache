@@ -77,7 +77,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   restart the process under test --- and are covered by the per-requirement
   test cases.)
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -115,7 +115,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   reordered, or normalised, regardless of the size of the header set. Where
   the metadata region is exactly full, the body that follows it is intact.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -149,7 +149,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   enter the stored header segment. Repeat the inspection whenever the
   targeted \texttt{pingora-cache} version changes.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -185,7 +185,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   exactly the requested slice, so range responses built from the reader carry
   precisely the stored bytes.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -223,7 +223,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   values round-trip as opaque bytes, un-normalised; after the update, evaluation
   reflects the updated field set and the new updated-at instant.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -257,7 +257,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   revalidation can be issued and matched; after the update, every lookup
   returns the updated validators.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -340,7 +340,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   is not registered; and the update for the replaced object is reported not
   applied, and the newer object stands whole.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -383,7 +383,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   survives the restart, each variant still retrievable under its
   variance-augmented key.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -432,7 +432,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   to the eviction manager with its record size, so that eviction removes them
   like any other object.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -477,7 +477,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   the restarted process's restart-time scan has run. States a real host crash
   can leave behind are exercised by \reqref{TC-PERSISTENCE.CRASHSAFE-01}.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -517,7 +517,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   it; after the race, lookups return exactly one winner (the last published),
   intact.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -566,7 +566,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   unfinished store and every temporary are never served; every other object is
   either served as stored or a miss.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -602,7 +602,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   cache, byte for byte and with its latest metadata, and the origin receives
   no request for any of them.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -633,7 +633,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   never killed for lack of memory, and its resident memory stays well below
   the machine's RAM.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -673,7 +673,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   target for loads dominated by small objects is known non-conformance, to be
   reported with its measured value rather than treated as a regression.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -716,7 +716,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   warm condition, the 99th-percentile lookup latency at $10^7$ objects is no
   more than 1.25 times the corresponding value at $10^4$ objects.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -762,7 +762,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   published set; a store completed after the restart is admitted with the same
   size definition.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -828,7 +828,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   checks, keeping the removed record's entry, both summary lines saying the
   server was shutting down.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -898,7 +898,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   its canonical name; each writer's upstream is fetched exactly
   once.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -944,7 +944,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   object's length and bytes equal exactly what was streamed in every case,
   including the empty-body and multi-chunk boundary cases.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -986,7 +986,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   or interleaved result. Once both stores complete, the backend has converged
   on exactly one whole, uncorrupted object.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1028,7 +1028,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   changed the encoding the current format relies on, and the format version
   must be reconsidered before that release is adopted.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1066,7 +1066,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   backend recreates the directory once; step 4's store returns an error; no
   failed store is ever published, so each such lookup reports a miss.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1102,7 +1102,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   stream ends with an error; after the thousand aborts the cache directory's
   disk usage is back to what it was before them.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1152,7 +1152,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   a read-only backend returns without reading any record or admitting
   anything.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1208,7 +1208,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   reports success, publishes nothing, and leaves no temporary; the inspection
   finds no cross-directory staging and no copy-based publication.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1308,7 +1308,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   the file in place; and the purge whose \texttt{unlink} fails reports an
   error and leaves the path as it was.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1385,7 +1385,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \texttt{NotFound} and left byte for byte as it was, and a lookup of it
   misses.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1441,7 +1441,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \emph{stall} bound, not a latency figure for the operations themselves,
   which \reqref{TC-PERFORMANCE.LOOKUP-01} measures.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1523,7 +1523,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   the scan requires no second pass over the tree beyond
   \reqref{TC-EVICTION.RECONSTRUCT-01}'s own.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1585,7 +1585,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   own, each lookup returns its own body, the scan admits one eviction entry
   for each key, and after the purge only the purged key is a miss.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1631,7 +1631,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   never fail or double-create; a restart always rebuilds an accurate cache
   from scratch.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1699,7 +1699,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   canonical name at all, so this test case's scope is damage to an
   already-published record, not incompleteness.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -1738,7 +1738,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   decodes to itself; every decode in step 2 fails; in step 3 the scan
   reclaims the record as damaged and does not admit it.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 

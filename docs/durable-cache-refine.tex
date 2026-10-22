@@ -103,7 +103,7 @@
       (\reqref{ADR-STORAGE.METAMOVE-01}).
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-STORAGE.PUBLISH-01}{Specify how object publication is
   made atomic under concurrent same-key writes and process crashes.}
@@ -243,7 +243,7 @@
       undetected.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-STORAGE.PUBLISH-01}{Specify the fdatasync of the
   temporary before its rename, and how a failed sync is surfaced.}
@@ -344,7 +344,7 @@
     \item[--] POSIX-only.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-STORAGE.PUBLISH-01}{Specify the temporary's naming
   and placement, and the completion sequence that ends in the rename.}
@@ -440,7 +440,7 @@
     \item[--] Temporary names grow longer.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-STORAGE.PUBLISH-01}{Specify the temporary name
   format and exclusive creation, including what happens on a collision.}
@@ -620,7 +620,7 @@
     durable publication --- returning the record size.}\label{fig:fds-publish-seq}
   \end{figure}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{IMP}
@@ -696,7 +696,7 @@
   such as the other side of a hot upgrade --- observes an object only at its
   durable publication (\reqref{ADR-STORAGE.ATOMICPUBLISH-01}).
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{IMP}
@@ -926,7 +926,7 @@
     the body stays where it is.}\label{fig:fds-metaupdate-seq}
   \end{figure}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Extend this TC to also
   verify FDS-STORAGE.METAUPDATE-01: that an update written in place is
@@ -987,7 +987,7 @@
   registered and the warning is the only record of each case. A count that
   keeps rising tells an operator to raise the configured headroom.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{IMP}
@@ -1054,7 +1054,7 @@
       serve should the origin fail.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqterminal[Deferred: metadata moves are not implemented for this version,
   so nothing further refines, satisfies, or verifies this decision; revisit
@@ -1163,7 +1163,7 @@
     \item[--] Two build configurations to keep compiling and tested.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-OBSERVABILITY.HEADROOM-01}{Specify each metric
   emitted when new metadata outgrows its record's headroom --- name, type,
@@ -1277,7 +1277,7 @@
       second.\footnote{\pgsrc{pingora-cache/src/filters.rs}{79}{\texttt{freshness\_ttl\_to\_time}}.}
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-STORAGE.EXPIRE-01}{Specify how a target is resolved,
   how the expired metadata is derived and written in place, why it always
@@ -1503,7 +1503,7 @@
     this call.}\label{fig:fds-purge-seq}
   \end{figure}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-STORAGE.PURGE-01}{Verify that purge unlinks only the
   canonical path derived from the presented target key's combined hash (a
@@ -1647,7 +1647,7 @@
     \texttt{NotFound}.}\label{fig:fds-expire-seq}
   \end{figure}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-STORAGE.EXPIRE-01}{Verify that an expiry stops the
   object being served as a fresh hit while leaving its body byte-identical and
@@ -1747,7 +1747,7 @@
       to another thread. It bounds the stall by yielding instead.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-STORAGE.EXECUTOR-01}{Specify which work moves to the
   blocking pool, what stays on the worker, and how the restart scan bounds
@@ -1841,7 +1841,7 @@
   the blocking pool, since freeing a large file can take far longer than
   that read.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-STORAGE.EXECUTOR-01}{Verify that no storage operation
   holds the executor thread for its duration, by measuring what a task
@@ -1989,7 +1989,7 @@
       (\reqref{ADR-OBSERVABILITY.METRICS-01}).
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-STORAGE.RECLAIM-01}{Specify the concrete detection
   and removal procedure for each class of file the scan reclaims, riding Eviction Recovery's
@@ -2158,7 +2158,7 @@
     removed.}\label{fig:fds-reclaim-seq}
   \end{figure}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-STORAGE.RECLAIM-01}{Verify that a temporary whose
   writer is not running (its lease missing, or present but unlocked) is
@@ -2244,7 +2244,7 @@
       satisfied by this decision.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqterminal[Deferred: compaction is not implemented for this version, so
   nothing further refines, satisfies, or verifies this decision; revisit if
@@ -2380,7 +2380,7 @@
       drop-in \texttt{Storage} backend (\reqref{HLR-COMPAT.PINGORA-01}).
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-EVICTION.STARTUP-01}{Specify the concrete
   reconstruction procedure, and the API surface that orchestrates it,
@@ -2462,7 +2462,7 @@
       either, behaves the same.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{IMP}
 
@@ -2545,7 +2545,7 @@
       \reqref{ADR-COMPAT.EVICTION-01} already accepts.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-COMPAT.READONLY-01}{Specify the read-only operation
   and its integration with the execution-phase broadcast, the behaviour of each
@@ -2597,7 +2597,7 @@
   \rfcsec{9110}{5.2}[field lines], \rfcsec{9110}{5.3}[field order],
   \rfcsec{9110}{6.2}[control data], \rfcsec{9110}{6.3}[header fields].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{SDS}
@@ -2631,7 +2631,7 @@
   \textit{Basis: \rfcsec{9111}{3.1}[``Caches MUST NOT combine trailer fields with
   header fields'']; \rfcsec{9110}{6.5}[trailer fields].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{SDS}
@@ -2659,7 +2659,7 @@
   \textit{Basis: \rfcsec{9110}{8.1}[representation data];
   \rfcsec{9111}{3}[storing responses]; \rfcsec{9110}{14.2}[Range].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{SDS}
@@ -2697,7 +2697,7 @@
   \rfcsec{9111}{5.1}[Age], \rfcsec{9111}{5.2.2}[response directives],
   \rfcsec{9111}{5.3}[Expires].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{SDS}
@@ -2728,7 +2728,7 @@
   \textit{Basis: \rfcsec{9110}{8.8.2}[Last-Modified], \rfcsec{9110}{8.8.3}[ETag];
   \rfcsec{9111}{4.3}[validation].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{SDS}
@@ -2775,7 +2775,7 @@
   \textit{Basis: \rfcsec{9111}{3.2}[updating stored header fields],
   \rfcsec{9111}{4.3.4}[freshening stored responses upon validation].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -2800,7 +2800,7 @@
 
   \textit{Basis: \rfcsec{9111}{3.2}[updating stored header fields].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -2831,7 +2831,7 @@
   \textit{Basis: \rfcsec{9111}{4.3.4}[freshening stored responses upon
   validation].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -2857,7 +2857,7 @@
 
   \textit{Basis: \rfcsec{9111}{3.2}[updating stored header fields].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -2892,7 +2892,7 @@
   \textit{Basis: \rfcsec{9111}{4.3.3}[handling a validation response --- a full
   response replaces the stored one]; \rfcsec{9111}{3}[storing responses].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -2919,7 +2919,7 @@
   \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses];
   \rfcsec{9111}{3}[storing responses].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -2951,7 +2951,7 @@
   \textit{Basis: \rfcsec{9111}{4.1}[calculating cache keys with Vary];
   \rfcsec{9110}{12.5.5}[Vary].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{SDS}
@@ -2972,7 +2972,7 @@
 
   \textit{Basis: \rfcsec{9111}{4.1}[calculating cache keys with Vary].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{SDS}
@@ -3029,7 +3029,7 @@
   \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses];
   \rfcsec{9110}{9.2.1}[safe methods].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -3051,7 +3051,7 @@
 
   \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -3091,7 +3091,7 @@
 
   \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -3134,7 +3134,7 @@
   \rfcsec{9111}{3.4}[combining partial content]; \rfcsec{9110}{14.2}[Range],
   \rfcsec{9110}{6.1}[framing and completeness].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -3160,7 +3160,7 @@
   \textit{Basis: \rfcsec{9111}{3.3}[storing incomplete responses];
   \rfcsec{9110}{6.1}[framing and completeness].}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}

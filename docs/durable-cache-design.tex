@@ -111,7 +111,7 @@
     \caption{Sharded path for a cache key whose combined hash is \texttt{a1b2c3d4e5f6\dots}.}\label{dsn:shard-example}
   \end{figure}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{IMP}
@@ -213,7 +213,7 @@
     \texttt{HttpCache}.}\label{fig:fds-layout-startup-seq}
   \end{figure}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-LAYOUT.DIRCACHE-01}{Verify the cache is rebuilt
   accurately from disk at every construction, and that concurrent
@@ -637,7 +637,7 @@
   header)}}; internal-metadata fields per
   \pgsrc{pingora-cache/src/meta.rs}{83}{\texttt{InternalMetaV2}}.}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{SDS-LAYOUT.KEYSEGMENT-01}{Specify the key segment's
   byte encoding --- its fields' order and sizes, how the presence of a
@@ -710,7 +710,7 @@
   stored, and so would require a new format version
   (\reqref{FRE-COMPAT.FORMATUPGRADE-01}).
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-LAYOUT.KEYSEGMENT-01}{Verify that keys with and
   without a variance hash, and with an empty and a non-empty tag, encode to
@@ -843,7 +843,7 @@
     \caption{Startup reconstruction, carried out by Eviction Recovery (\texttt{Storage} and the \texttt{EvictionManager} never call each other). \texttt{Startup} --- the integrator's own code --- independently calls \texttt{recover()} and, on its own schedule, tells \texttt{HttpCache} to begin serving; if serving starts before reconstruction finishes, live \texttt{HttpCache} traffic touches the \texttt{EvictionManager} in parallel with the scan.}\label{fig:fds-startup-seq}
   \end{figure}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-EVICTION.RECONSTRUCT-01}{Verify that when recover()
   returns the manager holds exactly the published set with record sizes,
@@ -942,7 +942,7 @@
   be discarded, so the service shall start no scan, and stop a running one
   at its next entry, as it stops for a read-only backend.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{IMP}

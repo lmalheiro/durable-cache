@@ -34,7 +34,7 @@
   whose \pgsrc{pingora-cache/src/storage.rs}{357}{\texttt{HandleMiss::write\_body(data,~eof)}}
   is called once per chunk, with \texttt{eof} set only on the final call.}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
 
@@ -77,7 +77,7 @@
   assigns each new write its own incrementing id and inserts it into the
   per-key map alongside any other writes already in flight.}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
 
@@ -166,7 +166,7 @@
   and \pgsrc{pingora-cache/src/eviction/mod.rs}{234}{\texttt{total\_items}}
   report the manager's tracked byte size and item count.}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{ADR} % An architecture decision selecting the reconstruction strategy
@@ -237,7 +237,7 @@
   \textit{Basis: Pingora graceful (zero-downtime) upgrade
   (\reqref{HLR-COMPAT.PINGORA-01}).}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqexpect{satisfy}{FDS-EVICTION.STARTUP-01}{Realise the reconstruction
@@ -292,7 +292,7 @@
   \texttt{support\_streaming\_partial\_write()} is true, rather than at
   \texttt{finish\_miss\_handler}.}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqcover{satisfy}{FDS}
@@ -329,7 +329,7 @@
   most-recently-opened tie-break above is this backend's own addition, not
   inherited framework behavior.}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify the in-flight write
@@ -357,7 +357,7 @@
   poll the file or batch notifications, whose delays are typically an order
   of magnitude longer.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify how a reader learns of
@@ -384,7 +384,7 @@
   attached reader is governed by
   \reqref{FRE-COMPLIANCE.PARTIALABORT-01}.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
   \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify how each reader
@@ -462,7 +462,7 @@
   verified, to keep the encoding, as a patch release of the 0.9 line
   should.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{SDS}
   \reqcover{verify}{TC}
@@ -488,7 +488,7 @@
   \reqref{FRE-COMPLIANCE.INCOMPLETE-01}, and the storage it consumed by
   \reqref{FRE-COMPAT.ABORTSPACE-01}.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-01}{Specify how a failed write or
   sync during a store is detected and surfaced as an error from the call in
@@ -524,7 +524,7 @@
   no handler is dropped --- and its leftovers are reclaimed as
   \reqref{FRE-COMPAT.STARTRECLAIM-01} requires.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-01}{Specify that an unpublished
   store's per-writer temporary is unlinked when the store ends, including on
@@ -560,7 +560,7 @@
   integrator's cache key can carry a variance of its own, and no primary is
   then ever stored.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{FDS}
   \reqcover{verify}{TC}
@@ -621,7 +621,7 @@
   so it does not satisfy this requirement. What an expiry of a key holding
   nothing reports follows \reqref{FRE-COMPLIANCE.PURGEABSENT-01}.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{ADR}
   \reqcover{verify}{TC}
@@ -772,7 +772,7 @@
       detailed design still has to build the machinery that meets them.
   \end{itemize}
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{deriveReqt}{REQ-EFFICIENCY.FRAGMENTATION-01}{Bound the aggregate
   space overhead a plain file system imposes on objects smaller than one
@@ -816,7 +816,7 @@
   requirement: \reqref{ADR-EFFICIENCY.COMPACTION-01} defers the packing that
   would, and declares the conflict.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{ADR}
 
@@ -846,7 +846,7 @@
   entry distribution for the layout, together with a test of the fan-out the
   analysis assumes.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{satisfy}{SDS-LAYOUT.SHARDING-01}{Lay out objects so that, for up
   to $10^8$ uniformly hashed objects, no directory holds more than 2,000
