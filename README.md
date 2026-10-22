@@ -143,6 +143,17 @@ default, 512 bytes.
 Each body chunk is written to disk before its `write_body` call returns;
 the backend holds no body bytes in memory beyond the chunk in hand.
 
+**Durability.** By default each store is synchronised to the device
+(`fdatasync`) before it is published, so a host crash or a power loss can
+lose a store but never publish a record whose data is not on the device.
+`FsCacheConfig::with_durability(Durability::NoStoreSync)` publishes stores
+without that wait, which takes most of a fill's time on a slow device.
+A process crash or a restart still loses nothing, but a host crash may lose
+the stores the kernel had not written back yet. It may also leave a record
+whose body never reached the device: a short one is a miss, but one
+zero-filled under a valid header would be served
+(ADR-PERSISTENCE.DURABILITY-01).
+
 **Features.** `body-crc` (on by default) computes each body's CRC-32C as it
 is stored and records it in the header; without it (`default-features =
 false`) records carry zero. Serving a hit does not check it: integrity at
@@ -177,9 +188,9 @@ test scaffolding, or tooling.
 .
 ├── durable-cache/     ← THE DELIVERABLE. The only published crate.
 │   ├── src/
-│   │   ├── lib.rs               re-exports FsCache, FsCacheConfig, recover,
-│   │   │                        RecoveryReport; hotupgrade is the one public
-│   │   │                        module, the rest are crate-private
+│   │   ├── lib.rs               re-exports FsCache, FsCacheConfig, Durability,
+│   │   │                        recover, RecoveryReport; hotupgrade is the one
+│   │   │                        public module, the rest are crate-private
 │   │   ├── storage_impl.rs      impl Storage for FsCache — glues the modules below
 │   │   │
 │   │   │                        ── on-disk contract ──

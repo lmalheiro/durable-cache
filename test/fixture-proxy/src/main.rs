@@ -17,7 +17,7 @@ mod proxy;
 use std::path::PathBuf;
 
 use clap::Parser;
-use durable_cache::{hotupgrade, recover, test_support, FsCache, FsCacheConfig};
+use durable_cache::{hotupgrade, recover, test_support, Durability, FsCache, FsCacheConfig};
 use pingora_cache::eviction::simple_lru::Manager as EvictionManager;
 use pingora_cache::MemCache;
 use pingora_core::prelude::{Opt, Server};
@@ -34,6 +34,15 @@ enum StorageBackend {
     Fs,
     /// The stock in-memory backend of `pingora-cache`.
     Memcache,
+}
+
+/// `durable_cache::Durability`, as the command line names it.
+#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+enum DurabilityMode {
+    /// Synchronise each store before publishing it: the default.
+    Strict,
+    /// Publish stores without synchronising them first.
+    NoStoreSync,
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
@@ -72,6 +81,11 @@ struct Cli {
     /// against each in turn).
     #[arg(long, value_enum, default_value_t = StorageBackend::Fs)]
     storage: StorageBackend,
+
+    /// `FsCacheConfig::with_durability`: what a store does to make itself
+    /// durable before it is published (ADR-PERSISTENCE.DURABILITY-01).
+    #[arg(long, value_enum, default_value_t = DurabilityMode::Strict)]
+    durability: DurabilityMode,
 
     /// Whether Eviction Recovery blocks startup or runs in the background.
     #[arg(long, value_enum, default_value_t = RecoveryMode::Block)]
@@ -162,8 +176,13 @@ fn main() {
         server.run_forever();
     }
 
-    let fs_cache = FsCache::new(FsCacheConfig::new(&cli.cache_dir, None))
-        .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");
+    let durability = match cli.durability {
+        DurabilityMode::Strict => Durability::Strict,
+        DurabilityMode::NoStoreSync => Durability::NoStoreSync,
+    };
+    let fs_cache =
+        FsCache::new(FsCacheConfig::new(&cli.cache_dir, None).with_durability(durability))
+            .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");
     let fs_cache: &'static FsCache = Box::leak(Box::new(fs_cache));
 
     let eviction: &'static EvictionManager = Box::leak(Box::new(EvictionManager::new(usize::MAX)));

@@ -3,11 +3,34 @@
 
 use std::path::{Path, PathBuf};
 
+/// What a store does to make itself durable before it is published
+/// (ADR-PERSISTENCE.DURABILITY-01). Invalidating purges are synchronised
+/// whichever is chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Durability {
+    /// Each store's temporary is synchronised to stable storage before it
+    /// is renamed into place. A host crash or a power loss can lose a
+    /// store, but never leave a published record over data that is not on
+    /// stable storage (HLR-PERSISTENCE.CRASHSAFE-01). The default.
+    #[default]
+    Strict,
+    /// Stores are renamed into place without being synchronised first, so
+    /// finishing one never waits for the device. A process crash or an
+    /// orderly restart still loses nothing, as the kernel keeps the data
+    /// (HLR-PERSISTENCE.DURABLE-01). A host crash or a power loss may lose
+    /// the stores the kernel had not written back yet, and may leave a
+    /// published record whose body never reached the device: short, which
+    /// a lookup reports as a miss, or zero-filled under a valid header,
+    /// which a hit would serve. HLR-PERSISTENCE.CRASHSAFE-01 does not hold.
+    NoStoreSync,
+}
+
 /// Configuration for [`crate::FsCache`].
 #[derive(Debug, Clone)]
 pub struct FsCacheConfig {
     root: PathBuf,
     meta_headroom: u32,
+    durability: Durability,
     #[cfg(feature = "body-crc-verify")]
     body_crc_verification: bool,
 }
@@ -25,9 +48,17 @@ impl FsCacheConfig {
         FsCacheConfig {
             root: root.into(),
             meta_headroom,
+            durability: Durability::default(),
             #[cfg(feature = "body-crc-verify")]
             body_crc_verification: false,
         }
+    }
+
+    /// Choose what a store does to make itself durable before it is
+    /// published; [`Durability::Strict`] unless chosen otherwise.
+    pub fn with_durability(mut self, durability: Durability) -> Self {
+        self.durability = durability;
+        self
     }
 
     /// Switch the read-time body check on or off; it is off unless switched
@@ -53,6 +84,13 @@ impl FsCacheConfig {
     #[inline]
     pub fn meta_headroom(&self) -> u32 {
         self.meta_headroom
+    }
+
+    /// What a store does to make itself durable before it is published; see
+    /// [`Self::with_durability`].
+    #[inline]
+    pub fn durability(&self) -> Durability {
+        self.durability
     }
 
     /// Whether reads check the body against its stored CRC-32C; see
