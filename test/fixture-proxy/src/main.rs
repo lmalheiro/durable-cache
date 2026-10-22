@@ -97,6 +97,13 @@ struct Cli {
     #[arg(long, default_value_t = 1)]
     threads: usize,
 
+    /// `ServerConf::max_blocking_threads`: the most threads the proxy
+    /// service's blocking pool may run, where the backend does its file
+    /// I/O (FDS-STORAGE.EXECUTOR-01). Unset keeps Tokio's 512; a benchmark
+    /// varies it to see what the pool's size costs.
+    #[arg(long)]
+    max_blocking_threads: Option<usize>,
+
     /// `pingora_core::server::configuration::Opt`'s own flags, flattened
     /// in: `-u/--upgrade`, `-d/--daemon`, `-c/--conf`, ... (needed as-is
     /// for the hot-upgrade scenario, TC-COMPAT.HOTUPGRADE-01 — M9).
@@ -128,6 +135,7 @@ fn main() {
         grace_period_seconds: cli.grace_period_seconds,
         graceful_shutdown_timeout_seconds: cli.graceful_shutdown_timeout_seconds,
         threads: cli.threads,
+        max_blocking_threads: cli.max_blocking_threads,
         ..Default::default()
     };
     let mut server = Server::new_with_opt_and_conf(Some(cli.pingora), conf);
