@@ -369,8 +369,11 @@ nginx runs as an ordinary user, with its files in the work directory. Put
 that directory on the disk you mean to measure, since on a tmpfs `fdatasync`
 costs nothing; it needs about 1 GB free, as each server's cache is deleted
 after its runs. The servers and the load generator get separate physical cores
-(`--server-cpus` and `--load-cpus` override the split). The benchmark does
-not run in CI, whose shared runners are too noisy to compare numbers.
+(`--server-cpus` and `--load-cpus` override the split), and each server gets
+one worker per server CPU (`--threads` overrides it): `worker_processes` for
+nginx, and for fixture-proxy `ServerConf::threads`, whose default is 1. The
+benchmark does not run in CI, whose shared runners are too noisy to compare
+numbers.
 
 Two differences shape the results:
 
