@@ -235,7 +235,8 @@ test scaffolding, or tooling.
 │   ├── durable-cache-externals.csv  links requirements to external references
 │   └── rfc9110/9111/3864        the standards the compliance chapter cites
 │
-├── xtask/                     cargo xtask cache-tests | trace-report | headers
+├── xtask/                     cargo xtask cache-tests | trace-report | headers |
+│                              fmt | readme-links | bench
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
 ├── .github/workflows/         ci.yml, compliance.yml, deny.yml, pr-title.yml and
 │                              release-plz.yml (see below)
@@ -345,6 +346,42 @@ they run like this (Linux only):
 # hot upgrade: two fixture-proxy processes, no root needed
 cargo nextest run -p compat --run-ignored only -E 'binary(hotupgrade)'
 ```
+
+### Benchmark
+
+`cargo xtask bench` measures, on your machine, how far a Pingora proxy on
+durable-cache is from nginx and its `proxy_cache`. Three caching proxies stand
+in front of one origin, an nginx serving fixed bodies: nginx with
+`proxy_cache`, and `fixture-proxy` on durable-cache and on `MemCache`, the
+in-memory backend of `pingora-cache`, which separates the cost of the storage
+from that of the proxy. Every round starts each server with an empty cache;
+the scenarios are cache hits on 1 KiB, 64 KiB and 1 MiB bodies, and filling
+the cache with new URLs of 4 KiB and 64 KiB. The report gives the medians of
+three rounds.
+
+```bash
+cargo xtask bench --work-dir /var/tmp/durable-cache-bench
+```
+
+It needs `nginx` and [`oha`](https://github.com/hatoo/oha), the load
+generator; `--nginx` and `--oha` name them if they are not on the `PATH`.
+nginx runs as an ordinary user, with its files in the work directory. Put
+that directory on the disk you mean to measure, since on a tmpfs `fdatasync`
+costs nothing; it needs about 1 GB free, as each server's cache is deleted
+after its runs. The servers and the load generator get separate physical cores
+(`--server-cpus` and `--load-cpus` override the split), and each server gets
+one worker per server CPU (`--threads` overrides it): `worker_processes` for
+nginx, and for fixture-proxy `ServerConf::threads`, whose default is 1. The
+benchmark does not run in CI, whose shared runners are too noisy to compare
+numbers.
+
+Two differences shape the results:
+
+- durable-cache makes every store durable with `fdatasync` before publishing
+  it, its crash safety; nginx never synchronises its cache files. The fill
+  scenarios show that cost.
+- nginx sends a hit's body from the file with `sendfile`, without copying it
+  through user space; durable-cache reads it in 64 KiB chunks.
 
 ### Continuous integration
 

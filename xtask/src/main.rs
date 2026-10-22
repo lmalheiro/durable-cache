@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
+mod bench;
+
 #[derive(Parser)]
 struct Cli {
     #[command(subcommand)]
@@ -83,6 +85,43 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
+    /// Benchmark the cache against nginx and its `proxy_cache`, locally:
+    /// throughput and latency of cache hits, and of filling the cache, for
+    /// nginx and for fixture-proxy on durable-cache and on `MemCache`. Needs
+    /// nginx and oha (README, "Benchmark").
+    Bench {
+        /// The nginx binary, for the origin and the nginx cache.
+        #[arg(long, default_value = "nginx")]
+        nginx: PathBuf,
+        /// The oha binary, the load generator.
+        #[arg(long, default_value = "oha")]
+        oha: PathBuf,
+        /// Where the caches, configurations and results go, emptied first.
+        /// Put it on the disk to measure: on a tmpfs, `fdatasync` costs
+        /// nothing.
+        #[arg(long, default_value = "target/bench")]
+        work_dir: PathBuf,
+        /// Worker threads of each server (nginx `worker_processes`, Pingora
+        /// `threads`); by default, one per server CPU.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// CPUs for the servers, as `taskset -c` takes them; by default,
+        /// half the physical cores. Empty leaves them unpinned.
+        #[arg(long)]
+        server_cpus: Option<String>,
+        /// CPUs for oha and the origin; by default, the other cores.
+        #[arg(long)]
+        load_cpus: Option<String>,
+        /// Seconds per measured run of a hit scenario.
+        #[arg(long, default_value_t = 10)]
+        duration: u64,
+        /// Concurrent connections of the load generator.
+        #[arg(long, default_value_t = 64)]
+        connections: usize,
+        /// Rounds of every scenario; the report gives the medians.
+        #[arg(long, default_value_t = 3)]
+        rounds: usize,
+    },
 }
 
 fn workspace_root() -> Result<PathBuf> {
@@ -105,6 +144,27 @@ fn main() -> Result<()> {
         Cmd::Headers => check_headers(),
         Cmd::Fmt { check } => fmt(check),
         Cmd::ReadmeLinks { check } => readme_links(check),
+        Cmd::Bench {
+            nginx,
+            oha,
+            work_dir,
+            threads,
+            server_cpus,
+            load_cpus,
+            duration,
+            connections,
+            rounds,
+        } => bench::bench(bench::Options {
+            nginx,
+            oha,
+            work_dir,
+            threads,
+            server_cpus,
+            load_cpus,
+            duration,
+            connections,
+            rounds,
+        }),
     }
 }
 
