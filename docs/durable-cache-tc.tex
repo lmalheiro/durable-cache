@@ -558,9 +558,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
       backend and let its restart procedure complete, look up every key, and
       read every hit's body in full.
     \item Repeat steps 1 to 3 with stores unsynchronised
-      (\reqref{ADR-PERSISTENCE.UNSYNCED-01}), constructing the backend in
-      each replayed state as after a host restart: under a boot identity
-      other than the one the stores ran under.
+      (\reqref{ADR-PERSISTENCE.UNSYNCED-01}): with the discard on,
+      constructing the backend in each replayed state under a boot identity
+      other than the one the stores ran under; then with the discard off, on
+      ext4 in its default \texttt{data=ordered} mode.
   \end{enumerate}
 
   \textbf{Expected result:} In every replayed state: every hit's metadata and
@@ -585,9 +586,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \localreqdiagram*{tccrashdiscard01}{\reqid}{\reqdesc}
 
   \textbf{Objective:} A cache that published stores without synchronising
-  them serves none of its records after a host restart it was not flushed
-  for, and all of them after a process restart or a host restart it was
-  flushed for.
+  them keeps its records after a host crash, and reports one left short as a
+  miss; with the discard on, it serves none of them after a host restart it
+  was not flushed for, and all of them after a process restart or a host
+  restart it was flushed for.
 
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
   interface on Linux, with a test hook that sets the boot identity the
@@ -596,8 +598,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \textbf{Steps:}
   \begin{enumerate}
-    \item With stores unsynchronised and the synchronisation of a temporary
-      made to fail, store objects, and leave one further store unfinished.
+    \item With stores unsynchronised, the discard on, and the synchronisation
+      of a temporary made to fail, store objects, and leave one further store
+      unfinished.
     \item Construct a second backend on the same cache root, with the same
       boot identity, and look up every key.
     \item Construct a third with a different boot identity, look up every key,
@@ -606,8 +609,12 @@ stock run is the reference: a test that fails on both runs is a limitation of
       another boot identity, and look up every key.
     \item With stores strict, store objects, construct another backend with a
       different boot identity, and look up every key.
-    \item Construct a backend with stores unsynchronised and the boot identity
-      made unreadable.
+    \item Construct a backend with the discard on and the boot identity made
+      unreadable.
+    \item With stores unsynchronised and the discard off, store objects, cut
+      one record's file short as a store the device never received would be
+      left, construct another backend with a different boot identity, and
+      look up every key.
   \end{enumerate}
 
   \textbf{Expected result:} In step 1 every finished store is published
@@ -617,6 +624,8 @@ stock run is the reference: a test that fails on both runs is a limitation of
   its background removal ends. In step 4 every object stored before the flush
   is a hit. In step 5 no marker is written and every object is a hit. In
   step 6 construction fails with an error naming the boot identity's source.
+  In step 7 no marker is written, the shortened record is a miss, and every
+  other object is a hit.
 
   \reqdiaglink{global}{\textit{View complete diagram.}}
 

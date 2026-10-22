@@ -268,7 +268,7 @@
   \trace{FRE-COMPLIANCE.METAPERSIST-01}
 \end{requirement}
 
-\begin{requirement}{ADR-PERSISTENCE.UNSYNCED-01}[draft][designConstraint]{Unsynced stores, discard on crash}
+\begin{requirement}{ADR-PERSISTENCE.UNSYNCED-01}[draft][designConstraint]{Unsynced stores, optional discard}
 
   \localreqdiagram*{adrunsynced01}{\reqid}{\reqdesc}
 
@@ -282,35 +282,52 @@
   second for 4~KiB and 64~KiB bodies, 15--16\,\% of \texttt{MemCache}.
   Without the sync, the same stores ran at 7{,}966 and 5{,}427 per second,
   46--49\,\%. \reqref{HLR-PERFORMANCE.STORERATE-01} asks for 40\,\% where the
-  integrator gives up keeping stored objects across a host crash, while
-  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} and \reqref{HLR-PERSISTENCE.DURABLE-01}
-  still hold.
+  integrator accepts losing stored objects in a host crash;
+  \reqref{HLR-PERSISTENCE.DURABLE-01} still holds there, and
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} as far as this decision says.
 
   Without the sync, a host crash can leave a published name over a body that
-  never reached the device, zero-filled or short, under a header that still
-  passes validation --- the reason \reqref{ADR-PERSISTENCE.DURABILITY-01}
-  rejects process-crash safety alone --- and nothing in the record tells it
-  from a sound one. What the cache can tell is whether the host has restarted
-  since it last published a store without synchronising it: Linux gives every
-  boot a random identity, its boot
+  never reached the device. The read validation of
+  \reqref{SDS-LAYOUT.OBJECTFILE-01} catches the common case: it compares a
+  record's file length with the record length its header gives, and a file
+  system that records a file's length only once its data is written --- ext4
+  in its default \texttt{data=ordered} mode, XFS, btrfs --- leaves such a
+  record short or empty, which is then a miss. It cannot catch a body of the
+  right length that reads back as zeros, which a file system that records the
+  length first can leave (ext4 with \texttt{data=writeback}), and which is
+  why \reqref{ADR-PERSISTENCE.DURABILITY-01} rejects process-crash safety
+  alone. What the cache can tell, on any file system, is whether the host has
+  restarted since it last published a store without synchronising it: Linux
+  gives every boot a random identity, its boot
   ID.\footnote{\href{https://man7.org/linux/man-pages/man4/random.4.html}{Linux
   manual page: \texttt{random(4)}}, \texttt{/proc/sys/kernel/random/boot\_id}.}
 
   \textbf{Decision:} A configuration option chooses how a store becomes
   durable. \emph{Strict}, the default, is \reqref{ADR-PERSISTENCE.DURABILITY-01}
-  as it stands. \emph{Unsynchronised}, on Linux only, renames each store into
-  place without the \texttt{fdatasync}, and makes the cache start empty after
-  any host restart that may have lost what it published that way:
+  as it stands. \emph{Unsynchronised} renames each store into place without
+  the \texttt{fdatasync}. After a host crash it keeps every record the file
+  system recovered: the read validation turns each one left short or empty
+  into a miss, and the restart scan reclaims it
+  (\reqref{FDS-STORAGE.RECLAIM-01}). On a file system that records a file's
+  length only once its data is written, the crash costs only the stores whose
+  data had not reached the device; on one that records the length first, a
+  body of zeros could be served, a risk the integrator who chooses this
+  configuration accepts. A second switch, off by default and on Linux only,
+  removes that risk on any file system: the \emph{discard} makes the cache
+  start empty after any host restart that may have lost what it published
+  unsynchronised.
   \begin{itemize}
-    \item Before it publishes a store unsynchronised, a backend instance that
-      has no marker writes one, durably, beside its writer lease
-      (\reqref{ADR-STORAGE.WRITERID-01}): the boot ID it runs under.
+    \item Before it publishes a store unsynchronised with the discard on, a
+      backend instance that has no marker writes one, durably, beside its
+      writer lease (\reqref{ADR-STORAGE.WRITERID-01}): the boot ID it runs
+      under.
     \item When it becomes read-only (\reqref{FDS-COMPAT.READONLY-01}), or the
       integrator flushes it, the backend flushes the file system that holds
       the cache and then removes, durably, its own marker and those of
       instances no longer running: everything they published is then on
-      stable storage. A later unsynchronised store writes the marker again.
-    \item At construction, in either configuration, a marker naming a boot
+      stable storage. A later unsynchronised store, with the discard on,
+      writes the marker again.
+    \item At construction, whatever its configuration, a marker naming a boot
       other than the current one means the host restarted while stores
       published unsynchronised could still be lost. The backend then discards
       every record and temporary before it serves anything, and only then
@@ -329,9 +346,12 @@
 
   \textbf{Alternatives considered:}
   \begin{itemize}
-    \item \emph{Unsynchronised stores alone}, trusting every record after a
-      host crash. Rejected: a zero-filled body can then be served, which
-      \reqref{HLR-PERSISTENCE.CRASHSAFE-01} forbids.
+    \item \emph{The discard on by default.} Not adopted: on the file systems
+      most deployments use --- ext4 in its default mode, XFS, btrfs --- the
+      read validation already turns what a crash leaves behind into misses,
+      so a default discard would empty the cache after every host crash to
+      guard against file systems that record a file's length before its
+      data.
     \item \emph{Check every record's body checksum after a host restart},
       keeping the records that pass. Rejected: the cache could serve nothing
       before reading every byte it holds, a wait that grows with the cache
@@ -360,25 +380,32 @@
   \begin{itemize}
     \item[+] A store no longer waits for the device: 3.1 times the store rate
       on a consumer SSD.
-    \item[+] \reqref{HLR-PERSISTENCE.CRASHSAFE-01} holds in both
-      configurations: after a host restart that could have lost
-      unsynchronised data, the cache serves nothing it stored before.
-    \item[+] \reqref{HLR-PERSISTENCE.DURABLE-01} holds in both: a process
-      exit on the same boot discards nothing.
-    \item[--] After a host crash, or any host restart the integrator did not
-      prepare by flushing the backend, an unsynchronised cache starts empty
-      and refills from the origin.
-    \item[--] Linux only, for its boot ID and \texttt{syncfs}; elsewhere the
-      option cannot be chosen.
-    \item[--] A strict backend reads the markers too, so that a cache last
-      written unsynchronised is never trusted after a host crash.
+    \item[+] \reqref{HLR-PERSISTENCE.DURABLE-01} holds in both
+      configurations: a process exit loses nothing.
+    \item[+] On a file system that records a file's length only once its
+      data is written, a host crash costs only the stores whose data had
+      not reached the device.
+    \item[--] Unsynchronised, \reqref{HLR-PERSISTENCE.CRASHSAFE-01} holds
+      only on such a file system unless the discard is on: elsewhere, a host
+      crash can leave a body of zeros to be served.
+    \item[+] With the discard on, \reqref{HLR-PERSISTENCE.CRASHSAFE-01}
+      holds on any file system.
+    \item[--] With the discard on, a host crash, or any host restart the
+      integrator did not prepare by flushing the backend, empties the cache,
+      which refills from the origin.
+    \item[--] The discard is Linux only, for its boot ID and
+      \texttt{syncfs}; elsewhere it cannot be switched on.
+    \item[--] Every backend reads the markers at construction, whatever its
+      configuration, so that a cache last written with the discard on is
+      never trusted after a host crash.
   \end{itemize}
 
   \reqdiaglink{global}{\textit{View complete diagram.}}
 
-  \reqexpect{refine}{FDS-PERSISTENCE.CRASHDISCARD-01}{Specify the option, the
+  \reqexpect{refine}{FDS-PERSISTENCE.CRASHDISCARD-01}{Specify the options, the
   boot identity, when a marker is written and removed, the check at
-  construction, and how the discard keeps every record from being served.}
+  construction, how the discard keeps every record from being served, and
+  what protects the records when the discard is off.}
 
   \refine{ADR-PERSISTENCE.DURABILITY-01}
   \satisfy{HLR-PERFORMANCE.STORERATE-01}
@@ -397,23 +424,30 @@
   scan, before it answers its first lookup
   (\reqref{ADR-PERSISTENCE.UNSYNCED-01}).
 
-  \textbf{The option.} \texttt{FsCacheConfig} carries the durability of
+  \textbf{The options.} \texttt{FsCacheConfig} carries the durability of
   stores: \texttt{Strict}, the default, or \texttt{NoStoreSync}. With
   \texttt{NoStoreSync}, \texttt{finish} renames a store into place without
   synchronising its temporary first (\reqref{FDS-STORAGE.PUBLISH-01});
   everything else is as with \texttt{Strict}, the invalidating purge's
-  directory sync included (\reqref{FDS-STORAGE.PURGE-01}).
-  \texttt{NoStoreSync} is available on Linux only: elsewhere, constructing a
-  backend with it fails with an error that says so.
+  directory sync included (\reqref{FDS-STORAGE.PURGE-01}). A second switch,
+  off by default, turns on the discard after a host restart. Off, the
+  backend writes no marker, and after a host crash it keeps every record the
+  file system recovered: the read validation of
+  \reqref{SDS-LAYOUT.OBJECTFILE-01}, which compares a published record's
+  file length with the record length its header gives, reports each record
+  left short or empty as a miss, and the restart scan reclaims it
+  (\reqref{FDS-STORAGE.RECLAIM-01}). The discard is available on Linux
+  only: elsewhere, constructing a backend with it switched on fails with an
+  error that says so.
 
   \textbf{The boot identity.} The current boot's identity is the content of
   \texttt{/proc/sys/kernel/random/boot\_id}. IF the backend cannot read it,
-  THEN constructing a backend with \texttt{NoStoreSync} fails with an error
-  naming the file, and a strict backend that finds markers discards the cache,
-  since it cannot tell their boot from the current one.
+  THEN constructing a backend with the discard switched on fails with an
+  error naming the file, and any other backend that finds markers discards
+  the cache, since it cannot tell their boot from the current one.
 
-  \textbf{The marker.} Each backend instance has its own marker beside its
-  writer lease (\reqref{FDS-STORAGE.PUBLISH-01}),
+  \textbf{The marker.} Each backend instance with the discard on has its own
+  marker beside its writer lease (\reqref{FDS-STORAGE.PUBLISH-01}),
   \texttt{writers/<pid>-<nonce>.unsynced}, holding the boot identity. Before
   a \texttt{NoStoreSync} store's rename, if the instance's marker does not
   exist, the backend writes it --- a temporary, synchronised, renamed into
@@ -426,13 +460,14 @@
   \texttt{syncfs}, then removes the instance's own marker and the markers of
   instances whose lease is no longer held --- the same flush made their data
   durable --- and synchronises the \texttt{writers} directory. A
-  \texttt{NoStoreSync} store published afterwards writes the marker again
-  first. An integrator that shuts its server down in order calls
-  \texttt{flush} once the server has stopped; one that does not loses the
-  cache at the next host restart.
+  \texttt{NoStoreSync} store published afterwards, with the discard on,
+  writes the marker again first. With the discard on, an integrator that
+  shuts its server down in order calls \texttt{flush} once the server has
+  stopped; one that does not loses the cache at the next host restart.
 
   \textbf{At construction.} Before the shard-directory cache is built
-  (\reqref{FDS-LAYOUT.STARTUP-01}), the backend reads every marker. If any
+  (\reqref{FDS-LAYOUT.STARTUP-01}), the backend reads every marker, whatever
+  its configuration. If any
   names a boot other than the current one, it moves every first-level shard
   directory into a new directory, \texttt{discarded-<nonce>}, under the cache
   root, synchronises the root, and only then removes every marker and
@@ -455,6 +490,7 @@
   \trace{FDS-COMPAT.READONLY-01}
   \trace{FDS-LAYOUT.STARTUP-01}
   \trace{FDS-EVICTION.STARTUP-01}
+  \trace{FDS-STORAGE.RECLAIM-01}
 \end{requirement}
 
 \begin{requirement}{ADR-STORAGE.ATOMICPUBLISH-01}[draft][designConstraint]{Publish by same-directory rename}

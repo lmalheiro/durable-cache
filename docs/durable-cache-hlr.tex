@@ -186,8 +186,8 @@
 
   \localreqdiagram*{hlr10}{\reqid}{\reqdesc}
 
-  WHERE its integrator has configured the cache to forgo keeping stored
-  objects across a host crash, the cache shall store new objects of 4~KiB to
+  WHERE its integrator has configured the cache to accept losing, in a host
+  crash, objects it had stored, the cache shall store new objects of 4~KiB to
   64~KiB at a request rate of at least 40\,\% of the rate the same proxy
   reaches with the in-memory \texttt{MemCache} backend of
   \texttt{pingora-cache}, on the same host under the same load.
@@ -196,13 +196,14 @@
   power loss, as far as \reqref{HLR-PERSISTENCE.CRASHSAFE-01} lets it, and
   pays for that by waiting, for each store, until the storage device confirms
   that it holds the data. On a consumer SSD that wait limits stores to about
-  a sixth of the in-memory rate. A deployment may prefer restarting empty
-  after a host crash, and refilling from the origin, to storing at the
-  device's pace; this configuration is for it.
-  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} and \reqref{HLR-PERSISTENCE.DURABLE-01}
-  hold in it unchanged: after a host crash the cache may come back without
-  its objects, never with wrong or purged ones, and a process exit still
-  loses nothing. A store request asks for an object not cached yet, which the
+  a sixth of the in-memory rate. A deployment may prefer losing some of its
+  objects in a host crash, and fetching them again from the origin, to
+  storing at the device's pace; this configuration is for it.
+  \reqref{HLR-PERSISTENCE.DURABLE-01} holds in it unchanged: a process exit
+  loses nothing. \reqref{HLR-PERSISTENCE.CRASHSAFE-01} holds as far as the
+  file system lets it, and on any file system once the integrator also
+  switches on the discard \reqref{ADR-PERSISTENCE.UNSYNCED-01} decides. A
+  store request asks for an object not cached yet, which the
   cache fetches from the origin and stores; the request rate and the same
   load are as \reqref{HLR-PERFORMANCE.HITRATE-01} defines them.
 
