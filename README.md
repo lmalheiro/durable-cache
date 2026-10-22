@@ -107,7 +107,10 @@ runs each one on tokio's blocking pool rather than on the worker Pingora
 polls it from (`ADR-STORAGE.EXECUTOR-01`). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
-or a page-cache miss. The pool is sized by two `ServerConf` settings:
+or a page-cache miss. On Linux, hits are the exception when their record is
+in the page cache: the lookup and its body reads run on the worker, with
+`openat2` and `preadv2` flags that fail rather than wait for the device, and
+whatever would wait goes to the pool. The pool is sized by two `ServerConf` settings:
 `max_blocking_threads` (unset keeps tokio's 512) and
 `blocking_threads_ttl_seconds`, how long an idle thread lives (unset keeps
 10 s). The pool's threads mostly wait on the disk, so the maximum caps how
@@ -205,7 +208,9 @@ test scaffolding, or tooling.
 │   │   ├── config.rs            FsCacheConfig
 │   │   ├── error.rs             the two error types callers can tell apart
 │   │   ├── blocking.rs          runs each operation's file I/O on tokio's
-│   │   │                        blocking pool, never on the service worker
+│   │   │                        blocking pool, not on the service worker
+│   │   ├── nowait.rs            Linux: page-cache reads on the worker, which
+│   │   │                        fail rather than wait for the device
 │   │   ├── hooks.rs             test-only pauses, faults and instrumentation
 │   │   └── metrics.rs           prometheus counters (feature `metrics`)
 │   └── tests/                 integration tests against the real Storage trait

@@ -644,6 +644,7 @@ dependencies = [
  "pingora-error",
  "pingora-http",
  "pingora-prometheus",
+ "rustix",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

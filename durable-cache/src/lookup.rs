@@ -31,6 +31,8 @@ use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
 use crate::inflight::{InFlightWriter, WriteOutcome};
+#[cfg(target_os = "linux")]
+use crate::nowait;
 use crate::record::{self, ReadError, RecordError, RecordKind};
 use crate::{blocking, key_codec, FsCache};
 
@@ -199,6 +201,12 @@ pub(crate) async fn lookup(
     }
 
     let canonical = cache.canonical_path(&name)?;
+    // On Linux, from the page cache on this worker when nothing has to wait
+    // for the device (`crate::nowait`); on the pool otherwise.
+    #[cfg(target_os = "linux")]
+    if let Some(answer) = open_published_nowait(cache, &canonical, &key_bytes) {
+        return answer;
+    }
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
@@ -259,23 +267,63 @@ fn open_published(
         }
     };
     let meta = cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes)?;
-    Ok(Some((
-        meta,
-        FsHitHandler {
-            file: Some(Arc::new(file)),
-            source: ReadSource::Complete {
-                body_offset: parsed.header.body_offset() as u64,
-                body_len: parsed.header.body_len(),
-                pos: 0,
-                end: parsed.header.body_len(),
-            },
-            path: canonical,
-            #[cfg(feature = "body-crc-verify")]
-            check: BodyCheck::start(cache, parsed.header.body_crc()),
-            #[cfg(test)]
-            cache,
+    Ok(Some((meta, published_hit(cache, file, &parsed, canonical))))
+}
+
+/// [`open_published`] on the worker, from the page cache only
+/// (`crate::nowait`). `None` when a step would wait for the device, or meets
+/// a checksum mismatch, which `open_published` retries under the key's
+/// lock: the caller then runs `open_published` on the pool, from the start.
+#[cfg(target_os = "linux")]
+fn open_published_nowait(
+    cache: &'static FsCache,
+    canonical: &Path,
+    key_bytes: &[u8],
+) -> Option<Result<Option<(CacheMeta, FsHitHandler)>>> {
+    let file = match nowait::open(canonical) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Ok(None)),
+        Err(_) => return None,
+    };
+    let parsed = match record::read_record_nowait(&file, RecordKind::Published, Some(key_bytes)) {
+        Ok(parsed) => parsed,
+        Err(ReadError::Record(e)) if !e.is_retryable() => {
+            log::debug!("{} reported as a miss: {e}", canonical.display());
+            return Some(Ok(None));
+        }
+        Err(_) => return None,
+    };
+    let meta = match cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes) {
+        Ok(meta) => meta,
+        Err(e) => return Some(Err(e)),
+    };
+    let hit = published_hit(cache, file, &parsed, canonical.to_path_buf());
+    Some(Ok(Some((meta, hit))))
+}
+
+/// The hit handler of the published record `parsed`, open as `file`.
+fn published_hit(
+    cache: &'static FsCache,
+    file: File,
+    parsed: &record::ParsedRecord,
+    path: PathBuf,
+) -> FsHitHandler {
+    #[cfg(not(any(test, feature = "body-crc-verify")))]
+    let _ = cache;
+    FsHitHandler {
+        file: Some(Arc::new(file)),
+        source: ReadSource::Complete {
+            body_offset: parsed.header.body_offset() as u64,
+            body_len: parsed.header.body_len(),
+            pos: 0,
+            end: parsed.header.body_len(),
         },
-    )))
+        path,
+        #[cfg(feature = "body-crc-verify")]
+        check: BodyCheck::start(cache, parsed.header.body_crc()),
+        #[cfg(test)]
+        cache,
+    }
 }
 
 /// What opening an in-flight store's temporary found.
@@ -357,6 +405,17 @@ async fn read_at(file: Arc<File>, offset: u64, len: usize, path: &Path) -> Resul
     })
 }
 
+/// [`read_at`] on the worker, from the page cache only
+/// (`crate::nowait`), or `None` to read on the pool instead, which also
+/// reports any error with its context.
+#[cfg(target_os = "linux")]
+fn read_at_nowait(file: &File, offset: u64, len: usize) -> Option<Vec<u8>> {
+    let mut buf = vec![0u8; len];
+    nowait::read_exact_at(file, &mut buf, offset)
+        .ok()
+        .map(|()| buf)
+}
+
 impl FsHitHandler {
     /// The file this hit reads.
     fn file(&self) -> &Arc<File> {
@@ -383,7 +442,16 @@ impl FsHitHandler {
                 }
                 let len = (*end - *pos).min(CHUNK_SIZE) as usize;
                 let offset = *body_offset + *pos;
-                let buf = read_at(Arc::clone(&file), offset, len, &self.path).await?;
+                // From the page cache on this worker if it can, on the pool
+                // otherwise.
+                #[cfg(target_os = "linux")]
+                let inline = read_at_nowait(&file, offset, len);
+                #[cfg(not(target_os = "linux"))]
+                let inline = None;
+                let buf = match inline {
+                    Some(buf) => buf,
+                    None => read_at(Arc::clone(&file), offset, len, &self.path).await?,
+                };
                 #[cfg(feature = "body-crc-verify")]
                 if let Some(check) = &mut self.check {
                     check.running = crc32c::crc32c_append(check.running, &buf);

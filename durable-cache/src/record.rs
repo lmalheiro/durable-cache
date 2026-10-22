@@ -104,11 +104,33 @@ pub fn read_record_once(
     kind: RecordKind,
     expected_key: Option<&[u8]>,
 ) -> Result<ParsedRecord, ReadError> {
+    read_record_with(file, kind, expected_key, <File as FileExt>::read_exact_at)
+}
+
+/// [`read_record_once`] from the page cache only, for the
+/// worker's fast path (`crate::nowait`): a read that would wait for the
+/// device fails with an I/O error of kind `WouldBlock`.
+#[cfg(target_os = "linux")]
+pub fn read_record_nowait(
+    file: &File,
+    kind: RecordKind,
+    expected_key: Option<&[u8]>,
+) -> Result<ParsedRecord, ReadError> {
+    read_record_with(file, kind, expected_key, crate::nowait::read_exact_at)
+}
+
+/// [`read_record_once`], reading each part of the record with `read`.
+fn read_record_with(
+    file: &File,
+    kind: RecordKind,
+    expected_key: Option<&[u8]>,
+    read: fn(&File, &mut [u8], u64) -> io::Result<()>,
+) -> Result<ParsedRecord, ReadError> {
     let meta = file.metadata()?;
     let file_len = meta.len();
     // A file shorter than a header comes back from this read as truncated.
     let mut header = RecordHeader::new_zeroed();
-    read_record_part(file, header.as_mut_bytes(), 0)?;
+    read_record_part(read, file, header.as_mut_bytes(), 0)?;
     header.check().map_err(RecordError::Header)?;
     let key_len = header.key_len();
     let internal_len = header.internal_len();
@@ -123,12 +145,17 @@ pub fn read_record_once(
     }
 
     let mut key_bytes = vec![0u8; key_len as usize];
-    read_record_part(file, &mut key_bytes, format::KEY_OFFSET as u64)?;
+    read_record_part(read, file, &mut key_bytes, format::KEY_OFFSET as u64)?;
     let meta_start = header.meta_region_offset() as u64;
     let mut internal_bytes = vec![0u8; internal_len as usize];
-    read_record_part(file, &mut internal_bytes, meta_start)?;
+    read_record_part(read, file, &mut internal_bytes, meta_start)?;
     let mut header_bytes = vec![0u8; header_len as usize];
-    read_record_part(file, &mut header_bytes, meta_start + internal_len as u64)?;
+    read_record_part(
+        read,
+        file,
+        &mut header_bytes,
+        meta_start + internal_len as u64,
+    )?;
     if format::compute_meta_crc(&key_bytes, &internal_bytes, &header_bytes) != header.meta_crc() {
         return Err(RecordError::MetaCrcMismatch.into());
     }
@@ -183,8 +210,13 @@ pub fn read_record_blocking(
 /// checks before each read keep it inside the length the file had when the
 /// read began, so only a file shrinking meanwhile reaches the error, and
 /// nothing in this backend shrinks a record.
-fn read_record_part(file: &File, buf: &mut [u8], offset: u64) -> Result<(), ReadError> {
-    match file.read_exact_at(buf, offset) {
+fn read_record_part(
+    read: fn(&File, &mut [u8], u64) -> io::Result<()>,
+    file: &File,
+    buf: &mut [u8],
+    offset: u64,
+) -> Result<(), ReadError> {
+    match read(file, buf, offset) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Err(RecordError::Truncated.into()),
         Err(e) => Err(e.into()),
