@@ -9,6 +9,7 @@ use std::fs::File;
 use std::io;
 use std::os::unix::fs::{FileExt, MetadataExt};
 
+use bytes::Bytes;
 use zerocopy::{FromZeros, IntoBytes};
 
 use crate::format::{self, HeaderError, RecordHeader};
@@ -19,6 +20,13 @@ use crate::format::{self, HeaderError, RecordHeader};
 /// key's publication lock (see `crate::lookup`); a caller that already holds
 /// it takes a mismatch that persists as damage.
 pub const META_READ_ATTEMPTS: u32 = 4;
+
+/// How many of a published record's first bytes a lookup reads at once:
+/// the header, key and metadata region of an ordinary record, and the start
+/// of its body, which the hit then serves without reading it again. A
+/// record whose metadata region reaches further has the rest read part by
+/// part.
+pub const LOOKUP_READ_LEN: u64 = 16 * 1024;
 
 /// Why a record read was rejected. Every variant is reported as a miss; the
 /// distinction exists for logging, the reclaim scan's classification, and
@@ -64,6 +72,9 @@ pub struct ParsedRecord {
     pub key_bytes: Vec<u8>,
     pub internal_bytes: Vec<u8>,
     pub header_bytes: Vec<u8>,
+    /// The body's first bytes, when a lookup's first read reached them
+    /// ([`read_published_once`]); empty otherwise.
+    pub body_prefix: Bytes,
 }
 
 /// A file's identity: device and inode.
@@ -104,33 +115,73 @@ pub fn read_record_once(
     kind: RecordKind,
     expected_key: Option<&[u8]>,
 ) -> Result<ParsedRecord, ReadError> {
-    read_record_with(file, kind, expected_key, <File as FileExt>::read_exact_at)
+    read_record_with(
+        file,
+        kind,
+        expected_key,
+        <File as FileExt>::read_exact_at,
+        0,
+    )
 }
 
-/// [`read_record_once`] from the page cache only, for the
-/// worker's fast path (`crate::nowait`): a read that would wait for the
-/// device fails with an I/O error of kind `WouldBlock`.
+/// [`read_record_once`] for a lookup of the published record of
+/// `expected_key`. One read of the file's first [`LOOKUP_READ_LEN`] bytes
+/// yields the header, key and metadata region of an ordinary record, and
+/// the start of its body, returned in [`ParsedRecord::body_prefix`].
+pub fn read_published_once(file: &File, expected_key: &[u8]) -> Result<ParsedRecord, ReadError> {
+    read_record_with(
+        file,
+        RecordKind::Published,
+        Some(expected_key),
+        <File as FileExt>::read_exact_at,
+        LOOKUP_READ_LEN,
+    )
+}
+
+/// [`read_published_once`] from the page cache only, for the worker's fast
+/// path (`crate::nowait`): a read that would wait for the device fails with
+/// an I/O error of kind `WouldBlock`.
 #[cfg(target_os = "linux")]
-pub fn read_record_nowait(
-    file: &File,
-    kind: RecordKind,
-    expected_key: Option<&[u8]>,
-) -> Result<ParsedRecord, ReadError> {
-    read_record_with(file, kind, expected_key, crate::nowait::read_exact_at)
+pub fn read_published_nowait(file: &File, expected_key: &[u8]) -> Result<ParsedRecord, ReadError> {
+    read_record_with(
+        file,
+        RecordKind::Published,
+        Some(expected_key),
+        crate::nowait::read_exact_at,
+        LOOKUP_READ_LEN,
+    )
 }
 
-/// [`read_record_once`], reading each part of the record with `read`.
+/// [`read_record_once`], reading each part of the record with `read`. When
+/// `first_read` is above zero, one read of the file's first `first_read`
+/// bytes comes first, and each part it covers is taken from it instead of
+/// being read on its own.
 fn read_record_with(
     file: &File,
     kind: RecordKind,
     expected_key: Option<&[u8]>,
     read: fn(&File, &mut [u8], u64) -> io::Result<()>,
+    first_read: u64,
 ) -> Result<ParsedRecord, ReadError> {
     let meta = file.metadata()?;
     let file_len = meta.len();
+    let mut first = vec![0u8; file_len.min(first_read) as usize];
+    read_record_part(read, file, &mut first, 0)?;
+    let part = |buf: &mut [u8], offset: u64| -> Result<(), ReadError> {
+        let covered = usize::try_from(offset)
+            .ok()
+            .and_then(|start| first.get(start..)?.get(..buf.len()));
+        match covered {
+            Some(bytes) => {
+                buf.copy_from_slice(bytes);
+                Ok(())
+            }
+            None => read_record_part(read, file, buf, offset),
+        }
+    };
     // A file shorter than a header comes back from this read as truncated.
     let mut header = RecordHeader::new_zeroed();
-    read_record_part(read, file, header.as_mut_bytes(), 0)?;
+    part(header.as_mut_bytes(), 0)?;
     header.check().map_err(RecordError::Header)?;
     let key_len = header.key_len();
     let internal_len = header.internal_len();
@@ -145,17 +196,12 @@ fn read_record_with(
     }
 
     let mut key_bytes = vec![0u8; key_len as usize];
-    read_record_part(read, file, &mut key_bytes, format::KEY_OFFSET as u64)?;
+    part(&mut key_bytes, format::KEY_OFFSET as u64)?;
     let meta_start = header.meta_region_offset() as u64;
     let mut internal_bytes = vec![0u8; internal_len as usize];
-    read_record_part(read, file, &mut internal_bytes, meta_start)?;
+    part(&mut internal_bytes, meta_start)?;
     let mut header_bytes = vec![0u8; header_len as usize];
-    read_record_part(
-        read,
-        file,
-        &mut header_bytes,
-        meta_start + internal_len as u64,
-    )?;
+    part(&mut header_bytes, meta_start + internal_len as u64)?;
     if format::compute_meta_crc(&key_bytes, &internal_bytes, &header_bytes) != header.meta_crc() {
         return Err(RecordError::MetaCrcMismatch.into());
     }
@@ -171,11 +217,20 @@ fn read_record_with(
         }
         .into());
     }
+    // A published record's length is exact, so whatever the first read
+    // holds past the body offset is the body's start.
+    let body_offset = header.body_offset();
+    let body_prefix = if kind == RecordKind::Published && first.len() > body_offset {
+        Bytes::from(first).slice(body_offset..)
+    } else {
+        Bytes::new()
+    };
     Ok(ParsedRecord {
         header,
         key_bytes,
         internal_bytes,
         header_bytes,
+        body_prefix,
     })
 }
 
@@ -191,9 +246,26 @@ pub fn read_record_blocking(
     kind: RecordKind,
     expected_key: Option<&[u8]>,
 ) -> Result<ParsedRecord, ReadError> {
+    retried(|| read_record_once(file, kind, expected_key))
+}
+
+/// [`read_published_once`], retried as [`read_record_blocking`] retries.
+/// Blocking, for the same reason.
+pub fn read_published_blocking(
+    file: &File,
+    expected_key: &[u8],
+) -> Result<ParsedRecord, ReadError> {
+    retried(|| read_published_once(file, expected_key))
+}
+
+/// `read` once, and again on a CRC mismatch, up to [`META_READ_ATTEMPTS`]
+/// reads in total, yielding the thread between attempts.
+fn retried(
+    mut read: impl FnMut() -> Result<ParsedRecord, ReadError>,
+) -> Result<ParsedRecord, ReadError> {
     let mut attempt = 1;
     loop {
-        match read_record_once(file, kind, expected_key) {
+        match read() {
             Err(ReadError::Record(e)) if e.is_retryable() && attempt < META_READ_ATTEMPTS => {
                 attempt += 1;
                 std::thread::yield_now();
@@ -411,5 +483,109 @@ mod tests {
             read(&record_bytes()[..10], None).unwrap_err(),
             RecordError::Truncated
         );
+    }
+
+    /// A record keyed `key`, with the header segment `hdr` and the body
+    /// `body`, and a metadata region 64 bytes larger than its segments.
+    fn record_with(hdr: &[u8], body: &[u8]) -> Vec<u8> {
+        let key = b"key";
+        let internal = b"intl";
+        let capacity = u32::try_from(key.len() + internal.len() + hdr.len() + 64)
+            .expect("a test's segments fit a u32");
+        let mut header = RecordHeader::new();
+        header
+            .edit()
+            .meta_capacity(capacity)
+            .key_and_metadata(key, internal, hdr)
+            .expect("the segments fit the capacity")
+            .body(body.len() as u64, crc32c::crc32c(body));
+        let mut out = header.as_bytes().to_vec();
+        out.extend_from_slice(key);
+        out.extend_from_slice(internal);
+        out.extend_from_slice(hdr);
+        out.resize(header.body_offset(), 0);
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// A body of `len` bytes that differ from their neighbours, so a slice
+    /// taken from the wrong place does not compare equal.
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    fn read_published(bytes: &[u8]) -> ParsedRecord {
+        read_published_once(&file_with(bytes), b"key").expect("a valid record reads")
+    }
+
+    /// A lookup's read of a small record returns the whole body with the
+    /// metadata, from its one first read.
+    #[test]
+    fn a_lookup_read_returns_the_body_with_the_metadata() {
+        let parsed = read_published(&record_bytes());
+        assert_eq!(parsed.internal_bytes, b"intl");
+        assert_eq!(parsed.header_bytes, b"heads");
+        assert_eq!(&parsed.body_prefix[..], b"0123456789");
+    }
+
+    /// The body prefix ends where the first read did, in a record longer
+    /// than it.
+    #[test]
+    fn a_lookup_read_returns_the_body_up_to_the_end_of_its_first_read() {
+        let body = pattern(40_000);
+        let bytes = record_with(b"heads", &body);
+        let parsed = read_published(&bytes);
+        let body_offset = parsed.header.body_offset();
+        assert_eq!(
+            &parsed.body_prefix[..],
+            &body[..LOOKUP_READ_LEN as usize - body_offset]
+        );
+    }
+
+    /// Metadata reaching past the first read is read part by part, and no
+    /// body prefix comes back.
+    #[test]
+    fn a_lookup_read_reads_metadata_past_its_first_read_on_its_own() {
+        let hdr = pattern(LOOKUP_READ_LEN as usize + 5000);
+        let bytes = record_with(&hdr, b"0123456789");
+        let parsed = read_published(&bytes);
+        assert_eq!(parsed.header_bytes, hdr);
+        assert!(parsed.body_prefix.is_empty());
+    }
+
+    /// The lookup's read rejects every record the part-by-part read
+    /// rejects, for the same reason.
+    #[test]
+    fn a_lookup_read_rejects_what_a_part_by_part_read_rejects() {
+        let bytes = record_bytes();
+        let mut flipped_magic = bytes.clone();
+        flipped_magic[format::MAGIC_OFFSET] ^= 0xFF;
+        let mut flipped_header = bytes.clone();
+        flipped_header[format::BODY_LEN_OFFSET] ^= 0xFF;
+        let mut flipped_meta = bytes.clone();
+        flipped_meta[format::KEY_OFFSET + 3] ^= 0xFF;
+        let mut longer = bytes.clone();
+        longer.push(0);
+        let cases: [(&str, &[u8], &[u8]); 7] = [
+            ("magic", &flipped_magic, b"key"),
+            ("header CRC", &flipped_header, b"key"),
+            ("metadata CRC", &flipped_meta, b"key"),
+            ("key", &bytes, b"other"),
+            ("one byte short", &bytes[..bytes.len() - 1], b"key"),
+            ("one byte long", &longer, b"key"),
+            ("shorter than a header", &bytes[..10], b"key"),
+        ];
+        let rejection = |read: Result<ParsedRecord, ReadError>| match read {
+            Ok(_) => None,
+            Err(ReadError::Record(e)) => Some(e),
+            Err(ReadError::Io(e)) => panic!("unexpected I/O error: {e}"),
+        };
+        for (case, bytes, key) in cases {
+            let file = file_with(bytes);
+            let by_parts = rejection(read_record_once(&file, RecordKind::Published, Some(key)));
+            let at_once = rejection(read_published_once(&file, key));
+            assert!(by_parts.is_some(), "{case}: the record is rejected");
+            assert_eq!(at_once, by_parts, "{case}: both reads reject it alike");
+        }
     }
 }
