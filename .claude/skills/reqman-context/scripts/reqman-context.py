@@ -17,7 +17,8 @@ Usage (run from the repository root):
 
 <jobname>-requirements.json is looked up in --dir (default: "docs"), since
 that's where this project's LaTeX build (see docs/latexmkrc) writes it
-alongside the PDF.
+alongside the PDF; --overview lists the artifact types in the order
+<jobname>-types.json, written beside it, says the document declares them.
 """
 import argparse
 import json
@@ -35,18 +36,6 @@ UP_KEYS = {
 DOWN_KEYS = {
     "derived_by", "satisfied_by", "refined_by", "verified_by", "traced_by",
     "copied_by", "conflicts_with",
-}
-
-# The order the refinement stages bring the artifact types in; --overview
-# lists each domain's counts in it.
-TYPE_ORDER = ["HLR", "UC", "REQ", "FRE", "ADR", "SDS", "FDS", "TC"]
-
-# The relationships --overview counts between domains, by their outgoing key,
-# with the names the diagrams give them. Trace is left out, as in the PDF's
-# domain overview.
-OVERVIEW_RELS = {
-    "derives_from": "deriveReqt", "satisfies": "satisfy", "refines": "refine",
-    "verifies": "verify", "copies": "copy", "conflicts_with": "conflicts with",
 }
 
 
@@ -71,6 +60,19 @@ def load_pending(jobname, directory):
             return json.load(f)
     except FileNotFoundError:
         return {}
+
+
+def load_types(jobname, directory):
+    """The artifact type prefixes in the order the document declares them
+    (<jobname>-types.json, which reqman-report.py writes beside the
+    requirements). Best-effort, like load_pending: without the file,
+    --overview lists the types alphabetically."""
+    path = os.path.join(directory, f"{jobname}-types.json")
+    try:
+        with open(path) as f:
+            return [t["prefix"] for t in json.load(f)]
+    except FileNotFoundError:
+        return []
 
 
 def neighbor_ids(entry, direction):
@@ -187,10 +189,10 @@ def domain_of(aid):
     return aid.split("-")[1].split(".")[0]
 
 
-def cmd_overview(data):
+def cmd_overview(data, type_order):
     """The PDF's domain overview as text: each domain with how many artifacts
-    of each type it holds, then the relationships from one domain's artifacts
-    to another's, counted by kind, trace aside."""
+    of each type it holds, types in type_order, then the relationships from
+    one domain's artifacts to another's, counted by kind, trace aside."""
     per_domain = defaultdict(lambda: defaultdict(int))
     for aid, e in data.items():
         per_domain[domain_of(aid)][e["type"]] += 1
@@ -198,7 +200,7 @@ def cmd_overview(data):
     conflicts = set()
     for aid, e in data.items():
         rel = e.get("relationships", {})
-        for key, name in OVERVIEW_RELS.items():
+        for key in sorted(UP_KEYS - {"traces_to"}):
             for tgt in rel.get(key, []):
                 if tgt not in data or domain_of(aid) == domain_of(tgt):
                     continue
@@ -207,11 +209,11 @@ def cmd_overview(data):
                     if frozenset((aid, tgt)) in conflicts:
                         continue
                     conflicts.add(frozenset((aid, tgt)))
-                pairs[(domain_of(aid), domain_of(tgt))][name] += 1
+                pairs[(domain_of(aid), domain_of(tgt))][key.replace("_", " ")] += 1
 
     def order(types):
-        return ([t for t in TYPE_ORDER if t in types]
-                + sorted(t for t in types if t not in TYPE_ORDER))
+        return ([t for t in type_order if t in types]
+                + sorted(t for t in types if t not in type_order))
 
     domains = sorted(per_domain, key=lambda d: (-sum(per_domain[d].values()), d))
     print(f"## Domains: {len(data)} artifacts in {len(domains)} domains")
@@ -255,7 +257,7 @@ def main():
         return
 
     if args.overview:
-        cmd_overview(data)
+        cmd_overview(data, load_types(args.jobname, args.dir))
         return
 
     if not args.ids:
