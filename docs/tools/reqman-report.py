@@ -85,15 +85,17 @@ INCOMING_REL_KEYS = {
     "conflicts with": "conflicts_with",
 }
 
-# (sysml_label, edge_colour, line_style)
+# (sysml_label, edge_colour, line_style, letter). The letter marks the domain
+# overview's counts of the relationship, so that they read without colour, in
+# a black-and-white print or to a colour-blind reader.
 REL_MAP = {
-    "deriveReqt":     ("<<deriveReqt>>", "#CC0000", "dashed"),
-    "satisfy":        ("<<satisfy>>",    "#007F00", "solid"),
-    "refine":         ("<<refine>>",     "#0066CC", "dashed"),
-    "verify":         ("<<verify>>",     "#7D3C98", "solid"),
-    "trace":          ("<<trace>>",      "#B06000", "dashed"),
-    "copies":         ("<<copy>>",       "#8E44AD", "dashed"),
-    "conflicts with": ("<<conflict>>",   "#CC6600", "dashed"),
+    "deriveReqt":     ("<<deriveReqt>>", "#CC0000", "dashed", "D"),
+    "satisfy":        ("<<satisfy>>",    "#007F00", "solid",  "S"),
+    "refine":         ("<<refine>>",     "#0066CC", "dashed", "R"),
+    "verify":         ("<<verify>>",     "#7D3C98", "solid",  "V"),
+    "trace":          ("<<trace>>",      "#B06000", "dashed", "T"),
+    "copies":         ("<<copy>>",       "#8E44AD", "dashed", "C"),
+    "conflicts with": ("<<conflict>>",   "#CC6600", "dashed", "X"),
 }
 
 SYSML_REQTYPE_COLORS = {
@@ -143,7 +145,7 @@ NEIGHBOR_ST_COLOR  = "cE0E0E0"
 # counts line in the sans-serif font, with room to spare. Only the names are
 # bold: METAFONT fails to render the bold sans-serif EC font scaled to 7 pt,
 # and the document's fonts are bitmaps generated on demand.
-OVERVIEW_BOX_H        = 0.34
+OVERVIEW_BOX_H        = 0.30
 OVERVIEW_NAME_PT      = 8
 OVERVIEW_COUNTS_PT    = 6
 OVERVIEW_LABEL_PT     = 7
@@ -152,6 +154,7 @@ OVERVIEW_COUNT_CHAR_W = 0.052
 OVERVIEW_BOX_PAD      = 0.2
 OVERVIEW_DOMAIN_FILL  = "#F4F6F7"
 OVERVIEW_LINK_COLOR   = "#5D6D7E"
+OVERVIEW_LEGEND_H     = 0.16   # the legend's strip below the layout
 
 PREFIX_REQTYPE = {
     "UC":   "useCase",
@@ -265,7 +268,7 @@ TMPL_LAYOUT_OVERVIEW_DOT = r"""digraph overview {
   rankdir=BT;
   splines=true;
   nodesep=0.18;
-  ranksep=0.3;
+  ranksep=0.25;
   node [shape=box, fixedsize=true, height=(( box_h )), label=""];
   edge [fontname="Helvetica", fontsize=(( label_pt ))];
 
@@ -290,6 +293,10 @@ TMPL_TIKZ_OVERVIEW = r"""(% for color in colors %)
   count/.style={font=\sffamily\fontsize{(( label_pt ))}{(( label_pt + 1 ))}\selectfont,
                 inner sep=0.8pt, fill=white},
 ]
+% The layout's own box, and the legend's strip below it: the control points
+% of the curves lie outside the box, and would otherwise make the picture
+% taller than what it draws.
+\useasboundingbox (( bbox ));
 (% for d in domains %)
 \node[domain=(( d.width ))in] at (( d.coord )) {%
 (% for aid in d.ids %)
@@ -302,7 +309,7 @@ TMPL_TIKZ_OVERVIEW = r"""(% for color in colors %)
 \draw[link, line width=(( e.width ))pt] (( e.path )) node[count] at (( e.label_pos )) {(( e.label ))};
 (% endfor %)
 \node[anchor=north, font=\sffamily\fontsize{(( label_pt ))}{(( label_pt + 1 ))}\selectfont, inner sep=0pt]
-  at ([yshift=-6pt]current bounding box.south) {(( legend ))};
+  at (( legend_at )) {(( legend ))};
 \end{tikzpicture}
 """
 
@@ -915,7 +922,7 @@ def generate_layout_dot(outdir, jobname, artifacts, links, included_ids=None, la
 
     edges = []
     for lnk in edge_links:
-        sysml_label, _, _ = REL_MAP.get(lnk["Rel_Type"], (lnk["Rel_Type"], "", ""))
+        sysml_label = REL_MAP.get(lnk["Rel_Type"], (lnk["Rel_Type"],))[0]
         edges.append({"src": lnk["Source_ID"], "tgt": lnk["Target_ID"], "sysml_label": sysml_label})
 
     dotpath = (f"{outdir}/{jobname}-partial-{label}-layout.dot" if label
@@ -963,7 +970,7 @@ def _build_tikz_context(artifacts, layout, neighbor_ids=None, hypertarget_prefix
 
     edge_styles = [
         {"skey": sysml_label.strip("<>"), "cname": f"c{ecolor.lstrip('#')}"}
-        for sysml_label, ecolor, _ in REL_MAP.values()
+        for sysml_label, ecolor, *_ in REL_MAP.values()
     ]
 
     # Nodes — only those present in the (pre-filtered) layout
@@ -1091,7 +1098,7 @@ def generate_overview_diagram(outdir, jobname, artifacts, links, type_order,
                   if aid.split("-")[0] in stage_of_type]
         stage[name] = sum(stages) / len(stages) if stages else len(stage_of_type)
     edges = [{"src": s, "tgt": t, "ranks": stage[s] >= stage[t],
-              "dot_label": "_".join(str(n) for n in rels.values())}
+              "dot_label": "_".join(f"{n}{REL_MAP[r][3]}" for r, n in rels.items())}
              for (s, t), rels in sorted(pair_counts.items())]
 
     dotpath = f"{outdir}/{jobname}-overview-layout.dot"
@@ -1115,13 +1122,14 @@ def generate_overview_diagram(outdir, jobname, artifacts, links, type_order,
         tikz_edges.append({
             "path":      spline_to_tikz(e["spline"]),
             "width":     f"{min(2.5, 0.4 + 0.12 * sum(rels.values())):.2f}",
-            "label":     r"\,".join(rf"\textcolor{{{cname(REL_MAP[r][1])}}}{{{rels[r]}}}"
-                                    for r in REL_MAP if rels.get(r)),
+            "label":     "~".join(rf"\textcolor{{{cname(REL_MAP[r][1])}}}{{{rels[r]}{REL_MAP[r][3]}}}"
+                                  for r in REL_MAP if rels.get(r)),
             "label_pos": f"({e['lx']:.4f}, {e['ly']:.4f})",
         })
     present = [r for r in REL_MAP if any(rels.get(r) for rels in pair_counts.values())]
     legend = r"\quad ".join(
-        rf"\textcolor{{{cname(REL_MAP[r][1])}}}{{{REL_MAP[r][0].strip('<>')}}}" for r in present)
+        rf"\textcolor{{{cname(REL_MAP[r][1])}}}{{{REL_MAP[r][3]}~{REL_MAP[r][0].strip('<>')}}}"
+        for r in present)
     colors = {OVERVIEW_DOMAIN_FILL, OVERVIEW_LINK_COLOR} | {REL_MAP[r][1] for r in present}
 
     filename = f"{outdir}/{jobname}-overview-tikz.tikz"
@@ -1130,7 +1138,10 @@ def generate_overview_diagram(outdir, jobname, artifacts, links, type_order,
             colors=[{"name": cname(h), "hex": h.lstrip("#")} for h in sorted(colors)],
             domain_fill=cname(OVERVIEW_DOMAIN_FILL), link_color=cname(OVERVIEW_LINK_COLOR),
             box_h=OVERVIEW_BOX_H, name_pt=OVERVIEW_NAME_PT, counts_pt=OVERVIEW_COUNTS_PT,
-            label_pt=OVERVIEW_LABEL_PT, domains=domains, edges=tikz_edges, legend=legend))
+            label_pt=OVERVIEW_LABEL_PT, domains=domains, edges=tikz_edges, legend=legend,
+            bbox=(f"(0, -{OVERVIEW_LEGEND_H}) rectangle "
+                  f"({layout['width']:.4f}, {layout['height']:.4f})"),
+            legend_at=f"({layout['width'] / 2:.4f}, -0.06)"))
     print(f"  wrote {filename}")
 
 
