@@ -16,6 +16,7 @@ docs/durable-cache-requirements.json
 # is the committed artifact. Regenerate with tools/reqman-html.py.
 docs/durable-cache.html
 docs/durable-cache-pending-coverage.json
+docs/durable-cache-types.json
 texput.log
 
 # Rust

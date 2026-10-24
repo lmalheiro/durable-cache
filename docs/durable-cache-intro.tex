@@ -199,3 +199,30 @@ the blueprint, it is a design. The \emph{change-trigger test}: a decision is
 reopened when its forces change --- a new constraint, a new alternative, a
 shifted trade-off --- while a design is revised when the decision stands but
 its realisation needs adjustment.
+
+\subsection*{Domains}\label{sec:domains}
+
+Every ID also names a \emph{domain}: the subject its artifact belongs to,
+written between the type prefix and the first dot.
+\reqref{HLR-PERSISTENCE.DURABLE-01} belongs to \textsf{PERSISTENCE}, and
+\reqref{FDS-STORAGE.PUBLISH-01} to \textsf{STORAGE}. A domain cuts across the
+stages: it holds the requirements of one concern together with the
+decisions, designs and test cases that answer them, wherever in the document
+they appear.
+
+Figure~\ref{fig:domain-overview} shows the domains, how many artifacts of
+each type each one holds, and how they depend on one another. An arrow counts
+the relationships from the artifacts of one domain to those of another, by
+kind: each count carries the initial of its kind, in the colour the
+diagrams give that relationship; \emph{trace} is left out. Each domain is placed by the stage of refinement its artifacts
+belong to, on average and test cases aside, so the domains of requirements
+stand above those of the decisions and designs that answer them; an arrow
+points down only where a domain of an earlier stage depends on one of a
+later stage. Every artifact closes with a link to its domain in this figure;
+its own diagram and its list of relationships lead on to its neighbours.
+
+\begin{figure}[htbp]
+  \centering
+  \makebox[\textwidth][c]{\reqoverviewdiagram}
+  \caption{Domain overview}\label{fig:domain-overview}
+\end{figure}

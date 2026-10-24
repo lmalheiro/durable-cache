@@ -228,7 +228,8 @@ test scaffolding, or tooling.
 ├── docs/                      ← the specification this code implements
 │   ├── durable-cache.tex      master document; *-hlr/-refine/-design/-tc/… are
 │   │                            its chapters (stakeholder reqs → ADRs → design →
-│   │                            test cases), written as SysML requirements
+│   │                            test cases), in a model inspired by SysML
+│   │                            requirement diagrams
 │   ├── tools/reqman.sty         the LaTeX requirement environment + relations
 │   ├── tools/reqman-report.py   builds the traceability report and the JSON export
 │   ├── tools/reqman-html.py     renders the spec as one reader-mode-friendly page
@@ -435,10 +436,11 @@ replace the token: configure it on crates.io for this repository, the workflow
 
 ## The specification
 
-This project is requirements-driven: `docs/` holds a SysML requirements
-document (stakeholder requirements → decisions/ADRs → design → test cases),
-and the code is traced back to it. Source files carry `IMP-<ID>` marker
-comments:
+This project is requirements-driven: `docs/` holds a requirements document
+(stakeholder requirements → decisions/ADRs → design → test cases), and the
+code is traced back to it. Its artifact types and the relationships between
+them are inspired by SysML requirement diagrams, without following them
+strictly. Source files carry `IMP-<ID>` marker comments:
 
 ```rust
 // IMP-STORAGE.PUBLISH-01: satisfy FDS-STORAGE.PUBLISH-01

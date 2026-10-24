@@ -16,7 +16,7 @@
   rejected on these grounds would have required the project to build. A later
   version of this specification may replace this requirement.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{satisfy}{ADR}
 \end{requirement}
@@ -34,7 +34,7 @@
   \reqref{HLR-PERSISTENCE.CRASHSAFE-01}, and the size of the cache it can
   hold in \reqref{HLR-PERSISTENCE.CAPACITY-01}.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{satisfy}{ADR-PERSISTENCE.MECHANISM-01}{Establish the storage
   substrate and mechanism that persists cached objects across an exit of the
@@ -49,7 +49,7 @@
   The cache shall hold a set of cached HTTP objects whose total size exceeds
   the RAM installed on its host.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{satisfy}{ADR-PERSISTENCE.MECHANISM-01}{Choose a storage
   substrate whose capacity is bounded by persistent storage rather than by
@@ -75,7 +75,7 @@
   device that acknowledges flushes it has not made, is the storage layer's
   responsibility, not the cache's.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{satisfy}{ADR-PERSISTENCE.DURABILITY-01}{Decide which writes are
   synchronised to stable storage, and what integrity check detects the rest,
@@ -103,7 +103,7 @@
   dominated by small objects: \reqref{ADR-EFFICIENCY.COMPACTION-01} defers the
   machinery that would, and declares the conflict.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{deriveReqt}{REQ}
   \reqcover{verify}{TC}
@@ -129,7 +129,7 @@
   capacity does not make every request slower. $10^7$ objects is a size a
   test host can hold; derived design targets may reach further.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{deriveReqt}{REQ}
   \reqcover{verify}{TC}
@@ -159,7 +159,7 @@
   \texttt{EvictionManager} surfaces differ in ways the requirements below name
   explicitly.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{deriveReqt}{FRE}
 \end{requirement}
@@ -181,7 +181,7 @@
   is compared against the behaviour \texttt{MemCache} shows within a single
   process run.
 
-  \reqdiaglink{global}{\textit{View complete diagram.}}
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{deriveReqt}{FRE}
   \reqcover{verify}{TC}

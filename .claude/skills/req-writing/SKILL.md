@@ -1,9 +1,9 @@
 ---
 name: req-writing
-description: Write SysML 1.x software/system requirements in this project's reqman.sty LaTeX format, applying EARS sentence patterns, INCOSE quality rules, verification-method classification, and correct traceability relationships. Use this skill whenever the user asks to write, draft, add, decompose, derive, split, or rewrite a requirement, use case, ADR, design artifact, or test case obligation — or mentions EARS, INCOSE, "shall" statements, requirement IDs (e.g. HLR-*, DFR-*, REQ-*, UC-*, ADR-*, DSN-*, TC-*), or the requirement LaTeX environment. Also use it when reviewing a draft the user wrote before it is committed.
+description: Write software/system requirements in this project's reqman.sty LaTeX format, a requirement model inspired by SysML requirement diagrams, applying EARS sentence patterns, INCOSE quality rules, verification-method classification, and correct traceability relationships. Use this skill whenever the user asks to write, draft, add, decompose, derive, split, or rewrite a requirement, use case, ADR, design artifact, or test case obligation — or mentions EARS, INCOSE, "shall" statements, requirement IDs (e.g. HLR-*, DFR-*, REQ-*, UC-*, ADR-*, DSN-*, TC-*), or the requirement LaTeX environment. Also use it when reviewing a draft the user wrote before it is committed.
 ---
 
-# Writing SysML Requirements (reqman.sty workflow)
+# Writing Requirements (reqman.sty workflow)
 
 This project stores requirements as LaTeX `requirement` environments processed by
 `reqman.sty` + `reqman-report.py`. A new requirement is not just prose: it is an
@@ -183,7 +183,7 @@ e.g. a `REQ-` that is really a performance requirement can carry
 
 Title length is constrained by the diagram cards: `reqman-report.py` renders
 every artifact into a fixed-width box (`NODE_TIKZ_COL`, 2.2in at `\small`) in
-every SysML diagram, with no wrapping or auto-shrink. Keep the Title argument
+every diagram it draws, with no wrapping or auto-shrink. Keep the Title argument
 under about 36 characters where comfortable; past ~40 it gets tight against
 the card border, and anything much longer will visibly overflow it. If a
 precise title runs long, condense using a term the ID's own SUBID already

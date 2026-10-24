@@ -1,9 +1,9 @@
 ---
 name: req-checking
-description: Audit and check SysML 1.x requirements written in this project's reqman.sty LaTeX format for linguistic quality (INCOSE rules, EARS conformance, ambiguity, verifiability), semantic soundness (compound statements, level mismatch, untestable wording), and structural/traceability correctness (relationship direction rules, deriveReqt fan-in, cycles, conflicts, coverage design). Use this skill whenever the user asks to check, review, audit, validate, lint, critique, or find problems in requirements, specs, use cases, ADRs, or test-case coverage — or asks "is this requirement good/verifiable/ambiguous", mentions traceability gaps, or wants a quality report over a spec document. Complements (does not repeat) the automated checks in reqman-report.py.
+description: Audit and check requirements written in this project's reqman.sty LaTeX format, a requirement model inspired by SysML requirement diagrams, for linguistic quality (INCOSE rules, EARS conformance, ambiguity, verifiability), semantic soundness (compound statements, level mismatch, untestable wording), and structural/traceability correctness (relationship direction rules, deriveReqt fan-in, cycles, conflicts, coverage design). Use this skill whenever the user asks to check, review, audit, validate, lint, critique, or find problems in requirements, specs, use cases, ADRs, or test-case coverage — or asks "is this requirement good/verifiable/ambiguous", mentions traceability gaps, or wants a quality report over a spec document. Complements (does not repeat) the automated checks in reqman-report.py.
 ---
 
-# Checking SysML Requirements (reqman.sty workflow)
+# Checking Requirements (reqman.sty workflow)
 
 An audit has four layers: what the **tooling already checks** (don't redo it —
 read its output), what needs **linguistic judgment** (INCOSE/EARS), what
@@ -155,9 +155,10 @@ Full rationale, all six patterns, and worked examples:
 
 ## Layer 4 — Structural / graph checks
 
-Direction and typing rules (SysML 1.x/2.0 Requirements-diagram semantics —
-`docs/tools/sysml-requirement-diagram-reference.md`), phrased in SysML's own
-stereotype vocabulary rather than any one document's prefix letters, since
+Direction and typing rules, borrowed from the semantics of SysML 1.x/2.0
+requirement diagrams (`docs/tools/sysml-requirement-diagram-reference.md`)
+and phrased in their stereotype vocabulary rather than any one document's
+prefix letters, since
 prefixes are a per-document `\reqmantype` mapping — check the target
 document's own declarations before applying these. A stereotype alone
 doesn't always settle an artifact's *role*, either: a document may reuse one
@@ -220,7 +221,7 @@ Project-tooling conventions, not INCOSE/EARS/SysML content rules — but
 findings here still block a clean read of the document.
 
 - **P1 Title fits the diagram card.** Every artifact renders into a
-  fixed-width box in every SysML diagram (`reqman-report.py`'s
+  fixed-width box in every diagram `reqman-report.py` draws (its
   `NODE_TIKZ_COL`, 2.2in at `\small`, no wrapping or auto-shrink). A Title
   much over ~36 characters gets visibly clipped against the card border —
   check any title that long by rendering the page (or compare against

@@ -13,15 +13,18 @@ from scattered \\refine/\\satisfy/\\reqcover macro calls.
 Usage (run from the repository root):
   python3 reqman-context.py <jobname> <ID> [<ID> ...] [--depth N] [--direction up|down|both] [--format md|json]
   python3 reqman-context.py <jobname> --search TERM
+  python3 reqman-context.py <jobname> --overview
 
 <jobname>-requirements.json is looked up in --dir (default: "docs"), since
 that's where this project's LaTeX build (see docs/latexmkrc) writes it
-alongside the PDF.
+alongside the PDF; --overview lists the artifact types in the order
+<jobname>-types.json, written beside it, says the document declares them.
 """
 import argparse
 import json
 import os
 import sys
+from collections import defaultdict
 
 # "up" = toward parents (this requirement refines/satisfies/verifies/etc. X)
 # "down" = toward children (X refines/satisfies/verifies/etc. this requirement)
@@ -57,6 +60,19 @@ def load_pending(jobname, directory):
             return json.load(f)
     except FileNotFoundError:
         return {}
+
+
+def load_types(jobname, directory):
+    """The artifact type prefixes in the order the document declares them
+    (<jobname>-types.json, which reqman-report.py writes beside the
+    requirements). Best-effort, like load_pending: without the file,
+    --overview lists the types alphabetically."""
+    path = os.path.join(directory, f"{jobname}-types.json")
+    try:
+        with open(path) as f:
+            return [t["prefix"] for t in json.load(f)]
+    except FileNotFoundError:
+        return []
 
 
 def neighbor_ids(entry, direction):
@@ -167,12 +183,65 @@ def cmd_search(data, term):
         print(f"[{e['type']}] {aid}\t{e['title']}\t({e['status']})")
 
 
+def domain_of(aid):
+    """The domain an ID names: the part of its sub-ID before the first dot
+    (HLR-PERSISTENCE.DURABLE-01 belongs to PERSISTENCE)."""
+    return aid.split("-")[1].split(".")[0]
+
+
+def cmd_overview(data, type_order):
+    """The PDF's domain overview as text: each domain with how many artifacts
+    of each type it holds, types in type_order, then the relationships from
+    one domain's artifacts to another's, counted by kind, trace aside."""
+    per_domain = defaultdict(lambda: defaultdict(int))
+    for aid, e in data.items():
+        per_domain[domain_of(aid)][e["type"]] += 1
+    pairs = defaultdict(lambda: defaultdict(int))
+    conflicts = set()
+    for aid, e in data.items():
+        rel = e.get("relationships", {})
+        for key in sorted(UP_KEYS - {"traces_to"}):
+            for tgt in rel.get(key, []):
+                if tgt not in data or domain_of(aid) == domain_of(tgt):
+                    continue
+                if key == "conflicts_with":
+                    # Listed on both artifacts of a conflict: count it once.
+                    if frozenset((aid, tgt)) in conflicts:
+                        continue
+                    conflicts.add(frozenset((aid, tgt)))
+                pairs[(domain_of(aid), domain_of(tgt))][key.replace("_", " ")] += 1
+
+    def order(types):
+        return ([t for t in type_order if t in types]
+                + sorted(t for t in types if t not in type_order))
+
+    domains = sorted(per_domain, key=lambda d: (-sum(per_domain[d].values()), d))
+    print(f"## Domains: {len(data)} artifacts in {len(domains)} domains")
+    print()
+    print("| Domain | Artifacts | By type |")
+    print("|---|---:|---|")
+    for d in domains:
+        counts = per_domain[d]
+        by_type = ", ".join(f"{t} {counts[t]}" for t in order(counts))
+        print(f"| {d} | {sum(counts.values())} | {by_type} |")
+    print()
+    print("## Relationships between domains (trace left out)")
+    print()
+    print("| From | To | Relationships |")
+    print("|---|---|---|")
+    for (src, tgt), rels in sorted(pairs.items(), key=lambda kv: (-sum(kv[1].values()), kv[0])):
+        listed = ", ".join(f"{n} {name}" for name, n in sorted(rels.items(), key=lambda kv: -kv[1]))
+        print(f"| {src} | {tgt} | {listed} |")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("jobname")
     parser.add_argument("ids", nargs="*", help="Requirement ID(s) to fetch")
     parser.add_argument("--search", metavar="TERM", help="Search titles/bodies for TERM")
+    parser.add_argument("--overview", action="store_true",
+                        help="List the domains and the relationships between them")
     parser.add_argument("--depth", type=int, default=1, help="Traversal hops (default: 1)")
     parser.add_argument("--direction", choices=["up", "down", "both"], default="both")
     parser.add_argument("--format", choices=["md", "json"], default="md")
@@ -187,8 +256,12 @@ def main():
         cmd_search(data, args.search)
         return
 
+    if args.overview:
+        cmd_overview(data, load_types(args.jobname, args.dir))
+        return
+
     if not args.ids:
-        parser.error("provide at least one requirement ID, or use --search TERM")
+        parser.error("provide at least one requirement ID, or use --search TERM or --overview")
 
     visited = collect_context(data, args.ids, args.depth, args.direction, pending=pending)
 
