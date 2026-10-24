@@ -2,6 +2,8 @@
 
 > Based on OMG SysML v1.6 (formal/2019-11-01) and SysML v2.0 (formal/2025-09-01)
 
+> This note summarises the standard itself. durable-cache's requirement model takes inspiration from SysML requirement diagrams without following them strictly (see "The Refinement Model" in the Introduction of `docs/durable-cache.pdf`); the req-checking skill (`.claude/skills/req-checking/`) borrows its direction and typing rules from it.
+
 ## 1. Purpose of the Requirement Diagram
 
 A **requirement diagram** (reqd) is one of the nine SysML diagram types. It models text-based requirements as first-class model elements, captures their hierarchical decomposition, and relates them to other model elements (blocks, test cases, use cases, activities, etc.) to provide full traceability across the system model.

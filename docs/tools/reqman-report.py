@@ -225,7 +225,7 @@ TMPL_TIKZ_DIAGRAM = r"""(% for color in colors %)
   edgelabel/.style={font=\sffamily\fontsize{(( label_pt ))}{(( label_pt + 1 ))}\selectfont, inner sep=1pt, fill=white, text=black},
 ]
 
-% --- SysML requirement nodes ---
+% --- requirement nodes ---
 (% for n in nodes %)
 \node[draw=black, thick, inner sep=0pt, outer sep=0pt, font=\sffamily] (( n.nname )) at (( n.coord )) {%
   \setlength\arrayrulewidth{0.4pt}%
@@ -1760,7 +1760,7 @@ def generate_types_json(jobname, prefix_reqtype, type_descriptions, terminal_pre
     r"""<jobname>-types.json, beside <jobname>-requirements.json: the artifact
     types as the document declares them with \reqmantype, in declaration
     order, for tools such as reqman-context that need the types without the
-    LaTeX build. Each entry gives the prefix, the SysML stereotype and its
+    LaTeX build. Each entry gives the prefix, the stereotype and its
     label, the description, and whether the type is terminal."""
     types = [{
         "prefix":      prefix,
