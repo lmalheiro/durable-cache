@@ -48,11 +48,6 @@
 % #1 = repo-relative path, #2 = line number, #3 = link text.
 \newcommand{\pgsrc}[3]{\href{https://github.com/cloudflare/pingora/blob/0.9.0/#1\#L#2}{#3}}
 
-% Object Management Group names, with their copyright mark. Both swallow a
-% following space: write \sysml{} before a word.
-\newcommand{\omg}{OMG\textsuperscript{\copyright}}
-\newcommand{\sysml}{SysML\textsuperscript{\copyright}}
-
 \titleformat{\chapter}[hang]{\Large\bfseries}{\thechapter.}{0.5em}{}
 \titlespacing*{\chapter}{0pt}{1.5ex}{1ex}
 
@@ -62,7 +57,10 @@
     software, \textcopyright{} Cloudflare, Inc., released under the Apache
     License, Version 2.0. This document is an independent requirements
     specification; it is not affiliated with, endorsed by, or sponsored by
-    Cloudflare, Inc. All other trademarks are the property of their respective
+    Cloudflare, Inc. \emph{Object Management Group}, \emph{SysML} and
+    \emph{Systems Modeling Language} are either registered trademarks or
+    trademarks of Object Management Group, Inc. in the United States and/or
+    other countries. All other trademarks are the property of their respective
     owners.}\\[0.4em]\large Requirements Specification}
 \author{Luis Malheiro}
 \date{2026\\[1.5em]{\footnotesize\textcopyright{} 2026 Luis Malheiro. Licensed under
