@@ -228,7 +228,7 @@ test scaffolding, or tooling.
 ├── docs/                      ← the specification this code implements
 │   ├── durable-cache.tex      master document; *-hlr/-refine/-design/-tc/… are
 │   │                            its chapters (stakeholder reqs → ADRs → design →
-│   │                            test cases), in a model inspired by SysML
+│   │                            test cases), in a model inspired by SysML®
 │   │                            requirement diagrams
 │   ├── tools/reqman.sty         the LaTeX requirement environment + relations
 │   ├── tools/reqman-report.py   builds the traceability report and the JSON export
@@ -439,7 +439,7 @@ replace the token: configure it on crates.io for this repository, the workflow
 This project is requirements-driven: `docs/` holds a requirements document
 (stakeholder requirements → decisions/ADRs → design → test cases), and the
 code is traced back to it. Its artifact types and the relationships between
-them are inspired by SysML requirement diagrams, without following them
+them are inspired by SysML® requirement diagrams, without following them
 strictly. Source files carry `IMP-<ID>` marker comments:
 
 ```rust
@@ -601,5 +601,7 @@ Apache-2.0; see [LICENSE](https://github.com/lmalheiro/durable-cache/blob/v0.1.1
 
 ## Trademarks
 
-Pingora is a trademark or registered trademark of Cloudflare, Inc. All other
-trademarks are the property of their respective owners.
+Pingora is a trademark or registered trademark of Cloudflare, Inc. SysML is a
+registered trademark of Object Management Group, Inc. in the United States
+and/or other countries. All other trademarks are the property of their
+respective owners.

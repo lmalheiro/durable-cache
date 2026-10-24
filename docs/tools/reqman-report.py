@@ -581,6 +581,14 @@ _MD_WRAP_MACROS = {
     "emph":   ("_", "_"),
     "texttt": ("`", "`"),
 }
+# Symbols written as macros without an argument, as in \texttrademark{} or
+# \textsuperscript{\textregistered}: the character each one prints.
+_SYMBOL_MACROS = {
+    "textregistered": "\u00ae",
+    "texttrademark":  "\u2122",
+    "textcopyright":  "\u00a9",
+    "copyright":      "\u00a9",
+}
 _DROP_ENVIRONMENTS = {"figure", "center", "tikzpicture"}
 _LIST_ENVIRONMENTS = {"itemize", "enumerate"}
 
@@ -708,6 +716,13 @@ def _process_macros(text):
                 m = _MACRO_RE.match(text, i)
                 name = m.group(1)
                 j    = m.end()
+                if name in _SYMBOL_MACROS:
+                    out.append(_SYMBOL_MACROS[name])
+                    # An empty group only ends the macro's name.
+                    if text.startswith("{}", j):
+                        j += 2
+                    i = j
+                    continue
                 if name == "reqterminal":
                     # \reqterminal[reason] -- drop, including the optional arg.
                     if j < n and text[j] == "[":

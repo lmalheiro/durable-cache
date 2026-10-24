@@ -1,6 +1,6 @@
 ---
 name: req-writing
-description: Write software/system requirements in this project's reqman.sty LaTeX format, a requirement model inspired by SysML requirement diagrams, applying EARS sentence patterns, INCOSE quality rules, verification-method classification, and correct traceability relationships. Use this skill whenever the user asks to write, draft, add, decompose, derive, split, or rewrite a requirement, use case, ADR, design artifact, or test case obligation — or mentions EARS, INCOSE, "shall" statements, requirement IDs (e.g. HLR-*, DFR-*, REQ-*, UC-*, ADR-*, DSN-*, TC-*), or the requirement LaTeX environment. Also use it when reviewing a draft the user wrote before it is committed.
+description: Write software/system requirements in this project's reqman.sty LaTeX format, a requirement model inspired by SysML® requirement diagrams, applying EARS sentence patterns, INCOSE quality rules, verification-method classification, and correct traceability relationships. Use this skill whenever the user asks to write, draft, add, decompose, derive, split, or rewrite a requirement, use case, ADR, design artifact, or test case obligation — or mentions EARS, INCOSE, "shall" statements, requirement IDs (e.g. HLR-*, DFR-*, REQ-*, UC-*, ADR-*, DSN-*, TC-*), or the requirement LaTeX environment. Also use it when reviewing a draft the user wrote before it is committed.
 ---
 
 # Writing Requirements (reqman.sty workflow)
@@ -195,12 +195,12 @@ title) rather than dropping meaning.
 All relationship macros are written **inside the child/source** artifact and
 point at the target ID:
 
-A terminology note on "Requirement" in the table below: it's SysML's
-umbrella sense, which includes decision and design stereotypes
-(`designConstraint`, `structuralRequirement`, `functionalRequirement`) —
-not necessarily a document's own narrower `requirement` *kind* if it draws
-one. Check the target document's own model before assuming "Requirement"
-excludes its decisions or designs.
+A terminology note on "Requirement" in the table below: it's the umbrella
+sense SysML requirement diagrams give it, which includes decision and
+design stereotypes (`designConstraint`, `structuralRequirement`,
+`functionalRequirement`) — not necessarily a document's own narrower
+`requirement` *kind* if it draws one. Check the target document's own model
+before assuming "Requirement" excludes its decisions or designs.
 
 | Macro | Meaning (source → target) | Direction rule |
 |-------|---------------------------|----------------|
@@ -375,3 +375,7 @@ Offer to run `req-checking` on the new text.
   outline. Useful as a cross-check for section-level SRS conventions
   (e.g. how a References or Verification section is normally organised),
   not as a template to follow directly for individual requirement text.
+
+---
+
+SysML is a registered trademark of Object Management Group, Inc. in the United States and/or other countries.

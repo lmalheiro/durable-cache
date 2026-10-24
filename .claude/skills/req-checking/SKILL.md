@@ -1,6 +1,6 @@
 ---
 name: req-checking
-description: Audit and check requirements written in this project's reqman.sty LaTeX format, a requirement model inspired by SysML requirement diagrams, for linguistic quality (INCOSE rules, EARS conformance, ambiguity, verifiability), semantic soundness (compound statements, level mismatch, untestable wording), and structural/traceability correctness (relationship direction rules, deriveReqt fan-in, cycles, conflicts, coverage design). Use this skill whenever the user asks to check, review, audit, validate, lint, critique, or find problems in requirements, specs, use cases, ADRs, or test-case coverage — or asks "is this requirement good/verifiable/ambiguous", mentions traceability gaps, or wants a quality report over a spec document. Complements (does not repeat) the automated checks in reqman-report.py.
+description: Audit and check requirements written in this project's reqman.sty LaTeX format, a requirement model inspired by SysML® requirement diagrams, for linguistic quality (INCOSE rules, EARS conformance, ambiguity, verifiability), semantic soundness (compound statements, level mismatch, untestable wording), and structural/traceability correctness (relationship direction rules, deriveReqt fan-in, cycles, conflicts, coverage design). Use this skill whenever the user asks to check, review, audit, validate, lint, critique, or find problems in requirements, specs, use cases, ADRs, or test-case coverage — or asks "is this requirement good/verifiable/ambiguous", mentions traceability gaps, or wants a quality report over a spec document. Complements (does not repeat) the automated checks in reqman-report.py.
 ---
 
 # Checking Requirements (reqman.sty workflow)
@@ -168,16 +168,16 @@ elaborating a decision). Where that happens, resolve the role from the
 document's own stated model (a "Refinement Model"/kind-taxonomy section, if
 it has one) rather than the bare stereotype string.
 
-Watch for a related, easy-to-miss trap: SysML's own "requirement" is broader
-than the word suggests — decision and design stereotypes
+Watch for a related, easy-to-miss trap: the SysML notion of "requirement"
+is broader than the word suggests — decision and design stereotypes
 (`designConstraint`, `structuralRequirement`, `functionalRequirement`) are
 themselves requirement subtypes, so a generic reference table describing a
 relation's target as "Requirement" already includes decisions and designs.
 A document that draws its own narrower `requirement` *kind*, distinct from
 `decision`/`design`, and names a separate umbrella term for the broader
-sense (e.g. `artifact`) is layering project vocabulary on top of SysML, not
-contradicting it. Resolve which sense is meant before treating a
-target-kind mismatch as a finding.
+sense (e.g. `artifact`) is layering project vocabulary on top of the SysML
+vocabulary, not contradicting it. Resolve which sense is meant before
+treating a target-kind mismatch as a finding.
 
 - **G1** `\deriveReqt` connects one requirement-role artifact to another
   (`stakeholderRequirement`, `requirement`, `functionalRequirement`,
@@ -277,3 +277,7 @@ Every finding quotes the exact offending words and proposes a concrete fix —
 
 Close the report with the three most valuable improvements if the user can
 only do three things.
+
+---
+
+SysML is a registered trademark of Object Management Group, Inc. in the United States and/or other countries.

@@ -1,6 +1,6 @@
-# SysML Requirement Diagram — Standard Reference
+# SysML® Requirement Diagram — Standard Reference
 
-> Based on OMG SysML v1.6 (formal/2019-11-01) and SysML v2.0 (formal/2025-09-01)
+> Based on the OMG SysML® v1.6 (formal/2019-11-01) and SysML v2.0 (formal/2025-09-01) specifications
 
 > This note summarises the standard itself. durable-cache's requirement model takes inspiration from SysML requirement diagrams without following them strictly (see "The Refinement Model" in the Introduction of `docs/durable-cache.pdf`); the req-checking skill (`.claude/skills/req-checking/`) borrows its direction and typing rules from it.
 
@@ -8,13 +8,13 @@
 
 A **requirement diagram** (reqd) is one of the nine SysML diagram types. It models text-based requirements as first-class model elements, captures their hierarchical decomposition, and relates them to other model elements (blocks, test cases, use cases, activities, etc.) to provide full traceability across the system model.
 
-Req diagrams are a specialisation of the UML class diagram. Every element on a reqd is a stereotype applied to a UML `Class`, `Dependency`, or `Usage`.
+Req diagrams are a specialisation of the UML® class diagram. Every element on a reqd is a stereotype applied to a UML `Class`, `Dependency`, or `Usage`.
 
 ---
 
 ## 2. Requirement Node (`«requirement»`)
 
-In **SysML v1.6** the base element is the `«requirement»` stereotyped class. The `Requirement` metaclass extends `Class` and owns two mandatory string properties:
+In the **SysML v1.6** specification, the base element is the `«requirement»` stereotyped class. The `Requirement` metaclass extends `Class` and owns two mandatory string properties:
 
 | Property | Type   | Description                      |
 |----------|--------|----------------------------------|
@@ -34,7 +34,7 @@ requirement req_auth_01 {
 }
 ```
 
-In **SysML v2.0** the notation uses a textual syntax with the keyword `requirement`:
+In the **SysML v2.0** specification, the notation uses a textual syntax with the keyword `requirement`:
 
 ```
 requirement REQ_AUTH_01 {
@@ -46,9 +46,9 @@ Additional compartments for risk, status, source, etc. are user-defined extensio
 
 ---
 
-## 3. Standard Requirement Subtypes (SysML v2)
+## 3. Standard Requirement Subtypes (SysML v2 library)
 
-SysML v2.0 defines a standard library of requirement specialisations. Each inherits `id`, `text`, and the relationship framework from the base `requirement` definition:
+The SysML v2.0 specification defines a standard library of requirement specialisations. Each inherits `id`, `text`, and the relationship framework from the base `requirement` definition:
 
 | Subtype                  | Keyword                    | Purpose                                               |
 |--------------------------|----------------------------|-------------------------------------------------------|
@@ -61,13 +61,13 @@ SysML v2.0 defines a standard library of requirement specialisations. Each inher
 | Use case                 | `useCase`                  | Behavioural scenario expressing a stakeholder goal    |
 | Stakeholder requirement  | `stakeholderRequirement`   | Need or expectation expressed by a stakeholder        |
 
-*Note:* SysML v1.6 does **not** define these subtypes; all requirements use a single `«requirement»` stereotype. The subtype list above reflects the richer type system introduced in SysML v2.0's standard model library.
+*Note:* the SysML v1.6 specification does **not** define these subtypes; all requirements use a single `«requirement»` stereotype. The subtype list above reflects the richer type system introduced in the standard model library of the SysML v2.0 specification.
 
 ---
 
 ## 4. Standard Relationships
 
-SysML defines six standard dependency types that connect requirements to each other and to other model elements:
+The SysML specifications define six standard dependency types that connect requirements to each other and to other model elements:
 
 | Stereotype        | Line Style        | Arrowhead        | Direction                   |
 |-------------------|-------------------|------------------|-----------------------------|
@@ -226,7 +226,7 @@ Mermaid's requirement diagram syntax does not directly support containment arrow
 
 ## 6. Requirement Tables
 
-In addition to the graphical diagram, SysML supports tabular representations of requirements:
+In addition to the graphical diagram, the SysML specifications provide tabular representations of requirements:
 
 - **Requirement table** — rows represent requirements; columns show properties (id, text, status, etc.).
 - **Relationship table** — rows show source elements; columns show relationship type and target.
@@ -239,7 +239,7 @@ These tables are not a separate diagram type, but a view that may appear on any 
 ## 7. Conformance Notes
 
 - The `«requirement»` stereotype and all six relationship stereotypes are mandatory for any tool claiming SysML v1.6 conformance.
-- Requirement subtypes beyond the base `«requirement»` are optional in v1.6 (user-defined via profiling) but part of the mandatory standard library in SysML v2.0.
+- Requirement subtypes beyond the base `«requirement»` are optional in v1.6 (user-defined via profiling) but part of the mandatory standard library in the SysML v2.0 specification.
 - The `id` and `text` properties are mandatory on every requirement. All other compartments (status, risk, priority, etc.) are user extensions.
 - Cross-relationship rules:
   - `«satisfy»`, `«verify»`, `«refine»`, and `«trace»` have a **requirement** as their target.
@@ -254,3 +254,7 @@ These tables are not a separate diagram type, but a view that may appear on any 
 1. OMG SysML v1.6, formal/2019-11-01, §16 (Requirements Model Library)
 2. OMG SysML v2.0, formal/2025-09-01, §8 (Requirement Definition) and §10 (Standard Library)
 3. OMG Systems Modeling API and Services v2.0, formal/2025-09-01
+
+---
+
+OMG SysML, SysML and UML are registered trademarks of Object Management Group, Inc. in the United States and/or other countries.
