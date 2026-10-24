@@ -71,6 +71,8 @@ pub(crate) mod lookup;
 pub(crate) mod metaupdate;
 pub(crate) mod metrics;
 pub(crate) mod miss;
+#[cfg(target_os = "linux")]
+pub(crate) mod nowait;
 pub(crate) mod publish;
 pub(crate) mod purge;
 pub(crate) mod reclaim;
@@ -80,7 +82,7 @@ pub(crate) mod sharding;
 mod storage_impl;
 pub(crate) mod writerid;
 
-pub use config::FsCacheConfig;
+pub use config::{Durability, FsCacheConfig};
 pub use recovery::{recover, RecoveryReport};
 pub use storage_impl::FsCache;
 

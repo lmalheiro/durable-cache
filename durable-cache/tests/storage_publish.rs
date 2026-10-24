@@ -15,7 +15,7 @@
 
 use bytes::Bytes;
 use durable_cache::hooks::FaultPoint;
-use durable_cache::writerid;
+use durable_cache::{writerid, Durability, FsCacheConfig};
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::Storage;
 
@@ -191,6 +191,37 @@ async fn tc_storage_publish_01_synchronises_before_renaming() {
         support::temp_entries(cache, &key).is_empty(),
         "the failed store's temporary is removed with its handler"
     );
+}
+
+/// With `Durability::NoStoreSync`, a store is renamed into place without
+/// being synchronised: a fault injected at the synchronisation is never
+/// reached, and the record is published whole.
+#[tokio::test]
+async fn tc_storage_publish_01_no_store_sync_publishes_without_synchronising() {
+    let tmp = tempfile::tempdir().expect("a temporary cache root");
+    let cache = support::leaked_cache_with(
+        FsCacheConfig::new(tmp.path(), None).with_durability(Durability::NoStoreSync),
+    );
+    let key = support::key("/publish-no-store-sync");
+    let meta = support::meta();
+    let trace = support::inactive_trace();
+
+    cache.hooks().inject_fault(FaultPoint::SyncTemp, 1);
+    let mut handler = cache
+        .get_miss_handler(&key, &meta, &trace)
+        .await
+        .expect("the store opens");
+    handler
+        .write_body(Bytes::from_static(b"body"), true)
+        .await
+        .expect("the body is written");
+    handler
+        .finish()
+        .await
+        .expect("a store that skips the synchronisation never meets its fault");
+
+    let (_, body) = support::read_and_validate_record(&support::canonical_path(cache, &key));
+    assert_eq!(body, b"body", "the record is published whole");
 }
 
 /// Step 6: a store completing once the backend is read-only reports

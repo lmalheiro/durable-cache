@@ -151,6 +151,49 @@ async fn tc_compliance_body_01_seeked_reads_deliver_exactly_the_requested_slice(
     }
 }
 
+/// A lookup reads the body's start along with the metadata, in one read of
+/// the record's first `record::LOOKUP_READ_LEN` bytes, and the hit serves
+/// it from there. Bodies whose record ends just before, at, and just after
+/// the end of that read round-trip whole, and from a seek that starts in
+/// the bytes it holds and ends past them; a multi-chunk body continues from
+/// the file.
+#[tokio::test]
+async fn tc_compliance_body_01_bodies_around_the_end_of_the_lookups_first_read() {
+    let (cache, _tmp) = support::leaked_cache();
+    // One metadata for every record, so they share a body offset.
+    let meta = support::meta();
+    let probe = support::key("/first-read-probe");
+    support::store(cache, &probe, &meta, b"probe").await;
+    let body_offset = support::read_header(&support::canonical_path(cache, &probe)).body_offset();
+    // The body bytes the first read holds, in a record longer than it.
+    let held = durable_cache::record::LOOKUP_READ_LEN as usize - body_offset;
+
+    let sizes = [held - 1, held, held + 1, 3 * 64 * 1024 + 12345];
+    for (i, size) in sizes.into_iter().enumerate() {
+        let key = support::key(&format!("/first-read-{i}"));
+        let body = random_body(size, 0xF125 ^ i as u64);
+        support::store(cache, &key, &meta, &body).await;
+
+        let (_meta, mut hit) = support::lookup_hit(cache, &key).await;
+        let read = support::drain_body(&mut hit).await.expect("the body reads");
+        assert_eq!(read, body, "a {size}-byte body round-trips");
+
+        let start = held - 100;
+        let end = start + 300;
+        let (_meta, mut hit) = support::lookup_hit(cache, &key).await;
+        hit.seek(start, Some(end))
+            .expect("the seek starts inside the body");
+        let read = support::drain_body(&mut hit)
+            .await
+            .expect("the slice reads");
+        assert_eq!(
+            read,
+            &body[start..end.min(size)],
+            "seek({start}, {end}) in a {size}-byte body delivers exactly that slice"
+        );
+    }
+}
+
 /// A seek whose start is not inside the body is an error, as in `MemCache`,
 /// the in-memory backend of `pingora-cache`, rather than an empty read: past
 /// the end of a body, and anywhere in an empty one.

@@ -31,6 +31,8 @@ use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
 use crate::inflight::{InFlightWriter, WriteOutcome};
+#[cfg(target_os = "linux")]
+use crate::nowait;
 use crate::record::{self, ReadError, RecordError, RecordKind};
 use crate::{blocking, key_codec, FsCache};
 
@@ -57,6 +59,9 @@ enum ReadSource {
         /// The body position to stop at, excluded: `body_len`, unless a seek
         /// set it.
         end: u64,
+        /// The body's first bytes, read with the record's metadata
+        /// (`record::LOOKUP_READ_LEN`), until the reads have passed them.
+        prefetched: Bytes,
     },
     /// The temporary of a store still in flight: a partial hit, whose body
     /// grows while it is read (FDS-STORAGE.PARTIAL-01).
@@ -199,6 +204,12 @@ pub(crate) async fn lookup(
     }
 
     let canonical = cache.canonical_path(&name)?;
+    // On Linux, from the page cache on this worker when nothing has to wait
+    // for the device (`crate::nowait`); on the pool otherwise.
+    #[cfg(target_os = "linux")]
+    if let Some(answer) = open_published_nowait(cache, &canonical, &key_bytes) {
+        return answer;
+    }
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
@@ -227,7 +238,7 @@ fn open_published(
             )
         }
     };
-    let mut read = record::read_record_blocking(&file, RecordKind::Published, Some(&key_bytes));
+    let mut read = record::read_published_blocking(&file, &key_bytes);
     // Checksums that kept failing may be an in-place metadata update caught
     // between its two writes, by an updater the scheduler stopped there.
     // Every in-place update holds the key's publication lock from its first
@@ -238,7 +249,7 @@ fn open_published(
     // change meanwhile, as `ChangeLocks::lock_key` requires.
     if matches!(&read, Err(ReadError::Record(e)) if e.is_retryable()) {
         let _key = cache.locks.lock_key(name);
-        read = record::read_record_once(&file, RecordKind::Published, Some(&key_bytes));
+        read = record::read_published_once(&file, &key_bytes);
     }
     let parsed = match read {
         Ok(parsed) => parsed,
@@ -259,23 +270,64 @@ fn open_published(
         }
     };
     let meta = cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes)?;
-    Ok(Some((
-        meta,
-        FsHitHandler {
-            file: Some(Arc::new(file)),
-            source: ReadSource::Complete {
-                body_offset: parsed.header.body_offset() as u64,
-                body_len: parsed.header.body_len(),
-                pos: 0,
-                end: parsed.header.body_len(),
-            },
-            path: canonical,
-            #[cfg(feature = "body-crc-verify")]
-            check: BodyCheck::start(cache, parsed.header.body_crc()),
-            #[cfg(test)]
-            cache,
+    Ok(Some((meta, published_hit(cache, file, parsed, canonical))))
+}
+
+/// [`open_published`] on the worker, from the page cache only
+/// (`crate::nowait`). `None` when a step would wait for the device, or meets
+/// a checksum mismatch, which `open_published` retries under the key's
+/// lock: the caller then runs `open_published` on the pool, from the start.
+#[cfg(target_os = "linux")]
+fn open_published_nowait(
+    cache: &'static FsCache,
+    canonical: &Path,
+    key_bytes: &[u8],
+) -> Option<Result<Option<(CacheMeta, FsHitHandler)>>> {
+    let file = match nowait::open(canonical) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Ok(None)),
+        Err(_) => return None,
+    };
+    let parsed = match record::read_published_nowait(&file, key_bytes) {
+        Ok(parsed) => parsed,
+        Err(ReadError::Record(e)) if !e.is_retryable() => {
+            log::debug!("{} reported as a miss: {e}", canonical.display());
+            return Some(Ok(None));
+        }
+        Err(_) => return None,
+    };
+    let meta = match cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes) {
+        Ok(meta) => meta,
+        Err(e) => return Some(Err(e)),
+    };
+    let hit = published_hit(cache, file, parsed, canonical.to_path_buf());
+    Some(Ok(Some((meta, hit))))
+}
+
+/// The hit handler of the published record `parsed`, open as `file`.
+fn published_hit(
+    cache: &'static FsCache,
+    file: File,
+    parsed: record::ParsedRecord,
+    path: PathBuf,
+) -> FsHitHandler {
+    #[cfg(not(any(test, feature = "body-crc-verify")))]
+    let _ = cache;
+    FsHitHandler {
+        file: Some(Arc::new(file)),
+        source: ReadSource::Complete {
+            body_offset: parsed.header.body_offset() as u64,
+            body_len: parsed.header.body_len(),
+            pos: 0,
+            end: parsed.header.body_len(),
+            prefetched: parsed.body_prefix,
         },
-    )))
+        path,
+        #[cfg(feature = "body-crc-verify")]
+        check: BodyCheck::start(cache, parsed.header.body_crc()),
+        #[cfg(test)]
+        cache,
+    }
 }
 
 /// What opening an in-flight store's temporary found.
@@ -343,18 +395,36 @@ fn open_partial_hit(
     ))
 }
 
-/// One positional read, on the blocking pool: a body read is a `pread` that
-/// may reach the device, which must not run on the worker driving other
-/// connections (FDS-STORAGE.EXECUTOR-01).
-async fn read_at(file: Arc<File>, offset: u64, len: usize, path: &Path) -> Result<Vec<u8>> {
-    blocking::run(move || {
-        let mut buf = vec![0u8; len];
-        Ok(file.read_exact_at(&mut buf, offset).map(|()| buf))
-    })
-    .await?
-    .or_err_with(ErrorType::FileReadError, || {
-        format!("reading {}", path.display())
-    })
+/// Fill `buf` from index `from` on with the file's bytes at `offset`, on
+/// the blocking pool: a body read is a `pread` that may reach the device,
+/// which must not run on the worker driving other connections
+/// (FDS-STORAGE.EXECUTOR-01).
+async fn read_into(
+    file: Arc<File>,
+    mut buf: Vec<u8>,
+    from: usize,
+    offset: u64,
+    path: &Path,
+) -> Result<Vec<u8>> {
+    blocking::run(move || Ok(file.read_exact_at(&mut buf[from..], offset).map(|()| buf)))
+        .await?
+        .or_err_with(ErrorType::FileReadError, || {
+            format!("reading {}", path.display())
+        })
+}
+
+/// [`read_into`] on the worker, from the page cache only (`crate::nowait`):
+/// `false` to read on the pool instead, which also reports any error with
+/// its context.
+#[cfg(target_os = "linux")]
+fn read_into_nowait(file: &File, buf: &mut [u8], offset: u64) -> bool {
+    nowait::read_exact_at(file, buf, offset).is_ok()
+}
+
+/// Without `crate::nowait`, every read goes to the pool.
+#[cfg(not(target_os = "linux"))]
+fn read_into_nowait(_file: &File, _buf: &mut [u8], _offset: u64) -> bool {
+    false
 }
 
 impl FsHitHandler {
@@ -372,6 +442,7 @@ impl FsHitHandler {
                 body_offset,
                 pos,
                 end,
+                prefetched,
                 ..
             } => {
                 if *pos >= *end {
@@ -382,14 +453,38 @@ impl FsHitHandler {
                     return Ok(None);
                 }
                 let len = (*end - *pos).min(CHUNK_SIZE) as usize;
-                let offset = *body_offset + *pos;
-                let buf = read_at(Arc::clone(&file), offset, len, &self.path).await?;
+                // How much of this chunk the lookup has already read.
+                let held = (prefetched.len() as u64)
+                    .saturating_sub(*pos)
+                    .min(len as u64) as usize;
+                let buf = if held == len {
+                    let start = *pos as usize;
+                    prefetched.slice(start..start + len)
+                } else {
+                    // The rest comes from the file: from the page cache on
+                    // this worker if it can, on the pool otherwise, after
+                    // the bytes already held, so a chunk keeps its size.
+                    let mut buf = vec![0u8; len];
+                    if held > 0 {
+                        let start = *pos as usize;
+                        buf[..held].copy_from_slice(&prefetched[start..start + held]);
+                    }
+                    let offset = *body_offset + *pos + held as u64;
+                    if !read_into_nowait(&file, &mut buf[held..], offset) {
+                        buf = read_into(Arc::clone(&file), buf, held, offset, &self.path).await?;
+                    }
+                    Bytes::from(buf)
+                };
                 #[cfg(feature = "body-crc-verify")]
                 if let Some(check) = &mut self.check {
                     check.running = crc32c::crc32c_append(check.running, &buf);
                 }
                 *pos += len as u64;
-                Ok(Some(Bytes::from(buf)))
+                if *pos >= prefetched.len() as u64 {
+                    // Passed: release the lookup's read.
+                    *prefetched = Bytes::new();
+                }
+                Ok(Some(buf))
             }
             ReadSource::Partial {
                 writer,
@@ -407,7 +502,8 @@ impl FsHitHandler {
                 if *read_so_far < valid {
                     let len = (valid - *read_so_far).min(CHUNK_SIZE) as usize;
                     let offset = *body_offset + *read_so_far;
-                    let buf = read_at(Arc::clone(&file), offset, len, &self.path).await?;
+                    let buf =
+                        read_into(Arc::clone(&file), vec![0u8; len], 0, offset, &self.path).await?;
                     *read_so_far += len as u64;
                     return Ok(Some(Bytes::from(buf)));
                 }

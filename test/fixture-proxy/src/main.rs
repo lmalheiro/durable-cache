@@ -17,7 +17,7 @@ mod proxy;
 use std::path::PathBuf;
 
 use clap::Parser;
-use durable_cache::{hotupgrade, recover, test_support, FsCache, FsCacheConfig};
+use durable_cache::{hotupgrade, recover, test_support, Durability, FsCache, FsCacheConfig};
 use pingora_cache::eviction::simple_lru::Manager as EvictionManager;
 use pingora_cache::MemCache;
 use pingora_core::prelude::{Opt, Server};
@@ -34,6 +34,15 @@ enum StorageBackend {
     Fs,
     /// The stock in-memory backend of `pingora-cache`.
     Memcache,
+}
+
+/// `durable_cache::Durability`, as the command line names it.
+#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+enum DurabilityMode {
+    /// Synchronise each store before publishing it: the default.
+    Strict,
+    /// Publish stores without synchronising them first.
+    NoStoreSync,
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
@@ -73,6 +82,11 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = StorageBackend::Fs)]
     storage: StorageBackend,
 
+    /// `FsCacheConfig::with_durability`: what a store does to make itself
+    /// durable before it is published (ADR-PERSISTENCE.DURABILITY-01).
+    #[arg(long, value_enum, default_value_t = DurabilityMode::Strict)]
+    durability: DurabilityMode,
+
     /// Whether Eviction Recovery blocks startup or runs in the background.
     #[arg(long, value_enum, default_value_t = RecoveryMode::Block)]
     recovery_mode: RecoveryMode,
@@ -96,6 +110,13 @@ struct Cli {
     /// to be able to vary it.
     #[arg(long, default_value_t = 1)]
     threads: usize,
+
+    /// `ServerConf::max_blocking_threads`: the most threads the proxy
+    /// service's blocking pool may run, where the backend does its file
+    /// I/O (FDS-STORAGE.EXECUTOR-01). Unset keeps Tokio's 512; a benchmark
+    /// varies it to see what the pool's size costs.
+    #[arg(long)]
+    max_blocking_threads: Option<usize>,
 
     /// `pingora_core::server::configuration::Opt`'s own flags, flattened
     /// in: `-u/--upgrade`, `-d/--daemon`, `-c/--conf`, ... (needed as-is
@@ -128,6 +149,7 @@ fn main() {
         grace_period_seconds: cli.grace_period_seconds,
         graceful_shutdown_timeout_seconds: cli.graceful_shutdown_timeout_seconds,
         threads: cli.threads,
+        max_blocking_threads: cli.max_blocking_threads,
         ..Default::default()
     };
     let mut server = Server::new_with_opt_and_conf(Some(cli.pingora), conf);
@@ -154,8 +176,13 @@ fn main() {
         server.run_forever();
     }
 
-    let fs_cache = FsCache::new(FsCacheConfig::new(&cli.cache_dir, None))
-        .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");
+    let durability = match cli.durability {
+        DurabilityMode::Strict => Durability::Strict,
+        DurabilityMode::NoStoreSync => Durability::NoStoreSync,
+    };
+    let fs_cache =
+        FsCache::new(FsCacheConfig::new(&cli.cache_dir, None).with_durability(durability))
+            .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");
     let fs_cache: &'static FsCache = Box::leak(Box::new(fs_cache));
 
     let eviction: &'static EvictionManager = Box::leak(Box::new(EvictionManager::new(usize::MAX)));
