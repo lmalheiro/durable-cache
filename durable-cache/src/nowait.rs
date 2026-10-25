@@ -23,7 +23,8 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, IoSliceMut};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -126,6 +127,93 @@ pub(crate) fn read_at_most(file: &File, buf: &mut [u8], offset: u64) -> io::Resu
     }
 }
 
+/// Whether a read may wait for the device.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Wait {
+    /// It may: a read on the blocking pool.
+    Allowed,
+    /// It may not: a read on the worker, from the page cache only.
+    Never,
+}
+
+/// Read the file into `buf`, past the bytes it holds, until it holds `end`:
+/// the byte at index `i` of `buf` is the file's byte at `base + i`. The
+/// kernel writes straight into `buf`'s spare capacity, so the bytes need no
+/// zeroing first, as a read into a slice would. With [`Wait::Never`] it
+/// reads from the page cache only, and stops with an error of kind
+/// `WouldBlock` at the first byte that would wait for the device. Whatever
+/// it read stays in `buf`, for the pool to carry on from. The file ending
+/// first is an error of kind `UnexpectedEof`.
+pub(crate) fn fill(
+    file: &File,
+    buf: &mut Vec<u8>,
+    end: usize,
+    base: u64,
+    wait: Wait,
+) -> io::Result<()> {
+    if wait == Wait::Never && buf.len() < end && NO_NOWAIT_READ.load(Ordering::Relaxed) {
+        return Err(would_block());
+    }
+    buf.reserve(end.saturating_sub(buf.len()));
+    while buf.len() < end {
+        let start = buf.len();
+        let Ok(offset) = libc::off_t::try_from(base + start as u64) else {
+            // Beyond what this platform's `off_t` can name: the standard
+            // library's read, into zeroed bytes, on the pool.
+            if wait == Wait::Never {
+                return Err(would_block());
+            }
+            buf.resize(end, 0);
+            return file.read_exact_at(&mut buf[start..], base + start as u64);
+        };
+        let spare = &mut buf.spare_capacity_mut()[..end - start];
+        // SAFETY: `spare` is memory that `buf` owns and nothing else refers
+        // to. The kernel writes at most `spare.len()` bytes into it, and
+        // returns how many it wrote.
+        let read = unsafe {
+            match wait {
+                Wait::Allowed => libc::pread(
+                    file.as_raw_fd(),
+                    spare.as_mut_ptr().cast(),
+                    spare.len(),
+                    offset,
+                ),
+                Wait::Never => {
+                    let iov = libc::iovec {
+                        iov_base: spare.as_mut_ptr().cast(),
+                        iov_len: spare.len(),
+                    };
+                    libc::preadv2(file.as_raw_fd(), &iov, 1, offset, libc::RWF_NOWAIT)
+                }
+            }
+        };
+        match read {
+            0 => return Err(io::ErrorKind::UnexpectedEof.into()),
+            read if read > 0 => {
+                // SAFETY: the kernel has initialised these `read` bytes,
+                // which lie within the capacity reserved above.
+                unsafe { buf.set_len(start + read as usize) };
+            }
+            _ => {
+                let error = io::Error::last_os_error();
+                let errno = Errno::from_raw_os_error(error.raw_os_error().unwrap_or(0));
+                if errno == Errno::INTR {
+                    continue;
+                }
+                if wait == Wait::Never && errno == Errno::AGAIN {
+                    return Err(would_block());
+                }
+                if wait == Wait::Never && unsupported(errno) {
+                    NO_NOWAIT_READ.store(true, Ordering::Relaxed);
+                    return Err(would_block());
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Fill `buf` from the page cache, up to the first byte that would wait for
 /// the device: how many bytes it read. The file ending first is an error
 /// of kind `UnexpectedEof`.
@@ -173,6 +261,53 @@ mod tests {
         std::fs::metadata(path)
             .and_then(|m| m.accessed())
             .expect("the access time reads")
+    }
+
+    /// A file of `len` bytes that differ from their neighbours.
+    fn file_of(dir: &Path, len: usize) -> (File, Vec<u8>) {
+        let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+        let path = dir.join("body");
+        std::fs::write(&path, &bytes).expect("the file is written");
+        (File::open(&path).expect("the file opens"), bytes)
+    }
+
+    /// `fill` reads the range asked for, and carries on from the bytes a
+    /// buffer already holds, waiting or not.
+    #[test]
+    fn fill_reads_the_range_and_carries_on_from_what_it_holds() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let (file, bytes) = file_of(dir.path(), 300_000);
+
+        let mut buf = Vec::new();
+        fill(&file, &mut buf, 100_000, 50_000, Wait::Allowed).expect("the range reads");
+        assert_eq!(buf, &bytes[50_000..150_000]);
+
+        let mut buf = bytes[1000..1500].to_vec();
+        fill(&file, &mut buf, 200_000, 1000, Wait::Allowed).expect("the rest reads");
+        assert_eq!(buf, &bytes[1000..201_000]);
+
+        // The file was just written, so its pages are cached, unless this
+        // file system cannot tell (then the read would wait).
+        let mut buf = vec![bytes[7]];
+        match fill(&file, &mut buf, 90_000, 7, Wait::Never) {
+            Ok(()) => assert_eq!(buf, &bytes[7..90_007]),
+            Err(e) => {
+                assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}");
+                assert_eq!(buf, &bytes[7..7 + buf.len()], "what it read is kept");
+            }
+        }
+    }
+
+    /// The file ending before the range is an error of kind
+    /// `UnexpectedEof`, and the bytes read until then stay in the buffer.
+    #[test]
+    fn fill_past_the_end_of_the_file_is_unexpected_eof() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let (file, bytes) = file_of(dir.path(), 10_000);
+        let mut buf = Vec::new();
+        let e = fill(&file, &mut buf, 5000, 8000, Wait::Allowed).expect_err("the file ends first");
+        assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(buf, &bytes[8000..]);
     }
 
     /// Reading a record, on the worker or on the pool, leaves its access

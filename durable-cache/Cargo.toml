@@ -44,9 +44,9 @@ thiserror.workspace = true
 # rt: spawn_blocking and yield_now; sync: broadcast and Notify; time: sleep.
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
-# Lookups and body reads from the page cache on the worker (src/nowait.rs):
-# `openat2` with `RESOLVE_CACHED` and `preadv2` with `RWF_NOWAIT`, without
-# `unsafe`.
+# Lookups from the page cache on the worker (src/nowait.rs): `openat2` with
+# `RESOLVE_CACHED` and the first read's `preadv2` with `RWF_NOWAIT`, without
+# `unsafe`. Body reads go through libc, into memory not zeroed first.
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1", features = ["fs"] }
 

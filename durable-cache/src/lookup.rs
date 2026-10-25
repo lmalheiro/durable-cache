@@ -16,7 +16,7 @@
 
 use std::any::Any;
 use std::fs::File;
-use std::os::unix::fs::{FileExt, MetadataExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -480,35 +480,51 @@ fn open_to_read(path: &Path) -> std::io::Result<File> {
     File::open(path)
 }
 
-/// Fill `buf` from index `from` on with the file's bytes at `offset`, on
+/// Read the file into `buf`, past the bytes it holds, until it holds `end`,
+/// the byte at index `i` of `buf` being the file's byte at `base + i`, on
 /// the blocking pool: a body read is a `pread` that may reach the device,
 /// which must not run on the worker driving other connections
 /// (FDS-STORAGE.EXECUTOR-01).
-async fn read_into(
+async fn fill_on_pool(
     file: Arc<File>,
     mut buf: Vec<u8>,
-    from: usize,
-    offset: u64,
+    end: usize,
+    base: u64,
     path: &Path,
 ) -> Result<Vec<u8>> {
-    blocking::run(move || Ok(file.read_exact_at(&mut buf[from..], offset).map(|()| buf)))
+    blocking::run(move || Ok(fill_waiting(&file, &mut buf, end, base).map(|()| buf)))
         .await?
         .or_err_with(ErrorType::FileReadError, || {
             format!("reading {}", path.display())
         })
 }
 
-/// [`read_into`] on the worker, from the page cache only (`crate::nowait`):
-/// `false` to read on the pool instead, which also reports any error with
-/// its context.
+/// [`fill_on_pool`]'s read: on Linux into bytes not zeroed first
+/// (`crate::nowait`).
 #[cfg(target_os = "linux")]
-fn read_into_nowait(file: &File, buf: &mut [u8], offset: u64) -> bool {
-    nowait::read_exact_at(file, buf, offset).is_ok()
+fn fill_waiting(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> std::io::Result<()> {
+    nowait::fill(file, buf, end, base, nowait::Wait::Allowed)
+}
+
+/// [`fill_on_pool`]'s read, into zeroed bytes.
+#[cfg(not(target_os = "linux"))]
+fn fill_waiting(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> std::io::Result<()> {
+    let start = buf.len();
+    buf.resize(end, 0);
+    std::os::unix::fs::FileExt::read_exact_at(file, &mut buf[start..], base + start as u64)
+}
+
+/// [`fill_on_pool`] on the worker, from the page cache only
+/// (`crate::nowait`): `false` to carry on on the pool, which also reports
+/// any error with its context.
+#[cfg(target_os = "linux")]
+fn fill_on_worker(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> bool {
+    nowait::fill(file, buf, end, base, nowait::Wait::Never).is_ok()
 }
 
 /// Without `crate::nowait`, every read goes to the pool.
 #[cfg(not(target_os = "linux"))]
-fn read_into_nowait(_file: &File, _buf: &mut [u8], _offset: u64) -> bool {
+fn fill_on_worker(_file: &File, _buf: &mut Vec<u8>, _end: usize, _base: u64) -> bool {
     false
 }
 
@@ -549,14 +565,15 @@ impl FsHitHandler {
                     // The rest comes from the file: from the page cache on
                     // this worker if it can, on the pool otherwise, after
                     // the bytes already held, so a chunk keeps its size.
-                    let mut buf = vec![0u8; len];
+                    let mut buf = Vec::with_capacity(len);
                     if held > 0 {
                         let start = *pos as usize;
-                        buf[..held].copy_from_slice(&prefetched[start..start + held]);
+                        buf.extend_from_slice(&prefetched[start..start + held]);
                     }
-                    let offset = *body_offset + *pos + held as u64;
-                    if !read_into_nowait(&file, &mut buf[held..], offset) {
-                        buf = read_into(Arc::clone(&file), buf, held, offset, &self.path).await?;
+                    let base = *body_offset + *pos;
+                    if !fill_on_worker(&file, &mut buf, len, base) {
+                        let file = Arc::clone(&file);
+                        buf = fill_on_pool(file, buf, len, base, &self.path).await?;
                     }
                     Bytes::from(buf)
                 };
@@ -589,9 +606,10 @@ impl FsHitHandler {
                     let offset = *body_offset + *read_so_far;
                     // The store has just written these bytes: from the page
                     // cache on this worker if it can, on the pool otherwise.
-                    let mut buf = vec![0u8; len];
-                    if !read_into_nowait(&file, &mut buf, offset) {
-                        buf = read_into(Arc::clone(&file), buf, 0, offset, &self.path).await?;
+                    let mut buf = Vec::with_capacity(len);
+                    if !fill_on_worker(&file, &mut buf, len, offset) {
+                        let file = Arc::clone(&file);
+                        buf = fill_on_pool(file, buf, len, offset, &self.path).await?;
                     }
                     *read_so_far += len as u64;
                     return Ok(Some(Bytes::from(buf)));
