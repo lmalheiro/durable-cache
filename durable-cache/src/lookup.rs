@@ -227,7 +227,7 @@ fn open_published(
     canonical: PathBuf,
     key_bytes: Vec<u8>,
 ) -> Result<Option<(CacheMeta, FsHitHandler)>> {
-    let file = match File::open(&canonical) {
+    let file = match open_to_read(&canonical) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
@@ -347,7 +347,7 @@ fn open_partial_hit(
     writer: Arc<InFlightWriter>,
     key_bytes: &[u8],
 ) -> Result<InFlightTemp> {
-    let file = match File::open(&writer.temp_path) {
+    let file = match open_to_read(&writer.temp_path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(InFlightTemp::Gone),
         Err(e) => {
@@ -393,6 +393,19 @@ fn open_partial_hit(
             cache,
         },
     ))
+}
+
+/// Open a record, or a store's temporary, to read it on the blocking pool;
+/// on Linux without updating its access time (`crate::nowait`).
+#[cfg(target_os = "linux")]
+fn open_to_read(path: &Path) -> std::io::Result<File> {
+    nowait::open_blocking(path)
+}
+
+/// Open a record, or a store's temporary, to read it on the blocking pool.
+#[cfg(not(target_os = "linux"))]
+fn open_to_read(path: &Path) -> std::io::Result<File> {
+    File::open(path)
 }
 
 /// Fill `buf` from index `from` on with the file's bytes at `offset`, on
