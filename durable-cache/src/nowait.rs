@@ -5,9 +5,11 @@
 //! handoff to the blocking pool (Linux only). `openat2` with `RESOLVE_CACHED`
 //! and `preadv2` with `RWF_NOWAIT` report `EAGAIN` instead of waiting for
 //! the device, and the caller then does the whole operation on the pool, as
-//! FDS-STORAGE.EXECUTOR-01 has it. A kernel that lacks the call or the flag
-//! reports an error this module treats the same way, so it only ever takes
-//! the pool path.
+//! FDS-STORAGE.EXECUTOR-01 has it. A kernel that lacks the call or the flag,
+//! or a file system that does not support the flag, reports an error that
+//! this module remembers: from then on, the operation goes to the pool
+//! without trying again. The memory is the process's, as a process normally
+//! keeps one cache, on one file system.
 //!
 //! Records are opened with `O_NOATIME`, here and on the pool
 //! ([`open_blocking`]). A read that updates a file's access time dirties its
@@ -32,6 +34,14 @@ use rustix::io::{preadv2, Errno, ReadWriteFlags};
 /// another user than this process's.
 static NOATIME_REFUSED: AtomicBool = AtomicBool::new(false);
 
+/// Set once `openat2` or its `RESOLVE_CACHED` (Linux 5.12) turned out
+/// missing.
+static NO_CACHED_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Set once `preadv2` or its `RWF_NOWAIT` (Linux 4.14) turned out missing,
+/// or unsupported by the cache's file system.
+static NO_NOWAIT_READ: AtomicBool = AtomicBool::new(false);
+
 /// The flags a record is opened to read with.
 fn read_flags() -> OFlags {
     let flags = OFlags::RDONLY | OFlags::CLOEXEC;
@@ -42,20 +52,24 @@ fn read_flags() -> OFlags {
     }
 }
 
-/// Whether `errno` means that the call would have waited, or that this
-/// kernel cannot tell: `EAGAIN`, or the `ENOSYS`, `EINVAL` or `EOPNOTSUPP`
-/// of a kernel without `openat2`, `RESOLVE_CACHED` (Linux 5.12) or
-/// `RWF_NOWAIT` (Linux 4.14).
-fn would_wait(errno: Errno) -> bool {
-    errno == Errno::AGAIN
-        || errno == Errno::NOSYS
-        || errno == Errno::INVAL
-        || errno == Errno::OPNOTSUPP
+/// Whether `errno` says that the call or its flag is missing (`ENOSYS`,
+/// `EINVAL`), or unsupported by the file system (`EOPNOTSUPP`).
+fn unsupported(errno: Errno) -> bool {
+    errno == Errno::NOSYS || errno == Errno::INVAL || errno == Errno::OPNOTSUPP
+}
+
+/// The error of an operation that would wait for the device, or that this
+/// system cannot tell would not.
+fn would_block() -> io::Error {
+    io::ErrorKind::WouldBlock.into()
 }
 
 /// Open `path` read-only, if every component of it is in the dentry cache;
 /// an error of kind `WouldBlock` if not.
 pub(crate) fn open(path: &Path) -> io::Result<File> {
+    if NO_CACHED_OPEN.load(Ordering::Relaxed) {
+        return Err(would_block());
+    }
     loop {
         let flags = read_flags();
         match openat2(CWD, path, flags, Mode::empty(), ResolveFlags::CACHED) {
@@ -63,7 +77,11 @@ pub(crate) fn open(path: &Path) -> io::Result<File> {
             Err(errno) if errno == Errno::PERM && flags.contains(OFlags::NOATIME) => {
                 NOATIME_REFUSED.store(true, Ordering::Relaxed);
             }
-            Err(errno) if would_wait(errno) => return Err(io::ErrorKind::WouldBlock.into()),
+            Err(errno) if errno == Errno::AGAIN => return Err(would_block()),
+            Err(errno) if unsupported(errno) => {
+                NO_CACHED_OPEN.store(true, Ordering::Relaxed);
+                return Err(would_block());
+            }
             Err(errno) => return Err(errno.into()),
         }
     }
@@ -91,6 +109,9 @@ pub(crate) fn open_blocking(path: &Path) -> io::Result<File> {
 /// `FileExt::read_exact_at` from the page cache only: an error of kind
 /// `WouldBlock` as soon as a read would wait for the device.
 pub(crate) fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
+    if NO_NOWAIT_READ.load(Ordering::Relaxed) && !buf.is_empty() {
+        return Err(would_block());
+    }
     while !buf.is_empty() {
         match preadv2(
             file,
@@ -104,7 +125,11 @@ pub(crate) fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) ->
                 offset += n as u64;
             }
             Err(errno) if errno == Errno::INTR => {}
-            Err(errno) if would_wait(errno) => return Err(io::ErrorKind::WouldBlock.into()),
+            Err(errno) if errno == Errno::AGAIN => return Err(would_block()),
+            Err(errno) if unsupported(errno) => {
+                NO_NOWAIT_READ.store(true, Ordering::Relaxed);
+                return Err(would_block());
+            }
             Err(errno) => return Err(errno.into()),
         }
     }
