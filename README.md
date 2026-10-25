@@ -400,7 +400,7 @@ Two differences shape the results:
   it, its crash safety; nginx never synchronises its cache files. The fill
   scenarios show that cost.
 - nginx sends a hit's body from the file with `sendfile`, without copying it
-  through user space; durable-cache reads it in 64 KiB chunks.
+  through user space; durable-cache reads it in 128 KiB chunks.
 
 ### Continuous integration
 

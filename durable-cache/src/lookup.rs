@@ -41,7 +41,11 @@ use crate::{blocking, key_codec, FsCache};
 // IMP-STORAGE.PUBLISH-01 covers the writer half.
 // IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
 
-const CHUNK_SIZE: u64 = 64 * 1024;
+/// The most body one read delivers. A larger chunk takes fewer reads and
+/// fewer trips through Pingora for a large body, but more memory per read.
+/// Measured on 1 MiB hits served from the page cache, 128 KiB was faster
+/// than 64 KiB, 256 KiB no faster than 128 KiB, and 1 MiB much slower.
+pub(crate) const CHUNK_SIZE: u64 = 128 * 1024;
 
 /// Where a hit's body comes from, and how far it has been read.
 ///
