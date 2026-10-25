@@ -207,27 +207,43 @@ pub(crate) async fn lookup(
     // On Linux, from the page cache on this worker when nothing has to wait
     // for the device (`crate::nowait`); on the pool otherwise.
     #[cfg(target_os = "linux")]
-    if let Some(answer) = open_published_nowait(cache, &canonical, &key_bytes) {
-        return answer;
-    }
+    let opened = match open_published_nowait(cache, &canonical, &key_bytes) {
+        OnWorker::Done(answer) => return answer,
+        OnWorker::ToPool(opened) => opened,
+    };
+    #[cfg(not(target_os = "linux"))]
+    let opened = None;
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
     // (FDS-STORAGE.EXECUTOR-01).
-    blocking::run(move || open_published(cache, &name, canonical, key_bytes)).await
+    blocking::run(move || open_published(cache, &name, canonical, key_bytes, opened)).await
+}
+
+/// What an operation tried on the worker came to (`crate::nowait`).
+#[cfg(target_os = "linux")]
+enum OnWorker<T> {
+    /// Its answer.
+    Done(T),
+    /// The pool takes over, with the file if the worker opened it: so that
+    /// the pool does not open it again, and the worker does not close it. A
+    /// close can free a file that a store, a purge or an abort has just
+    /// removed, if it was its last descriptor (see `FsHitHandler`'s `Drop`).
+    ToPool(Option<File>),
 }
 
 /// Open and validate the published record at `canonical`, the record of the
 /// key whose files are named `name`, returning the hit it answers with, or
-/// `None` for a miss. Blocking throughout; called only from the blocking
-/// pool.
+/// `None` for a miss; `opened` is the record, if the worker opened it
+/// already. Blocking throughout; called only from the blocking pool.
 fn open_published(
     cache: &'static FsCache,
     name: &str,
     canonical: PathBuf,
     key_bytes: Vec<u8>,
+    opened: Option<File>,
 ) -> Result<Option<(CacheMeta, FsHitHandler)>> {
-    let file = match open_to_read(&canonical) {
+    let file = match opened.map_or_else(|| open_to_read(&canonical), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
@@ -274,34 +290,30 @@ fn open_published(
 }
 
 /// [`open_published`] on the worker, from the page cache only
-/// (`crate::nowait`). `None` when a step would wait for the device, or meets
-/// a checksum mismatch, which `open_published` retries under the key's
-/// lock: the caller then runs `open_published` on the pool, from the start.
+/// (`crate::nowait`). It answers a hit, and a miss on a record that does not
+/// exist. Anything else goes to the pool, which does it all again: a read
+/// that would wait for the device, a checksum mismatch that
+/// `open_published` retries under the key's lock, a record it reports as a
+/// miss, an error.
 #[cfg(target_os = "linux")]
 fn open_published_nowait(
     cache: &'static FsCache,
     canonical: &Path,
     key_bytes: &[u8],
-) -> Option<Result<Option<(CacheMeta, FsHitHandler)>>> {
+) -> OnWorker<Result<Option<(CacheMeta, FsHitHandler)>>> {
     let file = match nowait::open(canonical) {
         Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Ok(None)),
-        Err(_) => return None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return OnWorker::Done(Ok(None)),
+        Err(_) => return OnWorker::ToPool(None),
     };
-    let parsed = match record::read_published_nowait(&file, key_bytes) {
-        Ok(parsed) => parsed,
-        Err(ReadError::Record(e)) if !e.is_retryable() => {
-            log::debug!("{} reported as a miss: {e}", canonical.display());
-            return Some(Ok(None));
-        }
-        Err(_) => return None,
+    let Ok(parsed) = record::read_published_nowait(&file, key_bytes) else {
+        return OnWorker::ToPool(Some(file));
     };
-    let meta = match cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes) {
-        Ok(meta) => meta,
-        Err(e) => return Some(Err(e)),
+    let Ok(meta) = cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes) else {
+        return OnWorker::ToPool(Some(file));
     };
     let hit = published_hit(cache, file, parsed, canonical.to_path_buf());
-    Some(Ok(Some((meta, hit))))
+    OnWorker::Done(Ok(Some((meta, hit))))
 }
 
 /// The hit handler of the published record `parsed`, open as `file`.
