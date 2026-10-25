@@ -173,6 +173,21 @@ pub fn read_published_nowait(file: &File, expected_key: &[u8]) -> Result<ParsedR
     )
 }
 
+/// [`read_record_once`] for the temporary of a store in flight, from the
+/// page cache only, for the worker's fast path (`crate::nowait`): a read
+/// that would wait for the device fails with an I/O error of kind
+/// `WouldBlock`.
+#[cfg(target_os = "linux")]
+pub fn read_in_flight_nowait(file: &File, expected_key: &[u8]) -> Result<ParsedRecord, ReadError> {
+    read_record_with(
+        file,
+        RecordKind::InFlight,
+        Some(expected_key),
+        NOWAIT,
+        LOOKUP_READ_LEN,
+    )
+}
+
 /// [`read_record_once`], reading the record with `reads`. When `first_read`
 /// is above zero, one read of up to the file's first `first_read` bytes
 /// comes first, and each part it covers is taken from it instead of being

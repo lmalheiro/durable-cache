@@ -173,9 +173,24 @@ pub(crate) async fn lookup(
         None => cache.inflight.most_recent(&name),
     };
     if let Some(writer) = in_flight {
-        let key_bytes = key_bytes.clone();
-        let opening = Arc::clone(&writer);
-        match blocking::run(move || open_partial_hit(cache, opening, &key_bytes)).await? {
+        // On Linux, from the page cache on this worker first: the store has
+        // just written the temporary (`crate::nowait`).
+        #[cfg(target_os = "linux")]
+        let (found, opened) = match open_partial_hit_nowait(cache, &writer, &key_bytes) {
+            OnWorker::Done(found) => (Some(found), None),
+            OnWorker::ToPool(opened) => (None, opened),
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (found, opened): (Option<InFlightTemp>, Option<File>) = (None, None);
+        let found = match found {
+            Some(found) => found,
+            None => {
+                let key_bytes = key_bytes.clone();
+                let opening = Arc::clone(&writer);
+                blocking::run(move || open_partial_hit(cache, opening, &key_bytes, opened)).await?
+            }
+        };
+        match found {
             InFlightTemp::Hit(meta, hit) => return Ok(Some((meta, hit))),
             // The store wrote this fixed part in full before registering,
             // and a read torn by its header update is retried, so this is
@@ -353,13 +368,15 @@ enum InFlightTemp {
     Unreadable(RecordError),
 }
 
-/// Open a partial hit on `writer`'s temporary.
+/// Open a partial hit on `writer`'s temporary; `opened` is the temporary,
+/// if the worker opened it already.
 fn open_partial_hit(
     cache: &'static FsCache,
     writer: Arc<InFlightWriter>,
     key_bytes: &[u8],
+    opened: Option<File>,
 ) -> Result<InFlightTemp> {
-    let file = match open_to_read(&writer.temp_path) {
+    let file = match opened.map_or_else(|| open_to_read(&writer.temp_path), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(InFlightTemp::Gone),
         Err(e) => {
@@ -388,8 +405,47 @@ fn open_partial_hit(
         }
     };
     let meta = cache.decode_meta(&writer.internal_meta, &writer.header_meta)?;
+    Ok(partial_hit(cache, writer, file, &parsed, meta))
+}
+
+/// [`open_partial_hit`] on the worker, from the page cache only
+/// (`crate::nowait`). It answers a partial hit, and a temporary that is
+/// gone. Anything else goes to the pool, which does it all again.
+#[cfg(target_os = "linux")]
+fn open_partial_hit_nowait(
+    cache: &'static FsCache,
+    writer: &Arc<InFlightWriter>,
+    key_bytes: &[u8],
+) -> OnWorker<InFlightTemp> {
+    let file = match nowait::open(&writer.temp_path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return OnWorker::Done(InFlightTemp::Gone)
+        }
+        Err(_) => return OnWorker::ToPool(None),
+    };
+    let Ok(parsed) = record::read_in_flight_nowait(&file, key_bytes) else {
+        return OnWorker::ToPool(Some(file));
+    };
+    let Ok(meta) = cache.decode_meta(&writer.internal_meta, &writer.header_meta) else {
+        return OnWorker::ToPool(Some(file));
+    };
+    OnWorker::Done(partial_hit(cache, Arc::clone(writer), file, &parsed, meta))
+}
+
+/// The partial hit on `writer`'s temporary, open as `file`, whose fixed part
+/// is `parsed`.
+fn partial_hit(
+    cache: &'static FsCache,
+    writer: Arc<InFlightWriter>,
+    file: File,
+    parsed: &record::ParsedRecord,
+    meta: CacheMeta,
+) -> InFlightTemp {
+    #[cfg(not(test))]
+    let _ = cache;
     let path = writer.temp_path.clone();
-    Ok(InFlightTemp::Hit(
+    InFlightTemp::Hit(
         meta,
         FsHitHandler {
             file: Some(Arc::new(file)),
@@ -404,7 +460,7 @@ fn open_partial_hit(
             #[cfg(test)]
             cache,
         },
-    ))
+    )
 }
 
 /// Open a record, or a store's temporary, to read it on the blocking pool;
@@ -527,8 +583,12 @@ impl FsHitHandler {
                 if *read_so_far < valid {
                     let len = (valid - *read_so_far).min(CHUNK_SIZE) as usize;
                     let offset = *body_offset + *read_so_far;
-                    let buf =
-                        read_into(Arc::clone(&file), vec![0u8; len], 0, offset, &self.path).await?;
+                    // The store has just written these bytes: from the page
+                    // cache on this worker if it can, on the pool otherwise.
+                    let mut buf = vec![0u8; len];
+                    if !read_into_nowait(&file, &mut buf, offset) {
+                        buf = read_into(Arc::clone(&file), buf, 0, offset, &self.path).await?;
+                    }
                     *read_so_far += len as u64;
                     return Ok(Some(Bytes::from(buf)));
                 }

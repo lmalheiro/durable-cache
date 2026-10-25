@@ -107,10 +107,12 @@ runs each one on tokio's blocking pool rather than on the worker Pingora
 polls it from (`ADR-STORAGE.EXECUTOR-01`). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
-or a page-cache miss. On Linux, hits are the exception when their record is
-in the page cache: the lookup and its body reads run on the worker, with
+or a page-cache miss. On Linux, hits are the exception when what they read
+is in the page cache: the lookup and its body reads run on the worker, with
 `openat2` and `preadv2` flags that fail rather than wait for the device, and
-whatever would wait goes to the pool. The pool is sized by two `ServerConf` settings:
+whatever would wait goes to the pool. That includes partial hits on a store
+still being written, through which Pingora also serves each fill's own
+response. The pool is sized by two `ServerConf` settings:
 `max_blocking_threads` (unset keeps tokio's 512) and
 `blocking_threads_ttl_seconds`, how long an idle thread lives (unset keeps
 10 s). The pool's threads mostly wait on the disk, so the maximum caps how

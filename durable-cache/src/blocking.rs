@@ -20,10 +20,10 @@
 //! not per syscall — so the synchronous code below stays exactly as it was
 //! and the worker is free again immediately.
 //!
-//! On Linux, a lookup of a published record and each read of its body first
-//! try the page cache on the worker itself, with calls that fail rather than
-//! wait for the device (`crate::nowait`). Only an operation that would wait
-//! comes here, whole.
+//! On Linux, a lookup and each read of a hit's body, a partial hit's
+//! included, first try the page cache on the worker itself, with calls that
+//! fail rather than wait for the device (`crate::nowait`). Only an operation
+//! that would wait comes here, whole.
 
 use std::fs::File;
 #[cfg(test)]
