@@ -108,32 +108,45 @@ pub(crate) fn open_blocking(path: &Path) -> io::Result<File> {
 
 /// `FileExt::read_exact_at` from the page cache only: an error of kind
 /// `WouldBlock` as soon as a read would wait for the device.
-pub(crate) fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
-    if NO_NOWAIT_READ.load(Ordering::Relaxed) && !buf.is_empty() {
-        return Err(would_block());
+pub(crate) fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    if read_cached(file, buf, offset)? == buf.len() {
+        Ok(())
+    } else {
+        Err(would_block())
     }
-    while !buf.is_empty() {
+}
+
+/// The start of `buf` filled from the page cache, as far as the bytes at
+/// `offset` are there: how many were read, short of `buf.len()` if the rest
+/// would wait for the device. `WouldBlock` if none could be read.
+pub(crate) fn read_at_most(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    match read_cached(file, buf, offset)? {
+        0 if !buf.is_empty() => Err(would_block()),
+        read => Ok(read),
+    }
+}
+
+/// Fill `buf` from the page cache, up to the first byte that would wait for
+/// the device: how many bytes it read. The file ending first is an error
+/// of kind `UnexpectedEof`.
+fn read_cached(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    let mut read = 0;
+    while read < buf.len() && !NO_NOWAIT_READ.load(Ordering::Relaxed) {
         match preadv2(
             file,
-            &mut [IoSliceMut::new(buf)],
-            offset,
+            &mut [IoSliceMut::new(&mut buf[read..])],
+            offset + read as u64,
             ReadWriteFlags::NOWAIT,
         ) {
             Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
-            Ok(n) => {
-                buf = &mut buf[n..];
-                offset += n as u64;
-            }
+            Ok(n) => read += n,
             Err(errno) if errno == Errno::INTR => {}
-            Err(errno) if errno == Errno::AGAIN => return Err(would_block()),
-            Err(errno) if unsupported(errno) => {
-                NO_NOWAIT_READ.store(true, Ordering::Relaxed);
-                return Err(would_block());
-            }
+            Err(errno) if errno == Errno::AGAIN => break,
+            Err(errno) if unsupported(errno) => NO_NOWAIT_READ.store(true, Ordering::Relaxed),
             Err(errno) => return Err(errno.into()),
         }
     }
-    Ok(())
+    Ok(read)
 }
 
 #[cfg(test)]

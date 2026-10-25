@@ -93,6 +93,30 @@ impl FileIdentity {
     }
 }
 
+/// How a record's bytes are read: waiting for the device if need be, or
+/// from the page cache only (`crate::nowait`).
+#[derive(Clone, Copy)]
+struct Reads {
+    /// Fill the buffer, or fail.
+    exact: fn(&File, &mut [u8], u64) -> io::Result<()>,
+    /// Fill as much of the buffer as can be read without waiting, if
+    /// waiting is not allowed: how many bytes, at least one.
+    prefix: fn(&File, &mut [u8], u64) -> io::Result<usize>,
+}
+
+/// Reads that wait for the device when they must.
+const BLOCKING: Reads = Reads {
+    exact: <File as FileExt>::read_exact_at,
+    prefix: |file, buf, offset| file.read_exact_at(buf, offset).map(|()| buf.len()),
+};
+
+/// Reads from the page cache only (`crate::nowait`).
+#[cfg(target_os = "linux")]
+const NOWAIT: Reads = Reads {
+    exact: crate::nowait::read_exact_at,
+    prefix: crate::nowait::read_at_most,
+};
+
 /// A failed read: either the record is unacceptable, or the file could not
 /// be read at all.
 #[derive(Debug, thiserror::Error)]
@@ -115,13 +139,7 @@ pub fn read_record_once(
     kind: RecordKind,
     expected_key: Option<&[u8]>,
 ) -> Result<ParsedRecord, ReadError> {
-    read_record_with(
-        file,
-        kind,
-        expected_key,
-        <File as FileExt>::read_exact_at,
-        0,
-    )
+    read_record_with(file, kind, expected_key, BLOCKING, 0)
 }
 
 /// [`read_record_once`] for a lookup of the published record of
@@ -133,40 +151,53 @@ pub fn read_published_once(file: &File, expected_key: &[u8]) -> Result<ParsedRec
         file,
         RecordKind::Published,
         Some(expected_key),
-        <File as FileExt>::read_exact_at,
+        BLOCKING,
         LOOKUP_READ_LEN,
     )
 }
 
 /// [`read_published_once`] from the page cache only, for the worker's fast
 /// path (`crate::nowait`): a read that would wait for the device fails with
-/// an I/O error of kind `WouldBlock`.
+/// an I/O error of kind `WouldBlock`. The first read keeps what the page
+/// cache holds of the file's first [`LOOKUP_READ_LEN`] bytes, so that the
+/// lookup succeeds when that covers the metadata, with a shorter
+/// [`ParsedRecord::body_prefix`].
 #[cfg(target_os = "linux")]
 pub fn read_published_nowait(file: &File, expected_key: &[u8]) -> Result<ParsedRecord, ReadError> {
     read_record_with(
         file,
         RecordKind::Published,
         Some(expected_key),
-        crate::nowait::read_exact_at,
+        NOWAIT,
         LOOKUP_READ_LEN,
     )
 }
 
-/// [`read_record_once`], reading each part of the record with `read`. When
-/// `first_read` is above zero, one read of the file's first `first_read`
-/// bytes comes first, and each part it covers is taken from it instead of
-/// being read on its own.
+/// [`read_record_once`], reading the record with `reads`. When `first_read`
+/// is above zero, one read of up to the file's first `first_read` bytes
+/// comes first, and each part it covers is taken from it instead of being
+/// read on its own.
 fn read_record_with(
     file: &File,
     kind: RecordKind,
     expected_key: Option<&[u8]>,
-    read: fn(&File, &mut [u8], u64) -> io::Result<()>,
+    reads: Reads,
     first_read: u64,
 ) -> Result<ParsedRecord, ReadError> {
     let meta = file.metadata()?;
     let file_len = meta.len();
     let mut first = vec![0u8; file_len.min(first_read) as usize];
-    read_record_part(read, file, &mut first, 0)?;
+    if !first.is_empty() {
+        let read = match (reads.prefix)(file, &mut first, 0) {
+            Ok(read) => read,
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                return Err(RecordError::Truncated.into())
+            }
+            Err(e) => return Err(e.into()),
+        };
+        first.truncate(read);
+    }
+    let read = reads.exact;
     let part = |buf: &mut [u8], offset: u64| -> Result<(), ReadError> {
         let covered = usize::try_from(offset)
             .ok()
@@ -551,6 +582,38 @@ mod tests {
         let parsed = read_published(&bytes);
         assert_eq!(parsed.header_bytes, hdr);
         assert!(parsed.body_prefix.is_empty());
+    }
+
+    /// Reads that find only the file's first page cached, as the page cache
+    /// can leave a record.
+    const FIRST_PAGE_CACHED: Reads = Reads {
+        exact: <File as FileExt>::read_exact_at,
+        prefix: |file, buf, offset| {
+            let cached = buf.len().min(4096);
+            file.read_exact_at(&mut buf[..cached], offset)
+                .map(|()| cached)
+        },
+    };
+
+    /// A first read that finds only part of its bytes cached keeps them:
+    /// the record reads, with the body prefix those bytes hold.
+    #[test]
+    fn a_lookup_read_keeps_a_partly_cached_first_read() {
+        let body = pattern(40_000);
+        let file = file_with(&record_with(b"heads", &body));
+        let parsed = read_record_with(
+            &file,
+            RecordKind::Published,
+            Some(b"key"),
+            FIRST_PAGE_CACHED,
+            LOOKUP_READ_LEN,
+        )
+        .expect("the record reads");
+        assert_eq!(parsed.header_bytes, b"heads");
+        assert_eq!(
+            &parsed.body_prefix[..],
+            &body[..4096 - parsed.header.body_offset()]
+        );
     }
 
     /// The lookup's read rejects every record the part-by-part read
