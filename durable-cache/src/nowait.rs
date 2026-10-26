@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Reads served from the page cache on the async worker itself, without a
-//! handoff to the blocking pool (Linux only). `openat2` with `RESOLVE_CACHED`
-//! and `preadv2` with `RWF_NOWAIT` report `EAGAIN` instead of waiting for
-//! the device, and the caller then does the whole operation on the pool, as
-//! FDS-STORAGE.EXECUTOR-01 has it. A kernel that lacks the call or the flag,
-//! or a file system that does not support the flag, reports an error that
-//! this module remembers: from then on, the operation goes to the pool
-//! without trying again. The memory is the process's, as a process normally
-//! keeps one cache, on one file system.
+//! handoff to the blocking pool (Linux only), when the configuration asks
+//! for them (`FsCacheConfig::with_page_cache_reads`, on by default on
+//! Linux). `openat2` with `RESOLVE_CACHED` and `preadv2` with `RWF_NOWAIT`
+//! report `EAGAIN` instead of waiting for the device, and the caller then
+//! does the whole operation on the pool, as FDS-STORAGE.EXECUTOR-01 has it.
+//!
+//! `FsCache::new` checks once that the kernel and the cache's file system
+//! support both calls ([`check_support`]). Should one still report itself
+//! missing, it fails with an error of kind `Unsupported`, which the caller
+//! reports: a page-cache read never turns into a pool read unnoticed.
 //!
 //! With `FsCacheConfig::with_noatime`, records are opened with `O_NOATIME`,
 //! here and on the pool ([`open_blocking`]). A read that updates a file's
@@ -25,18 +27,9 @@ use std::io::{self, IoSliceMut};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use rustix::fs::{openat2, Mode, OFlags, ResolveFlags, CWD};
 use rustix::io::{preadv2, Errno, ReadWriteFlags};
-
-/// Set once `openat2` or its `RESOLVE_CACHED` (Linux 5.12) turned out
-/// missing.
-static NO_CACHED_OPEN: AtomicBool = AtomicBool::new(false);
-
-/// Set once `preadv2` or its `RWF_NOWAIT` (Linux 4.14) turned out missing,
-/// or unsupported by the cache's file system.
-static NO_NOWAIT_READ: AtomicBool = AtomicBool::new(false);
 
 /// The flags a record is opened to read with: with `O_NOATIME` if
 /// `noatime`.
@@ -55,19 +48,42 @@ fn unsupported(errno: Errno) -> bool {
     errno == Errno::NOSYS || errno == Errno::INVAL || errno == Errno::OPNOTSUPP
 }
 
-/// The error of an operation that would wait for the device, or that this
-/// system cannot tell would not.
+/// The error of an operation that would wait for the device.
 fn would_block() -> io::Error {
     io::ErrorKind::WouldBlock.into()
+}
+
+/// The error of `call`, which the kernel or the file system does not
+/// support, as `errno` says.
+fn not_supported(call: &str, errno: Errno) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("{call}: {}", io::Error::from(errno)),
+    )
+}
+
+/// Check that the kernel and the cache's file system support the calls
+/// this module makes: `openat2` with `RESOLVE_CACHED` (Linux 5.12), tried on
+/// `root`, and `preadv2` with `RWF_NOWAIT`, tried on `file`, a regular file
+/// in the cache. An error of kind `Unsupported` names the call that is
+/// missing.
+pub(crate) fn check_support(root: &Path, file: &Path) -> io::Result<()> {
+    match open(root, false) {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+        Err(e) => return Err(e),
+    }
+    let file = File::open(file)?;
+    match read_cached(&file, &mut [0u8; 1], 0) {
+        Err(e) if e.kind() != io::ErrorKind::UnexpectedEof => Err(e),
+        _ => Ok(()),
+    }
 }
 
 /// Open `path` read-only, without updating its access time if `noatime`,
 /// if every component of it is in the dentry cache; an error of kind
 /// `WouldBlock` if not.
 pub(crate) fn open(path: &Path, noatime: bool) -> io::Result<File> {
-    if NO_CACHED_OPEN.load(Ordering::Relaxed) {
-        return Err(would_block());
-    }
     match openat2(
         CWD,
         path,
@@ -78,8 +94,7 @@ pub(crate) fn open(path: &Path, noatime: bool) -> io::Result<File> {
         Ok(fd) => Ok(File::from(fd)),
         Err(errno) if errno == Errno::AGAIN => Err(would_block()),
         Err(errno) if unsupported(errno) => {
-            NO_CACHED_OPEN.store(true, Ordering::Relaxed);
-            Err(would_block())
+            Err(not_supported("openat2 with RESOLVE_CACHED", errno))
         }
         Err(errno) => Err(errno.into()),
     }
@@ -140,9 +155,6 @@ pub(crate) fn fill(
     base: u64,
     wait: Wait,
 ) -> io::Result<()> {
-    if wait == Wait::Never && buf.len() < end && NO_NOWAIT_READ.load(Ordering::Relaxed) {
-        return Err(would_block());
-    }
     buf.reserve(end.saturating_sub(buf.len()));
     while buf.len() < end {
         let start = buf.len();
@@ -193,8 +205,7 @@ pub(crate) fn fill(
                     return Err(would_block());
                 }
                 if wait == Wait::Never && unsupported(errno) {
-                    NO_NOWAIT_READ.store(true, Ordering::Relaxed);
-                    return Err(would_block());
+                    return Err(not_supported("preadv2 with RWF_NOWAIT", errno));
                 }
                 return Err(error);
             }
@@ -208,7 +219,7 @@ pub(crate) fn fill(
 /// of kind `UnexpectedEof`.
 fn read_cached(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     let mut read = 0;
-    while read < buf.len() && !NO_NOWAIT_READ.load(Ordering::Relaxed) {
+    while read < buf.len() {
         match preadv2(
             file,
             &mut [IoSliceMut::new(&mut buf[read..])],
@@ -219,7 +230,9 @@ fn read_cached(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
             Ok(n) => read += n,
             Err(errno) if errno == Errno::INTR => {}
             Err(errno) if errno == Errno::AGAIN => break,
-            Err(errno) if unsupported(errno) => NO_NOWAIT_READ.store(true, Ordering::Relaxed),
+            Err(errno) if unsupported(errno) => {
+                return Err(not_supported("preadv2 with RWF_NOWAIT", errno))
+            }
             Err(errno) => return Err(errno.into()),
         }
     }
@@ -275,11 +288,13 @@ mod tests {
         fill(&file, &mut buf, 200_000, 1000, Wait::Allowed).expect("the rest reads");
         assert_eq!(buf, &bytes[1000..201_000]);
 
-        // The file was just written, so its pages are cached, unless this
-        // file system cannot tell (then the read would wait).
+        // The file was just written, so its pages are cached. A file system
+        // without non-blocking reads, such as tmpfs, reports them
+        // unsupported, and nothing is read.
         let mut buf = vec![bytes[7]];
         match fill(&file, &mut buf, 90_000, 7, Wait::Never) {
             Ok(()) => assert_eq!(buf, &bytes[7..90_007]),
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => assert_eq!(buf, [bytes[7]]),
             Err(e) => {
                 assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}");
                 assert_eq!(buf, &bytes[7..7 + buf.len()], "what it read is kept");

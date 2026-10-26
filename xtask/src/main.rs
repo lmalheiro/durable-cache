@@ -380,7 +380,13 @@ fn run_suite(
     origin_addr: SocketAddr,
 ) -> Result<serde_json::Value> {
     let proxy_addr = free_port()?;
-    let cache_dir = tempfile::tempdir().context("failed to create a temp cache directory")?;
+    // On disk, under the target directory: page-cache reads, on by default
+    // on Linux, need a file system with non-blocking reads, which tmpfs
+    // lacks.
+    let caches = target_dir(root)?.join("test-tmp");
+    std::fs::create_dir_all(&caches).context("failed to create a directory for caches")?;
+    let cache_dir =
+        tempfile::tempdir_in(&caches).context("failed to create a temp cache directory")?;
     let proxy = ChildGuard::spawn(
         "fixture-proxy",
         Command::new(target_dir(root)?.join("release/fixture-proxy"))

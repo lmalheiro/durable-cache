@@ -57,6 +57,30 @@ fn check_noatime(root: &Path) -> Result<()> {
         })
 }
 
+/// With `FsCacheConfig::with_page_cache_reads`, check that the kernel and
+/// the cache's file system support the calls those reads make: on the root,
+/// and on this instance's lease, the one file the cache is sure to hold.
+#[cfg(target_os = "linux")]
+fn check_page_cache_reads(root: &Path, lease: &WriterLease) -> Result<()> {
+    let lease_file = crate::writerid::lease_path(root, &lease.id());
+    crate::nowait::check_support(root, &lease_file).or_err_with(ErrorType::InternalError, || {
+        format!(
+            "checking the page-cache reads that FsCacheConfig::with_page_cache_reads asks for \
+             under {}; switch them off where the kernel or the file system lacks them",
+            root.display()
+        )
+    })
+}
+
+/// `FsCacheConfig::with_page_cache_reads` needs Linux.
+#[cfg(not(target_os = "linux"))]
+fn check_page_cache_reads(_root: &Path, _lease: &WriterLease) -> Result<()> {
+    pingora_error::Error::e_explain(
+        ErrorType::InternalError,
+        "FsCacheConfig::with_page_cache_reads needs Linux: switch it off on this platform",
+    )
+}
+
 /// `FsCacheConfig::with_noatime` needs Linux's `O_NOATIME`.
 #[cfg(not(target_os = "linux"))]
 fn check_noatime(_root: &Path) -> Result<()> {
@@ -82,7 +106,11 @@ impl FsCache {
     /// [`FsCacheConfig::with_noatime`], it also fails with a `FileOpenError`
     /// if the kernel refuses to open the root without updating its access
     /// time, as it does when this process does not own it, and with an
-    /// `InternalError` on a platform without `O_NOATIME`.
+    /// `InternalError` on a platform without `O_NOATIME`. With
+    /// [`FsCacheConfig::with_page_cache_reads`], on by default on Linux, it
+    /// fails with an `InternalError` if the kernel or the file system under
+    /// the root does not support the calls those reads make, or on a
+    /// platform other than Linux.
     pub fn new(config: FsCacheConfig) -> Result<Self> {
         let dir_cache = ShardDirCache::build(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
@@ -95,6 +123,9 @@ impl FsCache {
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating a writer lease under {}", config.root().display())
             })?;
+        if config.page_cache_reads() {
+            check_page_cache_reads(config.root(), &lease)?;
+        }
         // With the `metrics` feature, the counters are served from here on,
         // at zero, rather than from their first event.
         metrics::register();

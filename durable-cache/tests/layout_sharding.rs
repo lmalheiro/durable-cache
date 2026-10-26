@@ -147,7 +147,7 @@ async fn tc_layout_sharding_01_split_falls_on_the_first_four_hex_characters() {
         "0aa0ffffffffffffffffffffffffffff",
         "ff00000000000000000000000000000f",
     ] {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = support::tempdir();
         let chosen: Arc<str> = Arc::from(hash);
         let cache: &'static FsCache = support::leaked_cache_configured(
             FsCacheConfig::new(tmp.path(), None),
@@ -218,7 +218,13 @@ async fn tc_layout_sharding_01_real_hashes_spread_as_the_analysis_predicts() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(20_000);
 
-    let (cache, _tmp) = support::leaked_cache();
+    // The layout, not the stores' durability, is under test: without a
+    // synchronisation per store, the sample is quick on any disk.
+    let tmp = support::tempdir();
+    let cache = support::leaked_cache_with(
+        FsCacheConfig::new(tmp.path(), None)
+            .with_durability(durable_cache::Durability::NoStoreSync),
+    );
     let mut per_leaf: BTreeMap<String, usize> = BTreeMap::new();
     for i in 0..sample {
         let key = support::key(&format!("/sharding-sample-{i}"));

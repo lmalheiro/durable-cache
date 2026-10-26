@@ -32,6 +32,7 @@ pub struct FsCacheConfig {
     meta_headroom: u32,
     durability: Durability,
     noatime: bool,
+    page_cache_reads: bool,
     #[cfg(feature = "body-crc-verify")]
     body_crc_verification: bool,
 }
@@ -51,6 +52,7 @@ impl FsCacheConfig {
             meta_headroom,
             durability: Durability::default(),
             noatime: false,
+            page_cache_reads: cfg!(target_os = "linux"),
             #[cfg(feature = "body-crc-verify")]
             body_crc_verification: false,
         }
@@ -77,6 +79,24 @@ impl FsCacheConfig {
     /// record that another user owns fails.
     pub fn with_noatime(mut self, enabled: bool) -> Self {
         self.noatime = enabled;
+        self
+    }
+
+    /// Serve hits from the page cache on the async worker, without a
+    /// handoff to the blocking pool, when what they read is cached: on by
+    /// default on Linux, the only platform that has it. A lookup opens the
+    /// record with `openat2` and `RESOLVE_CACHED` (Linux 5.12), and reads it
+    /// with `preadv2` and `RWF_NOWAIT`, which fail rather than wait for the
+    /// device; whatever would wait goes to the pool
+    /// (FDS-STORAGE.EXECUTOR-01).
+    ///
+    /// The kernel and the cache's file system must support both calls:
+    /// ext4, XFS and btrfs do, tmpfs does not support `RWF_NOWAIT` (as of
+    /// Linux 6.12). With the option on, [`crate::FsCache::new`] fails where
+    /// they are missing, or on a platform other than Linux, rather than
+    /// serve every hit from the pool unnoticed: switch it off there.
+    pub fn with_page_cache_reads(mut self, enabled: bool) -> Self {
+        self.page_cache_reads = enabled;
         self
     }
 
@@ -119,6 +139,13 @@ impl FsCacheConfig {
         self.noatime
     }
 
+    /// Whether hits are served from the page cache on the worker when they
+    /// can be; see [`Self::with_page_cache_reads`].
+    #[inline]
+    pub fn page_cache_reads(&self) -> bool {
+        self.page_cache_reads
+    }
+
     /// Whether reads check the body against its stored CRC-32C; see
     /// [`Self::with_body_crc_verification`].
     #[cfg(feature = "body-crc-verify")]
@@ -138,6 +165,13 @@ impl FsCacheConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_cache_reads_are_on_by_default_on_linux_only() {
+        let config = FsCacheConfig::new("/x", None);
+        assert_eq!(config.page_cache_reads(), cfg!(target_os = "linux"));
+        assert!(!config.with_page_cache_reads(false).page_cache_reads());
+    }
 
     #[test]
     fn records_are_opened_as_usual_unless_noatime_is_switched_on() {

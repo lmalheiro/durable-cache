@@ -112,7 +112,11 @@ is in the page cache: the lookup and its body reads run on the worker, with
 `openat2` and `preadv2` flags that fail rather than wait for the device, and
 whatever would wait goes to the pool. That includes partial hits on a store
 still being written, through which Pingora also serves each fill's own
-response. The pool is sized by two `ServerConf` settings:
+response. These page-cache reads are on by default on Linux
+(`FsCacheConfig::with_page_cache_reads`). They need Linux 5.12 and a file
+system with non-blocking reads, as ext4, XFS and btrfs have and tmpfs (as
+of Linux 6.12) does not: `FsCache::new` fails where they are missing, and
+`with_page_cache_reads(false)` switches them off. The pool is sized by two `ServerConf` settings:
 `max_blocking_threads` (unset keeps tokio's 512) and
 `blocking_threads_ttl_seconds`, how long an idle thread lives (unset keeps
 10 s). The pool's threads mostly wait on the disk, so the maximum caps how

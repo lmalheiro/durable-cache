@@ -69,7 +69,22 @@ fn random_body(len: usize, seed: u64) -> Vec<u8> {
 #[tokio::test]
 async fn tc_compliance_body_01_boundary_sizes_round_trip() {
     let (cache, _tmp) = support::leaked_cache();
+    boundary_sizes_round_trip(cache).await;
+}
 
+/// The same with page-cache reads switched off: every lookup and every read
+/// goes to the blocking pool, the path Linux otherwise takes only for what
+/// would wait for the device.
+#[tokio::test]
+async fn tc_compliance_body_01_boundary_sizes_round_trip_through_the_pool() {
+    let tmp = support::tempdir();
+    let cache = support::leaked_cache_with(
+        FsCacheConfig::new(tmp.path(), None).with_page_cache_reads(false),
+    );
+    boundary_sizes_round_trip(cache).await;
+}
+
+async fn boundary_sizes_round_trip(cache: &'static FsCache) {
     // Empty, one byte, either side of a 4 KiB filesystem block boundary,
     // either side of the backend's read-chunk boundary, and a large
     // multi-chunk body.
@@ -127,6 +142,20 @@ async fn tc_compliance_body_01_survives_a_restart() {
 #[tokio::test]
 async fn tc_compliance_body_01_seeked_reads_deliver_exactly_the_requested_slice() {
     let (cache, _tmp) = support::leaked_cache();
+    seeked_reads_deliver_exactly_the_requested_slice(cache).await;
+}
+
+/// The same with page-cache reads switched off: on the blocking pool.
+#[tokio::test]
+async fn tc_compliance_body_01_seeked_reads_through_the_pool() {
+    let tmp = support::tempdir();
+    let cache = support::leaked_cache_with(
+        FsCacheConfig::new(tmp.path(), None).with_page_cache_reads(false),
+    );
+    seeked_reads_deliver_exactly_the_requested_slice(cache).await;
+}
+
+async fn seeked_reads_deliver_exactly_the_requested_slice(cache: &'static FsCache) {
     let key = support::key("/body-seek");
     let chunk = CHUNK_SIZE as usize;
     let len = 2 * chunk + 4000;

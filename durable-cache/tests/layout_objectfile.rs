@@ -136,7 +136,7 @@ fn multi_chunk_body() -> Vec<u8> {
 /// A fresh cache, with the read-time body check switched on or off. A build
 /// without `body-crc-verify` has no check to switch on.
 fn cache_checking_bodies(check: bool) -> (&'static durable_cache::FsCache, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::tempdir();
     let config = FsCacheConfig::new(tmp.path(), None);
     #[cfg(feature = "body-crc-verify")]
     let config = config.with_body_crc_verification(check);

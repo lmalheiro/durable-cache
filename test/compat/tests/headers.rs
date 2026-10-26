@@ -36,7 +36,7 @@ async fn tc_compliance_headers_01_header_fields_round_trip() {
         ),
     );
 
-    let cache_dir = tempfile::tempdir().unwrap();
+    let cache_dir = durable_cache_harness::cache_dir();
     let listen_addr = free_port().unwrap();
     let mut proxy = FixtureProxyHandle::start(FixtureProxyOptions {
         cache_dir: cache_dir.path(),

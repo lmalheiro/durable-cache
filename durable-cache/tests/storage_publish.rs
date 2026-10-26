@@ -198,7 +198,7 @@ async fn tc_storage_publish_01_synchronises_before_renaming() {
 /// reached, and the record is published whole.
 #[tokio::test]
 async fn tc_storage_publish_01_no_store_sync_publishes_without_synchronising() {
-    let tmp = tempfile::tempdir().expect("a temporary cache root");
+    let tmp = support::tempdir();
     let cache = support::leaked_cache_with(
         FsCacheConfig::new(tmp.path(), None).with_durability(Durability::NoStoreSync),
     );
@@ -478,4 +478,27 @@ fn holding_a_record_open_warns_only_when_it_cannot_be_opened() {
     let reports = logs.matching(&unopenable.display().to_string());
     assert_eq!(reports.len(), 1, "reported once: {reports:?}");
     assert!(reports[0].starts_with("WARN"), "as a warning: {reports:?}");
+}
+
+/// With page-cache reads on, the default on Linux, a cache whose file
+/// system lacks non-blocking reads fails to start, naming the option that
+/// switches them off, rather than serve every hit from the blocking pool
+/// unnoticed; with the option off, it starts. `/dev/shm` is a tmpfs, which
+/// lacks them as of Linux 6.12; where it has them, nothing can tell.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_cache_on_a_file_system_without_non_blocking_reads_fails_to_start() {
+    let Ok(tmp) = tempfile::tempdir_in("/dev/shm") else {
+        eprintln!("no /dev/shm: nothing to check");
+        return;
+    };
+    match durable_cache::FsCache::new(FsCacheConfig::new(tmp.path(), None)) {
+        Ok(_) => eprintln!("this tmpfs has non-blocking reads: nothing to check"),
+        Err(e) => assert!(
+            format!("{e}").contains("with_page_cache_reads"),
+            "the error names the option: {e}"
+        ),
+    }
+    let off = FsCacheConfig::new(tmp.path().join("off"), None).with_page_cache_reads(false);
+    durable_cache::FsCache::new(off).expect("without page-cache reads, the cache starts");
 }

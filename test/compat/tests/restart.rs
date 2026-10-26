@@ -104,7 +104,7 @@ async fn tc_persistence_restart_01_objects_survive_a_graceful_stop_and_a_crash()
         ),
     );
 
-    let cache_dir = tempfile::tempdir().unwrap();
+    let cache_dir = durable_cache_harness::cache_dir();
     let listen_addr = free_port().unwrap();
     let client = durable_cache_harness::http_client::client();
     let url = |path: &str| format!("http://{listen_addr}{path}");

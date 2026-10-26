@@ -123,6 +123,11 @@ struct Cli {
     #[arg(long)]
     noatime: bool,
 
+    /// `FsCacheConfig::with_page_cache_reads(false)`: serve every hit from
+    /// the blocking pool, as on a file system without non-blocking reads.
+    #[arg(long)]
+    no_page_cache_reads: bool,
+
     /// `pingora_core::server::configuration::Opt`'s own flags, flattened
     /// in: `-u/--upgrade`, `-d/--daemon`, `-c/--conf`, ... (needed as-is
     /// for the hot-upgrade scenario, TC-COMPAT.HOTUPGRADE-01 — M9).
@@ -187,7 +192,8 @@ fn main() {
     };
     let config = FsCacheConfig::new(&cli.cache_dir, None)
         .with_durability(durability)
-        .with_noatime(cli.noatime);
+        .with_noatime(cli.noatime)
+        .with_page_cache_reads(!cli.no_page_cache_reads);
     let fs_cache = FsCache::new(config)
         .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");
     let fs_cache: &'static FsCache = Box::leak(Box::new(fs_cache));

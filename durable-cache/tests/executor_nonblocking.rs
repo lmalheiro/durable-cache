@@ -126,9 +126,24 @@ fn tc_storage_executor_01_storage_calls_do_not_stall_the_worker() {
 /// the backend has the most opportunity to hold the worker.
 #[test]
 fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
+    streaming_does_not_stall_the_worker(true);
+}
+
+/// The same with page-cache reads switched off: the partial hit opens and
+/// reads the store's temporary on the blocking pool.
+#[test]
+fn tc_storage_executor_01_streaming_through_the_pool_does_not_stall_the_worker() {
+    streaming_does_not_stall_the_worker(false);
+}
+
+fn streaming_does_not_stall_the_worker(page_cache_reads: bool) {
     let rt = single_worker_runtime();
     rt.block_on(async {
-        let (cache, _tmp) = support::leaked_cache();
+        let tmp = support::tempdir();
+        let cache = support::leaked_cache_with(
+            durable_cache::FsCacheConfig::new(tmp.path(), None)
+                .with_page_cache_reads(page_cache_reads),
+        );
         let key = support::key("/executor-streaming");
         let chunk = vec![7u8; 1024 * 1024];
         let trace = support::inactive_trace();
@@ -177,7 +192,7 @@ async fn tc_storage_executor_01_with_noatime_a_hit_leaves_the_access_time() {
     use std::os::unix::fs::FileExt;
     use std::time::SystemTime;
 
-    let tmp = tempfile::tempdir().expect("a temporary cache root");
+    let tmp = support::tempdir();
     let an_hour_ago = SystemTime::now() - Duration::from_secs(3600);
     let set_accessed = |path: &std::path::Path| {
         File::options()
