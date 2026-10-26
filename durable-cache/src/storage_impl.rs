@@ -41,6 +41,31 @@ pub struct FsCache {
     pub(crate) hooks: Hooks,
 }
 
+/// With `FsCacheConfig::with_noatime`, check that the kernel lets this
+/// process open the cache's files without updating their access time: it
+/// allows `O_NOATIME` only to a file's owner, and the owner of the root
+/// stands for the owner of the files under it.
+#[cfg(target_os = "linux")]
+fn check_noatime(root: &Path) -> Result<()> {
+    crate::nowait::open_blocking(root, true)
+        .map(drop)
+        .or_err_with(ErrorType::FileOpenError, || {
+            format!(
+                "opening {} without updating its access time, as FsCacheConfig::with_noatime asks",
+                root.display()
+            )
+        })
+}
+
+/// `FsCacheConfig::with_noatime` needs Linux's `O_NOATIME`.
+#[cfg(not(target_os = "linux"))]
+fn check_noatime(_root: &Path) -> Result<()> {
+    pingora_error::Error::e_explain(
+        ErrorType::InternalError,
+        "FsCacheConfig::with_noatime needs O_NOATIME, which only Linux has",
+    )
+}
+
 impl FsCache {
     /// Build a cache rooted at `config.root()`. Runs FDS-LAYOUT.STARTUP-01's
     /// construction-time shard scan; does *not* run Eviction Recovery
@@ -53,12 +78,19 @@ impl FsCache {
     ///
     /// Fails with a `FileCreateError` if the shard tree cannot be created or
     /// listed under the root, or this instance's lease cannot be created and
-    /// locked (ADR-STORAGE.WRITERID-01).
+    /// locked (ADR-STORAGE.WRITERID-01). With
+    /// [`FsCacheConfig::with_noatime`], it also fails with a `FileOpenError`
+    /// if the kernel refuses to open the root without updating its access
+    /// time, as it does when this process does not own it, and with an
+    /// `InternalError` on a platform without `O_NOATIME`.
     pub fn new(config: FsCacheConfig) -> Result<Self> {
         let dir_cache = ShardDirCache::build(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating the shard tree under {}", config.root().display())
             })?;
+        if config.noatime() {
+            check_noatime(config.root())?;
+        }
         let lease = WriterLease::acquire(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating a writer lease under {}", config.root().display())

@@ -31,6 +31,7 @@ pub struct FsCacheConfig {
     root: PathBuf,
     meta_headroom: u32,
     durability: Durability,
+    noatime: bool,
     #[cfg(feature = "body-crc-verify")]
     body_crc_verification: bool,
 }
@@ -49,6 +50,7 @@ impl FsCacheConfig {
             root: root.into(),
             meta_headroom,
             durability: Durability::default(),
+            noatime: false,
             #[cfg(feature = "body-crc-verify")]
             body_crc_verification: false,
         }
@@ -58,6 +60,23 @@ impl FsCacheConfig {
     /// published; [`Durability::Strict`] unless chosen otherwise.
     pub fn with_durability(mut self, durability: Durability) -> Self {
         self.durability = durability;
+        self
+    }
+
+    /// Open records to read them without updating their access time
+    /// (`O_NOATIME`, Linux only); off unless switched on. Under the default
+    /// `relatime`, the first read of a record after a store wrote it updates
+    /// its access time, and on ext4 that starts a journal transaction, which
+    /// can wait: even for a hit served on the async worker. Nothing in this
+    /// crate reads access times, and a file system mounted `noatime` or
+    /// `lazytime` needs no option.
+    ///
+    /// The kernel allows `O_NOATIME` only to the owner of a file. With the
+    /// option on, [`crate::FsCache::new`] fails if this process does not own
+    /// the cache root, or on a platform without the flag, and a read of a
+    /// record that another user owns fails.
+    pub fn with_noatime(mut self, enabled: bool) -> Self {
+        self.noatime = enabled;
         self
     }
 
@@ -93,6 +112,13 @@ impl FsCacheConfig {
         self.durability
     }
 
+    /// Whether records are opened without updating their access time; see
+    /// [`Self::with_noatime`].
+    #[inline]
+    pub fn noatime(&self) -> bool {
+        self.noatime
+    }
+
     /// Whether reads check the body against its stored CRC-32C; see
     /// [`Self::with_body_crc_verification`].
     #[cfg(feature = "body-crc-verify")]
@@ -112,6 +138,13 @@ impl FsCacheConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn records_are_opened_as_usual_unless_noatime_is_switched_on() {
+        let config = FsCacheConfig::new("/x", None);
+        assert!(!config.noatime());
+        assert!(config.with_noatime(true).noatime());
+    }
 
     #[test]
     fn capacity_is_segments_plus_headroom() {

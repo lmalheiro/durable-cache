@@ -167,6 +167,60 @@ fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
     });
 }
 
+/// With `FsCacheConfig::with_noatime`, a hit leaves its record's access
+/// time as it was, even where `relatime` would update it: the update that
+/// can start a journal transaction on the worker serving the hit. A file
+/// system that records no access times cannot tell, and the test says so.
+#[tokio::test]
+async fn tc_storage_executor_01_with_noatime_a_hit_leaves_the_access_time() {
+    use std::fs::{File, FileTimes};
+    use std::os::unix::fs::FileExt;
+    use std::time::SystemTime;
+
+    let tmp = tempfile::tempdir().expect("a temporary cache root");
+    let an_hour_ago = SystemTime::now() - Duration::from_secs(3600);
+    let set_accessed = |path: &std::path::Path| {
+        File::options()
+            .write(true)
+            .open(path)
+            .and_then(|f| f.set_times(FileTimes::new().set_accessed(an_hour_ago)))
+            .expect("the access time is set");
+    };
+    let accessed = |path: &std::path::Path| {
+        std::fs::metadata(path)
+            .and_then(|m| m.accessed())
+            .expect("the access time reads")
+    };
+
+    let control = tmp.path().join("control");
+    std::fs::write(&control, [7u8; 4096]).expect("the control file is written");
+    set_accessed(&control);
+    File::open(&control)
+        .and_then(|f| f.read_exact_at(&mut [0u8; 4096], 0))
+        .expect("the control file reads");
+    if accessed(&control) == an_hour_ago {
+        eprintln!("this file system does not record access times: nothing to check");
+        return;
+    }
+
+    let cache = support::leaked_cache_with(
+        durable_cache::FsCacheConfig::new(tmp.path().join("cache"), None).with_noatime(true),
+    );
+    let key = support::key("/noatime");
+    support::store(cache, &key, &support::meta(), b"a body").await;
+    let record = support::canonical_path(cache, &key);
+    set_accessed(&record);
+    let (_meta, body) = support::lookup_body(cache, &key)
+        .await
+        .expect("the stored body is a hit");
+    assert_eq!(body, b"a body");
+    assert_eq!(
+        accessed(&record),
+        an_hour_ago,
+        "the hit left the access time"
+    );
+}
+
 /// Step 6: the restart scan frees what it removes on the blocking pool: a
 /// damaged record it reclaims, a stopped writer's temporary, and a record its
 /// own admission evicts at once, the eviction manager having no room. Each

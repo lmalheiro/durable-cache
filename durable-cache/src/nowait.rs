@@ -11,15 +11,14 @@
 //! without trying again. The memory is the process's, as a process normally
 //! keeps one cache, on one file system.
 //!
-//! Records are opened with `O_NOATIME`, here and on the pool
-//! ([`open_blocking`]). A read that updates a file's access time dirties its
-//! inode, and on ext4 that starts a journal transaction, which can wait:
-//! even a read that `RWF_NOWAIT` keeps from waiting for the device updates
-//! it. With the default `relatime`, it happens on the first read of every
-//! record after it was written, as its writes leave its access time behind
-//! its modification time. Nothing in this crate reads access times. The
-//! kernel refuses `O_NOATIME` on a file of another owner; once refused, the
-//! opens go without it.
+//! With `FsCacheConfig::with_noatime`, records are opened with `O_NOATIME`,
+//! here and on the pool ([`open_blocking`]). A read that updates a file's
+//! access time dirties its inode, and on ext4 that starts a journal
+//! transaction, which can wait: even a read that `RWF_NOWAIT` keeps from
+//! waiting for the device updates it. With the default `relatime`, it
+//! happens on the first read of every record after it was written, as its
+//! writes leave its access time behind its modification time. The kernel
+//! refuses `O_NOATIME` on a file of another owner, and the open then fails.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, IoSliceMut};
@@ -31,10 +30,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rustix::fs::{openat2, Mode, OFlags, ResolveFlags, CWD};
 use rustix::io::{preadv2, Errno, ReadWriteFlags};
 
-/// Set once the kernel has refused `O_NOATIME`: the cache's files belong to
-/// another user than this process's.
-static NOATIME_REFUSED: AtomicBool = AtomicBool::new(false);
-
 /// Set once `openat2` or its `RESOLVE_CACHED` (Linux 5.12) turned out
 /// missing.
 static NO_CACHED_OPEN: AtomicBool = AtomicBool::new(false);
@@ -43,13 +38,14 @@ static NO_CACHED_OPEN: AtomicBool = AtomicBool::new(false);
 /// or unsupported by the cache's file system.
 static NO_NOWAIT_READ: AtomicBool = AtomicBool::new(false);
 
-/// The flags a record is opened to read with.
-fn read_flags() -> OFlags {
+/// The flags a record is opened to read with: with `O_NOATIME` if
+/// `noatime`.
+fn read_flags(noatime: bool) -> OFlags {
     let flags = OFlags::RDONLY | OFlags::CLOEXEC;
-    if NOATIME_REFUSED.load(Ordering::Relaxed) {
-        flags
-    } else {
+    if noatime {
         flags | OFlags::NOATIME
+    } else {
+        flags
     }
 }
 
@@ -65,46 +61,39 @@ fn would_block() -> io::Error {
     io::ErrorKind::WouldBlock.into()
 }
 
-/// Open `path` read-only, if every component of it is in the dentry cache;
-/// an error of kind `WouldBlock` if not.
-pub(crate) fn open(path: &Path) -> io::Result<File> {
+/// Open `path` read-only, without updating its access time if `noatime`,
+/// if every component of it is in the dentry cache; an error of kind
+/// `WouldBlock` if not.
+pub(crate) fn open(path: &Path, noatime: bool) -> io::Result<File> {
     if NO_CACHED_OPEN.load(Ordering::Relaxed) {
         return Err(would_block());
     }
-    loop {
-        let flags = read_flags();
-        match openat2(CWD, path, flags, Mode::empty(), ResolveFlags::CACHED) {
-            Ok(fd) => return Ok(File::from(fd)),
-            Err(errno) if errno == Errno::PERM && flags.contains(OFlags::NOATIME) => {
-                NOATIME_REFUSED.store(true, Ordering::Relaxed);
-            }
-            Err(errno) if errno == Errno::AGAIN => return Err(would_block()),
-            Err(errno) if unsupported(errno) => {
-                NO_CACHED_OPEN.store(true, Ordering::Relaxed);
-                return Err(would_block());
-            }
-            Err(errno) => return Err(errno.into()),
+    match openat2(
+        CWD,
+        path,
+        read_flags(noatime),
+        Mode::empty(),
+        ResolveFlags::CACHED,
+    ) {
+        Ok(fd) => Ok(File::from(fd)),
+        Err(errno) if errno == Errno::AGAIN => Err(would_block()),
+        Err(errno) if unsupported(errno) => {
+            NO_CACHED_OPEN.store(true, Ordering::Relaxed);
+            Err(would_block())
         }
+        Err(errno) => Err(errno.into()),
     }
 }
 
 /// [`open`] for the blocking pool: the same flags, and every component of
 /// `path` looked up however long that takes.
-pub(crate) fn open_blocking(path: &Path) -> io::Result<File> {
-    if !NOATIME_REFUSED.load(Ordering::Relaxed) {
-        let noatime = OFlags::NOATIME.bits() as i32;
-        match OpenOptions::new()
-            .read(true)
-            .custom_flags(noatime)
-            .open(path)
-        {
-            Err(e) if e.raw_os_error() == Some(Errno::PERM.raw_os_error()) => {
-                NOATIME_REFUSED.store(true, Ordering::Relaxed);
-            }
-            opened => return opened,
-        }
+pub(crate) fn open_blocking(path: &Path, noatime: bool) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    if noatime {
+        options.custom_flags(OFlags::NOATIME.bits() as i32);
     }
-    File::open(path)
+    options.open(path)
 }
 
 /// `FileExt::read_exact_at` from the page cache only: an error of kind
@@ -332,11 +321,11 @@ mod tests {
         let path = dir.path().join("record");
         written_an_hour_after_access(&path);
         let before = accessed(&path);
-        open_blocking(&path)
+        open_blocking(&path, true)
             .and_then(|f| f.read_exact_at(&mut buf, 0))
             .expect("the record reads on the pool");
         // The open just made puts the path in the dentry cache.
-        if let Ok(file) = open(&path) {
+        if let Ok(file) = open(&path, true) {
             let _ = read_exact_at(&file, &mut buf, 4096);
         }
         assert_eq!(accessed(&path), before, "no read updated the access time");

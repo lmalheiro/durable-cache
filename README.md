@@ -145,6 +145,15 @@ default, 512 bytes.
 Each body chunk is written to disk before its `write_body` call returns;
 the backend holds no body bytes in memory beyond the chunk in hand.
 
+**Access times.** Under the default `relatime`, the first read of a record
+after a store wrote it updates its access time, and on ext4 that starts a
+journal transaction, which can stall the worker serving the hit.
+`FsCacheConfig::with_noatime(true)` reads records with `O_NOATIME` (Linux
+only), and the crate never reads access times. The kernel allows that flag
+only to a file's owner, so with the option on `FsCache::new` fails unless
+this process owns the cache root, and a read of a record another user owns
+fails. A file system mounted `noatime` or `lazytime` needs no option.
+
 **Durability.** By default each store is synchronised to the device
 (`fdatasync`) before it is published, so a host crash or a power loss can
 lose a store but never publish a record whose data is not on the device.

@@ -262,7 +262,7 @@ fn open_published(
     key_bytes: Vec<u8>,
     opened: Option<File>,
 ) -> Result<Option<(CacheMeta, FsHitHandler)>> {
-    let file = match opened.map_or_else(|| open_to_read(&canonical), Ok) {
+    let file = match opened.map_or_else(|| open_to_read(cache, &canonical), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
@@ -320,7 +320,7 @@ fn open_published_nowait(
     canonical: &Path,
     key_bytes: &[u8],
 ) -> OnWorker<Result<Option<(CacheMeta, FsHitHandler)>>> {
-    let file = match nowait::open(canonical) {
+    let file = match nowait::open(canonical, cache.config.noatime()) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return OnWorker::Done(Ok(None)),
         Err(_) => return OnWorker::ToPool(None),
@@ -380,7 +380,7 @@ fn open_partial_hit(
     key_bytes: &[u8],
     opened: Option<File>,
 ) -> Result<InFlightTemp> {
-    let file = match opened.map_or_else(|| open_to_read(&writer.temp_path), Ok) {
+    let file = match opened.map_or_else(|| open_to_read(cache, &writer.temp_path), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(InFlightTemp::Gone),
         Err(e) => {
@@ -421,7 +421,7 @@ fn open_partial_hit_nowait(
     writer: &Arc<InFlightWriter>,
     key_bytes: &[u8],
 ) -> OnWorker<InFlightTemp> {
-    let file = match nowait::open(&writer.temp_path) {
+    let file = match nowait::open(&writer.temp_path, cache.config.noatime()) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return OnWorker::Done(InFlightTemp::Gone)
@@ -468,15 +468,17 @@ fn partial_hit(
 }
 
 /// Open a record, or a store's temporary, to read it on the blocking pool;
-/// on Linux without updating its access time (`crate::nowait`).
+/// on Linux without updating its access time if the configuration asks
+/// (`crate::nowait`).
 #[cfg(target_os = "linux")]
-fn open_to_read(path: &Path) -> std::io::Result<File> {
-    nowait::open_blocking(path)
+fn open_to_read(cache: &FsCache, path: &Path) -> std::io::Result<File> {
+    nowait::open_blocking(path, cache.config.noatime())
 }
 
 /// Open a record, or a store's temporary, to read it on the blocking pool.
+/// `FsCache::new` refuses `FsCacheConfig::with_noatime` here.
 #[cfg(not(target_os = "linux"))]
-fn open_to_read(path: &Path) -> std::io::Result<File> {
+fn open_to_read(_cache: &FsCache, path: &Path) -> std::io::Result<File> {
     File::open(path)
 }
 

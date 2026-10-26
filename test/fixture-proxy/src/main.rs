@@ -118,6 +118,11 @@ struct Cli {
     #[arg(long)]
     max_blocking_threads: Option<usize>,
 
+    /// `FsCacheConfig::with_noatime`: read records without updating their
+    /// access time.
+    #[arg(long)]
+    noatime: bool,
+
     /// `pingora_core::server::configuration::Opt`'s own flags, flattened
     /// in: `-u/--upgrade`, `-d/--daemon`, `-c/--conf`, ... (needed as-is
     /// for the hot-upgrade scenario, TC-COMPAT.HOTUPGRADE-01 — M9).
@@ -180,9 +185,11 @@ fn main() {
         DurabilityMode::Strict => Durability::Strict,
         DurabilityMode::NoStoreSync => Durability::NoStoreSync,
     };
-    let fs_cache =
-        FsCache::new(FsCacheConfig::new(&cli.cache_dir, None).with_durability(durability))
-            .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");
+    let config = FsCacheConfig::new(&cli.cache_dir, None)
+        .with_durability(durability)
+        .with_noatime(cli.noatime);
+    let fs_cache = FsCache::new(config)
+        .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");
     let fs_cache: &'static FsCache = Box::leak(Box::new(fs_cache));
 
     let eviction: &'static EvictionManager = Box::leak(Box::new(EvictionManager::new(usize::MAX)));
