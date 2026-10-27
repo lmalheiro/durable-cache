@@ -15,6 +15,9 @@ all-features = true
 ignore = [
     { id = "RUSTSEC-2024-0388", reason = "derivative is unmaintained: a compile-time proc-macro that pingora-core 0.9.0 depends on, with no upgrade available. Remove this entry once Pingora stops using it." },
     { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained: serde_yaml, which pingora-core 0.9.0 uses to parse the YAML configuration file an operator passes with -c, depends on it, with no upgrade available. Remove this entry once Pingora stops using serde_yaml." },
+    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13.3: data from a stream abandoned on a reused context leaks into the next stream. The fix, zstd 0.14.3, is a major version that pingora-core 0.9.0 and pingora-header-serde 0.9.0 do not allow. durable-cache reaches zstd only through them: pingora-header-serde compresses each stored response header in one call, not as a stream. Remove this entry once Pingora moves to zstd 0.14." },
+    { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7.2.4: Seekable::decompress sets a Vec length beyond its capacity. The fix, zstd-safe 8.2.0, is a major version that pingora-header-serde 0.9.0 does not allow, and no Pingora crate uses the seekable API. Remove this entry once Pingora moves to zstd-safe 8." },
+    { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7.2.4: a failed streaming decompression of a legacy frame exposes uninitialised memory. The fix, zstd-safe 8.2.0, is a major version that pingora-header-serde 0.9.0 does not allow. durable-cache decompresses only the headers it stored, each in one call; pingora-core streams zstd only for proxies that enable response compression or decompression. Remove this entry once Pingora moves to zstd-safe 8." },
 ]
 
 [licenses]
