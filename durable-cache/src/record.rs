@@ -212,7 +212,7 @@ fn read_record_with(
         };
         first.truncate(read);
     }
-    let read = reads.exact;
+    let exact = reads.exact;
     let part = |buf: &mut [u8], offset: u64| -> Result<(), ReadError> {
         let covered = usize::try_from(offset)
             .ok()
@@ -222,7 +222,7 @@ fn read_record_with(
                 buf.copy_from_slice(bytes);
                 Ok(())
             }
-            None => read_record_part(read, file, buf, offset),
+            None => read_record_part(exact, file, buf, offset),
         }
     };
     // A file shorter than a header comes back from this read as truncated.
