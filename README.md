@@ -29,7 +29,7 @@ version in durable-cache/Cargo.toml, so each version's README on crates.io
 links to that version's files; on main, those of the latest release. The
 release workflow moves them in each release pull request, and CI checks
 them (`cargo xtask readme-links --check`). -->
-[spec-pdf]: https://github.com/lmalheiro/durable-cache/blob/v0.1.1/docs/durable-cache.pdf
+[spec-pdf]: https://github.com/lmalheiro/durable-cache/blob/v0.1.2/docs/durable-cache.pdf
 
 ## Status
 
@@ -92,7 +92,7 @@ session.cache.enable(cache, Some(eviction), None, None, None);
 ```
 
 The same setup as a complete program is
-[`examples/caching-proxy`](https://github.com/lmalheiro/durable-cache/tree/v0.1.1/examples/caching-proxy): a reverse proxy that
+[`examples/caching-proxy`](https://github.com/lmalheiro/durable-cache/tree/v0.1.2/examples/caching-proxy): a reverse proxy that
 caches on disk, survives restarts and supports hot upgrades, with a smoke
 test.
 
@@ -582,13 +582,13 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
 
 ## Security
 
-Please report a vulnerability privately, as [SECURITY.md](https://github.com/lmalheiro/durable-cache/blob/v0.1.1/SECURITY.md)
+Please report a vulnerability privately, as [SECURITY.md](https://github.com/lmalheiro/durable-cache/blob/v0.1.2/SECURITY.md)
 describes, not in a public issue.
 
 ## Authors
 
 The code was written with AI assistance (Anthropic's Claude), directed and
-reviewed by the human authors listed in [AUTHORS](https://github.com/lmalheiro/durable-cache/blob/v0.1.1/AUTHORS), who hold its
+reviewed by the human authors listed in [AUTHORS](https://github.com/lmalheiro/durable-cache/blob/v0.1.2/AUTHORS), who hold its
 copyright. Before the first release, the crate's own source had a
 file-by-file human review; the review of its tests and tooling continues in
 [#14](https://github.com/lmalheiro/durable-cache/issues/14). Every source
@@ -597,7 +597,7 @@ file carries an SPDX header naming the authors and the licence;
 
 ## Licence
 
-Apache-2.0; see [LICENSE](https://github.com/lmalheiro/durable-cache/blob/v0.1.1/LICENSE).
+Apache-2.0; see [LICENSE](https://github.com/lmalheiro/durable-cache/blob/v0.1.2/LICENSE).
 
 ## Trademarks
 
