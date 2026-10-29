@@ -75,6 +75,7 @@ async fn tc_compliance_body_01_boundary_sizes_round_trip() {
 /// The same with page-cache reads switched off: every lookup and every read
 /// goes to the blocking pool, the path Linux otherwise takes only for what
 /// would wait for the device.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn tc_compliance_body_01_boundary_sizes_round_trip_through_the_pool() {
     let tmp = support::tempdir();
@@ -146,6 +147,7 @@ async fn tc_compliance_body_01_seeked_reads_deliver_exactly_the_requested_slice(
 }
 
 /// The same with page-cache reads switched off: on the blocking pool.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn tc_compliance_body_01_seeked_reads_through_the_pool() {
     let tmp = support::tempdir();

@@ -112,11 +112,12 @@ is in the page cache: the lookup and its body reads run on the worker, with
 `openat2` and `preadv2` flags that fail rather than wait for the device, and
 whatever would wait goes to the pool. That includes partial hits on a store
 still being written, through which Pingora also serves each fill's own
-response. These page-cache reads are on by default on Linux
-(`FsCacheConfig::with_page_cache_reads`). They need Linux 5.12 and a file
-system with non-blocking reads, as ext4, XFS and btrfs have and tmpfs (as
-of Linux 6.12) does not: `FsCache::new` fails where they are missing, and
-`with_page_cache_reads(false)` switches them off. The pool is sized by two `ServerConf` settings:
+response. These page-cache reads are on by default, through an option that
+exists only on Linux (`FsCacheConfig::with_page_cache_reads`). They need
+Linux 5.12 and a file system with non-blocking reads, as ext4, XFS and
+btrfs have and tmpfs (as of Linux 6.12) does not: `FsCache::new` fails
+where they are missing, and `with_page_cache_reads(false)` switches them
+off. The pool is sized by two `ServerConf` settings:
 `max_blocking_threads` (unset keeps tokio's 512) and
 `blocking_threads_ttl_seconds`, how long an idle thread lives (unset keeps
 10 s). The pool's threads mostly wait on the disk, so the maximum caps how
@@ -152,11 +153,12 @@ the backend holds no body bytes in memory beyond the chunk in hand.
 **Access times.** Under the default `relatime`, the first read of a record
 after a store wrote it updates its access time, and on ext4 that starts a
 journal transaction, which can stall the worker serving the hit.
-`FsCacheConfig::with_noatime(true)` reads records with `O_NOATIME` (Linux
-only), and the crate never reads access times. The kernel allows that flag
-only to a file's owner, so with the option on `FsCache::new` fails unless
-this process owns the cache root, and a read of a record another user owns
-fails. A file system mounted `noatime` or `lazytime` needs no option.
+`FsCacheConfig::with_noatime(true)`, an option that exists only on Linux,
+reads records with `O_NOATIME`, and the crate never reads access times. The
+kernel allows that flag only to a file's owner, so with the option on
+`FsCache::new` fails unless this process owns the cache root, and a read of
+a record another user owns fails. A file system mounted `noatime` or
+`lazytime` needs no option.
 
 **Durability.** By default each store is synchronised to the device
 (`fdatasync`) before it is published, so a host crash or a power loss can

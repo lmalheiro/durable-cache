@@ -94,6 +94,7 @@ pub struct FsHitHandler {
     path: PathBuf,
     /// Whether body reads try the page cache on the worker first
     /// (`FsCacheConfig::with_page_cache_reads`).
+    #[cfg(target_os = "linux")]
     page_cache_reads: bool,
     /// The read-time body check, while one runs: switched on in the
     /// configuration, for a published record that carries a checksum, until
@@ -385,6 +386,8 @@ fn published_hit(
     parsed: record::ParsedRecord,
     path: PathBuf,
 ) -> FsHitHandler {
+    #[cfg(not(target_os = "linux"))]
+    let _ = cache;
     FsHitHandler {
         file: Some(Arc::new(file)),
         source: ReadSource::Complete {
@@ -395,6 +398,7 @@ fn published_hit(
             prefetched: parsed.body_prefix,
         },
         path,
+        #[cfg(target_os = "linux")]
         page_cache_reads: cache.config.page_cache_reads(),
         #[cfg(feature = "body-crc-verify")]
         check: BodyCheck::start(cache, parsed.header.body_crc()),
@@ -504,6 +508,8 @@ fn partial_hit(
     parsed: &record::ParsedRecord,
     meta: CacheMeta,
 ) -> InFlightTemp {
+    #[cfg(not(target_os = "linux"))]
+    let _ = cache;
     let path = writer.temp_path.clone();
     InFlightTemp::Hit(
         meta,
@@ -515,6 +521,7 @@ fn partial_hit(
                 read_so_far: 0,
             },
             path,
+            #[cfg(target_os = "linux")]
             page_cache_reads: cache.config.page_cache_reads(),
             #[cfg(feature = "body-crc-verify")]
             check: None,
@@ -533,7 +540,6 @@ fn open_to_read(cache: &FsCache, path: &Path) -> std::io::Result<File> {
 }
 
 /// Open a record, or a store's temporary, to read it on the blocking pool.
-/// `FsCache::new` refuses `FsCacheConfig::with_noatime` here.
 #[cfg(not(target_os = "linux"))]
 fn open_to_read(_cache: &FsCache, path: &Path) -> std::io::Result<File> {
     File::open(path)
@@ -586,18 +592,8 @@ fn fill_on_worker(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> std:
     }
 }
 
-/// Without `crate::nowait`, every read goes to the pool.
-#[cfg(not(target_os = "linux"))]
-fn fill_on_worker(
-    _file: &File,
-    _buf: &mut Vec<u8>,
-    _end: usize,
-    _base: u64,
-) -> std::io::Result<bool> {
-    Ok(false)
-}
-
 /// The context of an error reading `path` from the page cache.
+#[cfg(target_os = "linux")]
 fn page_cache_read(path: &Path) -> String {
     format!(
         "reading {} from the page cache, as FsCacheConfig::with_page_cache_reads asks",
@@ -648,11 +644,14 @@ impl FsHitHandler {
                         buf.extend_from_slice(&prefetched[start..start + held]);
                     }
                     let base = *body_offset + *pos;
+                    #[cfg(target_os = "linux")]
                     let filled = self.page_cache_reads
                         && fill_on_worker(&file, &mut buf, len, base)
                             .or_err_with(ErrorType::FileReadError, || {
                                 page_cache_read(&self.path)
                             })?;
+                    #[cfg(not(target_os = "linux"))]
+                    let filled = false;
                     if !filled {
                         let file = Arc::clone(&file);
                         buf = fill_on_pool(file, buf, len, base, &self.path).await?;
@@ -689,11 +688,14 @@ impl FsHitHandler {
                     // The store has just written these bytes: from the page
                     // cache on this worker if it can, on the pool otherwise.
                     let mut buf = Vec::with_capacity(len);
+                    #[cfg(target_os = "linux")]
                     let filled = self.page_cache_reads
                         && fill_on_worker(&file, &mut buf, len, offset)
                             .or_err_with(ErrorType::FileReadError, || {
                                 page_cache_read(&self.path)
                             })?;
+                    #[cfg(not(target_os = "linux"))]
+                    let filled = false;
                     if !filled {
                         let file = Arc::clone(&file);
                         buf = fill_on_pool(file, buf, len, offset, &self.path).await?;

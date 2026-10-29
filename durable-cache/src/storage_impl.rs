@@ -72,24 +72,6 @@ fn check_page_cache_reads(root: &Path, lease: &WriterLease) -> Result<()> {
     })
 }
 
-/// `FsCacheConfig::with_page_cache_reads` needs Linux.
-#[cfg(not(target_os = "linux"))]
-fn check_page_cache_reads(_root: &Path, _lease: &WriterLease) -> Result<()> {
-    pingora_error::Error::e_explain(
-        ErrorType::InternalError,
-        "FsCacheConfig::with_page_cache_reads needs Linux: switch it off on this platform",
-    )
-}
-
-/// `FsCacheConfig::with_noatime` needs Linux's `O_NOATIME`.
-#[cfg(not(target_os = "linux"))]
-fn check_noatime(_root: &Path) -> Result<()> {
-    pingora_error::Error::e_explain(
-        ErrorType::InternalError,
-        "FsCacheConfig::with_noatime needs O_NOATIME, which only Linux has",
-    )
-}
-
 impl FsCache {
     /// Build a cache rooted at `config.root()`. Runs FDS-LAYOUT.STARTUP-01's
     /// construction-time shard scan; does *not* run Eviction Recovery
@@ -102,20 +84,19 @@ impl FsCache {
     ///
     /// Fails with a `FileCreateError` if the shard tree cannot be created or
     /// listed under the root, or this instance's lease cannot be created and
-    /// locked (ADR-STORAGE.WRITERID-01). With
-    /// [`FsCacheConfig::with_noatime`], it also fails with a `FileOpenError`
-    /// if the kernel refuses to open the root without updating its access
-    /// time, as it does when this process does not own it, and with an
-    /// `InternalError` on a platform without `O_NOATIME`. With
-    /// [`FsCacheConfig::with_page_cache_reads`], on by default on Linux, it
-    /// fails with an `InternalError` if the kernel or the file system under
-    /// the root does not support the calls those reads make, or on a
-    /// platform other than Linux.
+    /// locked (ADR-STORAGE.WRITERID-01). On Linux, it also fails with a
+    /// `FileOpenError` if [`FsCacheConfig::with_noatime`] is on and the
+    /// kernel refuses to open the root without updating its access time, as
+    /// it does when this process does not own it; and with an
+    /// `InternalError` if [`FsCacheConfig::with_page_cache_reads`] is on, as
+    /// it is by default, and the kernel or the file system under the root
+    /// does not support the calls those reads make.
     pub fn new(config: FsCacheConfig) -> Result<Self> {
         let dir_cache = ShardDirCache::build(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating the shard tree under {}", config.root().display())
             })?;
+        #[cfg(target_os = "linux")]
         if config.noatime() {
             check_noatime(config.root())?;
         }
@@ -123,6 +104,7 @@ impl FsCache {
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating a writer lease under {}", config.root().display())
             })?;
+        #[cfg(target_os = "linux")]
         if config.page_cache_reads() {
             check_page_cache_reads(config.root(), &lease)?;
         }

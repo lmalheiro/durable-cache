@@ -31,7 +31,9 @@ pub struct FsCacheConfig {
     root: PathBuf,
     meta_headroom: u32,
     durability: Durability,
+    #[cfg(target_os = "linux")]
     noatime: bool,
+    #[cfg(target_os = "linux")]
     page_cache_reads: bool,
     #[cfg(feature = "body-crc-verify")]
     body_crc_verification: bool,
@@ -51,8 +53,10 @@ impl FsCacheConfig {
             root: root.into(),
             meta_headroom,
             durability: Durability::default(),
+            #[cfg(target_os = "linux")]
             noatime: false,
-            page_cache_reads: cfg!(target_os = "linux"),
+            #[cfg(target_os = "linux")]
+            page_cache_reads: true,
             #[cfg(feature = "body-crc-verify")]
             body_crc_verification: false,
         }
@@ -66,7 +70,7 @@ impl FsCacheConfig {
     }
 
     /// Open records to read them without updating their access time
-    /// (`O_NOATIME`, Linux only); off unless switched on. Under the default
+    /// (`O_NOATIME`); off unless switched on. Linux only. Under the default
     /// `relatime`, the first read of a record after a store wrote it updates
     /// its access time, and on ext4 that starts a journal transaction, which
     /// can wait: even for a hit served on the async worker. Nothing in this
@@ -75,26 +79,27 @@ impl FsCacheConfig {
     ///
     /// The kernel allows `O_NOATIME` only to the owner of a file. With the
     /// option on, [`crate::FsCache::new`] fails if this process does not own
-    /// the cache root, or on a platform without the flag, and a read of a
-    /// record that another user owns fails.
+    /// the cache root, and a read of a record that another user owns fails.
+    #[cfg(target_os = "linux")]
     pub fn with_noatime(mut self, enabled: bool) -> Self {
         self.noatime = enabled;
         self
     }
 
     /// Serve hits from the page cache on the async worker, without a
-    /// handoff to the blocking pool, when what they read is cached: on by
-    /// default on Linux, the only platform that has it. A lookup opens the
-    /// record with `openat2` and `RESOLVE_CACHED` (Linux 5.12), and reads it
-    /// with `preadv2` and `RWF_NOWAIT`, which fail rather than wait for the
-    /// device; whatever would wait goes to the pool
-    /// (FDS-STORAGE.EXECUTOR-01).
+    /// handoff to the blocking pool, when what they read is cached; on
+    /// unless switched off. Linux only: elsewhere every hit is served from
+    /// the pool. A lookup opens the record with `openat2` and
+    /// `RESOLVE_CACHED` (Linux 5.12), and reads it with `preadv2` and
+    /// `RWF_NOWAIT`, which fail rather than wait for the device; whatever
+    /// would wait goes to the pool (FDS-STORAGE.EXECUTOR-01).
     ///
     /// The kernel and the cache's file system must support both calls:
     /// ext4, XFS and btrfs do, tmpfs does not support `RWF_NOWAIT` (as of
     /// Linux 6.12). With the option on, [`crate::FsCache::new`] fails where
-    /// they are missing, or on a platform other than Linux, rather than
-    /// serve every hit from the pool unnoticed: switch it off there.
+    /// they are missing, rather than serve every hit from the pool
+    /// unnoticed: switch it off there.
+    #[cfg(target_os = "linux")]
     pub fn with_page_cache_reads(mut self, enabled: bool) -> Self {
         self.page_cache_reads = enabled;
         self
@@ -134,6 +139,7 @@ impl FsCacheConfig {
 
     /// Whether records are opened without updating their access time; see
     /// [`Self::with_noatime`].
+    #[cfg(target_os = "linux")]
     #[inline]
     pub fn noatime(&self) -> bool {
         self.noatime
@@ -141,6 +147,7 @@ impl FsCacheConfig {
 
     /// Whether hits are served from the page cache on the worker when they
     /// can be; see [`Self::with_page_cache_reads`].
+    #[cfg(target_os = "linux")]
     #[inline]
     pub fn page_cache_reads(&self) -> bool {
         self.page_cache_reads
@@ -166,13 +173,15 @@ impl FsCacheConfig {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn page_cache_reads_are_on_by_default_on_linux_only() {
+    fn page_cache_reads_are_on_unless_switched_off() {
         let config = FsCacheConfig::new("/x", None);
-        assert_eq!(config.page_cache_reads(), cfg!(target_os = "linux"));
+        assert!(config.page_cache_reads());
         assert!(!config.with_page_cache_reads(false).page_cache_reads());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn records_are_opened_as_usual_unless_noatime_is_switched_on() {
         let config = FsCacheConfig::new("/x", None);

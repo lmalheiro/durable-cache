@@ -120,11 +120,13 @@ struct Cli {
 
     /// `FsCacheConfig::with_noatime`: read records without updating their
     /// access time.
+    #[cfg(target_os = "linux")]
     #[arg(long)]
     noatime: bool,
 
     /// `FsCacheConfig::with_page_cache_reads(false)`: serve every hit from
     /// the blocking pool, as on a file system without non-blocking reads.
+    #[cfg(target_os = "linux")]
     #[arg(long)]
     no_page_cache_reads: bool,
 
@@ -190,8 +192,9 @@ fn main() {
         DurabilityMode::Strict => Durability::Strict,
         DurabilityMode::NoStoreSync => Durability::NoStoreSync,
     };
-    let config = FsCacheConfig::new(&cli.cache_dir, None)
-        .with_durability(durability)
+    let config = FsCacheConfig::new(&cli.cache_dir, None).with_durability(durability);
+    #[cfg(target_os = "linux")]
+    let config = config
         .with_noatime(cli.noatime)
         .with_page_cache_reads(!cli.no_page_cache_reads);
     let fs_cache = FsCache::new(config)

@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use durable_cache::FsCacheConfig;
 use pingora_cache::storage::Storage;
 
 use super::support;
@@ -126,24 +127,22 @@ fn tc_storage_executor_01_storage_calls_do_not_stall_the_worker() {
 /// the backend has the most opportunity to hold the worker.
 #[test]
 fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
-    streaming_does_not_stall_the_worker(true);
+    streaming_does_not_stall_the_worker(std::convert::identity);
 }
 
 /// The same with page-cache reads switched off: the partial hit opens and
 /// reads the store's temporary on the blocking pool.
+#[cfg(target_os = "linux")]
 #[test]
 fn tc_storage_executor_01_streaming_through_the_pool_does_not_stall_the_worker() {
-    streaming_does_not_stall_the_worker(false);
+    streaming_does_not_stall_the_worker(|config| config.with_page_cache_reads(false));
 }
 
-fn streaming_does_not_stall_the_worker(page_cache_reads: bool) {
+fn streaming_does_not_stall_the_worker(configure: fn(FsCacheConfig) -> FsCacheConfig) {
     let rt = single_worker_runtime();
     rt.block_on(async {
         let tmp = support::tempdir();
-        let cache = support::leaked_cache_with(
-            durable_cache::FsCacheConfig::new(tmp.path(), None)
-                .with_page_cache_reads(page_cache_reads),
-        );
+        let cache = support::leaked_cache_with(configure(FsCacheConfig::new(tmp.path(), None)));
         let key = support::key("/executor-streaming");
         let chunk = vec![7u8; 1024 * 1024];
         let trace = support::inactive_trace();
@@ -186,6 +185,7 @@ fn streaming_does_not_stall_the_worker(page_cache_reads: bool) {
 /// time as it was, even where `relatime` would update it: the update that
 /// can start a journal transaction on the worker serving the hit. A file
 /// system that records no access times cannot tell, and the test says so.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn tc_storage_executor_01_with_noatime_a_hit_leaves_the_access_time() {
     use std::fs::{File, FileTimes};
@@ -219,7 +219,7 @@ async fn tc_storage_executor_01_with_noatime_a_hit_leaves_the_access_time() {
     }
 
     let cache = support::leaked_cache_with(
-        durable_cache::FsCacheConfig::new(tmp.path().join("cache"), None).with_noatime(true),
+        FsCacheConfig::new(tmp.path().join("cache"), None).with_noatime(true),
     );
     let key = support::key("/noatime");
     support::store(cache, &key, &support::meta(), b"a body").await;
