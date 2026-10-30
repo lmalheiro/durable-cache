@@ -181,13 +181,14 @@ fn streaming_does_not_stall_the_worker(configure: fn(FsCacheConfig) -> FsCacheCo
     });
 }
 
-/// With `FsCacheConfig::with_noatime`, a hit leaves its record's access
-/// time as it was, even where `relatime` would update it: the update that
-/// can start a journal transaction on the worker serving the hit. A file
-/// system that records no access times cannot tell, and the test says so.
+/// By default (`FsCacheConfig::with_noatime`), a hit leaves its record's
+/// access time as it was, even where `relatime` would update it: the update
+/// that can start a journal transaction on the worker serving the hit. A
+/// file system that records no access times cannot tell, and the test says
+/// so.
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn tc_storage_executor_01_with_noatime_a_hit_leaves_the_access_time() {
+async fn tc_storage_executor_01_a_hit_leaves_the_access_time() {
     use std::fs::{File, FileTimes};
     use std::os::unix::fs::FileExt;
     use std::time::SystemTime;
@@ -218,9 +219,7 @@ async fn tc_storage_executor_01_with_noatime_a_hit_leaves_the_access_time() {
         return;
     }
 
-    let cache = support::leaked_cache_with(
-        FsCacheConfig::new(tmp.path().join("cache"), None).with_noatime(true),
-    );
+    let cache = support::leaked_cache_with(FsCacheConfig::new(tmp.path().join("cache"), None));
     let key = support::key("/noatime");
     support::store(cache, &key, &support::meta(), b"a body").await;
     let record = support::canonical_path(cache, &key);

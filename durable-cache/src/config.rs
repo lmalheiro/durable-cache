@@ -54,7 +54,7 @@ impl FsCacheConfig {
             meta_headroom,
             durability: Durability::default(),
             #[cfg(target_os = "linux")]
-            noatime: false,
+            noatime: true,
             #[cfg(target_os = "linux")]
             page_cache_reads: true,
             #[cfg(feature = "body-crc-verify")]
@@ -70,16 +70,18 @@ impl FsCacheConfig {
     }
 
     /// Open records to read them without updating their access time
-    /// (`O_NOATIME`); off unless switched on. Linux only. Under the default
+    /// (`O_NOATIME`); on unless switched off. Linux only. Under the default
     /// `relatime`, the first read of a record after a store wrote it updates
     /// its access time, and on ext4 that starts a journal transaction, which
     /// can wait: even for a hit served on the async worker. Nothing in this
-    /// crate reads access times, and a file system mounted `noatime` or
-    /// `lazytime` needs no option.
+    /// crate reads access times.
     ///
-    /// The kernel allows `O_NOATIME` only to the owner of a file. With the
-    /// option on, [`crate::FsCache::new`] fails if this process does not own
-    /// the cache root, and a read of a record that another user owns fails.
+    /// The kernel allows `O_NOATIME` only to the owner of a file, or to a
+    /// process with `CAP_FOWNER`, such as root. Otherwise, with the option on,
+    /// [`crate::FsCache::new`] fails if this process does not own the cache
+    /// root, and a read of a record that another user owns fails: switch it
+    /// off where the cache's files belong to another user. A file system
+    /// mounted `noatime` or `lazytime` does not need it.
     #[cfg(target_os = "linux")]
     pub fn with_noatime(mut self, enabled: bool) -> Self {
         self.noatime = enabled;
@@ -183,10 +185,10 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn records_are_opened_as_usual_unless_noatime_is_switched_on() {
+    fn noatime_is_on_unless_switched_off() {
         let config = FsCacheConfig::new("/x", None);
-        assert!(!config.noatime());
-        assert!(config.with_noatime(true).noatime());
+        assert!(config.noatime());
+        assert!(!config.with_noatime(false).noatime());
     }
 
     #[test]

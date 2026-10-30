@@ -152,13 +152,13 @@ the backend holds no body bytes in memory beyond the chunk in hand.
 
 **Access times.** Under the default `relatime`, the first read of a record
 after a store wrote it updates its access time, and on ext4 that starts a
-journal transaction, which can stall the worker serving the hit.
-`FsCacheConfig::with_noatime(true)`, an option that exists only on Linux,
-reads records with `O_NOATIME`, and the crate never reads access times. The
-kernel allows that flag only to a file's owner, so with the option on
-`FsCache::new` fails unless this process owns the cache root, and a read of
-a record another user owns fails. A file system mounted `noatime` or
-`lazytime` needs no option.
+journal transaction, which can stall the worker serving the hit. So by
+default the backend reads records with `O_NOATIME`, through an option that
+exists only on Linux (`FsCacheConfig::with_noatime`); the crate never reads
+access times. The kernel allows that flag only to a file's owner, or to
+root, so `FsCache::new` fails unless this process owns the cache root, and a
+read of a record another user owns fails: `with_noatime(false)` switches it
+off. A file system mounted `noatime` or `lazytime` does not need it.
 
 **Durability.** By default each store is synchronised to the device
 (`fdatasync`) before it is published, so a host crash or a power loss can

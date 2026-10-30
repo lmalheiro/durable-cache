@@ -51,7 +51,8 @@ fn check_noatime(root: &Path) -> Result<()> {
         .map(drop)
         .or_err_with(ErrorType::FileOpenError, || {
             format!(
-                "opening {} without updating its access time, as FsCacheConfig::with_noatime asks",
+                "opening {} without updating its access time, as FsCacheConfig::with_noatime \
+                 asks; switch it off where this process does not own the cache's files",
                 root.display()
             )
         })
@@ -84,13 +85,14 @@ impl FsCache {
     ///
     /// Fails with a `FileCreateError` if the shard tree cannot be created or
     /// listed under the root, or this instance's lease cannot be created and
-    /// locked (ADR-STORAGE.WRITERID-01). On Linux, it also fails with a
-    /// `FileOpenError` if [`FsCacheConfig::with_noatime`] is on and the
-    /// kernel refuses to open the root without updating its access time, as
-    /// it does when this process does not own it; and with an
-    /// `InternalError` if [`FsCacheConfig::with_page_cache_reads`] is on, as
-    /// it is by default, and the kernel or the file system under the root
-    /// does not support the calls those reads make.
+    /// locked (ADR-STORAGE.WRITERID-01). On Linux, with the default
+    /// configuration, it also fails with a `FileOpenError` if the kernel
+    /// refuses to open the root without updating its access time, as it does
+    /// when this process does not own it (see
+    /// [`FsCacheConfig::with_noatime`]); and with an `InternalError` if the
+    /// kernel or the file system under the root does not support the calls
+    /// that page-cache reads make (see
+    /// [`FsCacheConfig::with_page_cache_reads`]).
     pub fn new(config: FsCacheConfig) -> Result<Self> {
         let dir_cache = ShardDirCache::build(config.root())
             .or_err_with(ErrorType::FileCreateError, || {

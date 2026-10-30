@@ -118,11 +118,11 @@ struct Cli {
     #[arg(long)]
     max_blocking_threads: Option<usize>,
 
-    /// `FsCacheConfig::with_noatime`: read records without updating their
-    /// access time.
+    /// `FsCacheConfig::with_noatime(false)`: read records as usual,
+    /// updating their access time.
     #[cfg(target_os = "linux")]
     #[arg(long)]
-    noatime: bool,
+    atime: bool,
 
     /// `FsCacheConfig::with_page_cache_reads(false)`: serve every hit from
     /// the blocking pool, as on a file system without non-blocking reads.
@@ -195,7 +195,7 @@ fn main() {
     let config = FsCacheConfig::new(&cli.cache_dir, None).with_durability(durability);
     #[cfg(target_os = "linux")]
     let config = config
-        .with_noatime(cli.noatime)
+        .with_noatime(!cli.atime)
         .with_page_cache_reads(!cli.no_page_cache_reads);
     let fs_cache = FsCache::new(config)
         .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");

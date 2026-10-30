@@ -13,11 +13,11 @@
 //! missing, it fails with an error of kind `Unsupported`, which the caller
 //! reports: a page-cache read never turns into a pool read unnoticed.
 //!
-//! With `FsCacheConfig::with_noatime`, records are opened with `O_NOATIME`,
-//! here and on the pool ([`open_blocking`]). A read that updates a file's
-//! access time dirties its inode, and on ext4 that starts a journal
-//! transaction, which can wait: even a read that `RWF_NOWAIT` keeps from
-//! waiting for the device updates it. With the default `relatime`, it
+//! With `FsCacheConfig::with_noatime`, on by default, records are opened
+//! with `O_NOATIME`, here and on the pool ([`open_blocking`]). A read that
+//! updates a file's access time dirties its inode, and on ext4 that starts a
+//! journal transaction, which can wait: even a read that `RWF_NOWAIT` keeps
+//! from waiting for the device updates it. With the default `relatime`, it
 //! happens on the first read of every record after it was written, as its
 //! writes leave its access time behind its modification time. The kernel
 //! refuses `O_NOATIME` on a file of another owner, and the open then fails.
