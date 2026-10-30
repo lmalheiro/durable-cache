@@ -126,16 +126,17 @@ async fn tc_layout_objectfile_01_stored_key_must_match_the_looked_up_key() {
 /// What the read-time body check logs on a mismatch.
 const BODY_MISMATCH: &str = "does not match its stored checksum";
 
-/// A body spanning several of the reader's 64 KiB chunks, so a check folds
-/// more than one.
+/// A body spanning several of the reader's chunks
+/// (`durable_cache::lookup::CHUNK_SIZE`), so a check folds more than one.
 fn multi_chunk_body() -> Vec<u8> {
-    (0..200_000u32).map(|i| (i % 251) as u8).collect()
+    let len = 2 * durable_cache::lookup::CHUNK_SIZE as u32 + 4000;
+    (0..len).map(|i| (i % 251) as u8).collect()
 }
 
 /// A fresh cache, with the read-time body check switched on or off. A build
 /// without `body-crc-verify` has no check to switch on.
 fn cache_checking_bodies(check: bool) -> (&'static durable_cache::FsCache, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::tempdir();
     let config = FsCacheConfig::new(tmp.path(), None);
     #[cfg(feature = "body-crc-verify")]
     let config = config.with_body_crc_verification(check);

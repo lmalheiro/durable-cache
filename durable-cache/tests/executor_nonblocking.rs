@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use durable_cache::FsCacheConfig;
 use pingora_cache::storage::Storage;
 
 use super::support;
@@ -126,9 +127,22 @@ fn tc_storage_executor_01_storage_calls_do_not_stall_the_worker() {
 /// the backend has the most opportunity to hold the worker.
 #[test]
 fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
+    streaming_does_not_stall_the_worker(std::convert::identity);
+}
+
+/// The same with page-cache reads switched off: the partial hit opens and
+/// reads the store's temporary on the blocking pool.
+#[cfg(target_os = "linux")]
+#[test]
+fn tc_storage_executor_01_streaming_through_the_pool_does_not_stall_the_worker() {
+    streaming_does_not_stall_the_worker(|config| config.with_page_cache_reads(false));
+}
+
+fn streaming_does_not_stall_the_worker(configure: fn(FsCacheConfig) -> FsCacheConfig) {
     let rt = single_worker_runtime();
     rt.block_on(async {
-        let (cache, _tmp) = support::leaked_cache();
+        let tmp = support::tempdir();
+        let cache = support::leaked_cache_with(configure(FsCacheConfig::new(tmp.path(), None)));
         let key = support::key("/executor-streaming");
         let chunk = vec![7u8; 1024 * 1024];
         let trace = support::inactive_trace();
@@ -165,6 +179,60 @@ fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
              an in-flight store, over the {MAX_STALL:?} bound (FDS-STORAGE.EXECUTOR-01)"
         );
     });
+}
+
+/// By default (`FsCacheConfig::with_noatime`), a hit leaves its record's
+/// access time as it was, even where `relatime` would update it: the update
+/// that can start a journal transaction on the worker serving the hit. A
+/// file system that records no access times cannot tell, and the test says
+/// so.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn tc_storage_executor_01_a_hit_leaves_the_access_time() {
+    use std::fs::{File, FileTimes};
+    use std::os::unix::fs::FileExt;
+    use std::time::SystemTime;
+
+    let tmp = support::tempdir();
+    let an_hour_ago = SystemTime::now() - Duration::from_secs(3600);
+    let set_accessed = |path: &std::path::Path| {
+        File::options()
+            .write(true)
+            .open(path)
+            .and_then(|f| f.set_times(FileTimes::new().set_accessed(an_hour_ago)))
+            .expect("the access time is set");
+    };
+    let accessed = |path: &std::path::Path| {
+        std::fs::metadata(path)
+            .and_then(|m| m.accessed())
+            .expect("the access time reads")
+    };
+
+    let control = tmp.path().join("control");
+    std::fs::write(&control, [7u8; 4096]).expect("the control file is written");
+    set_accessed(&control);
+    File::open(&control)
+        .and_then(|f| f.read_exact_at(&mut [0u8; 4096], 0))
+        .expect("the control file reads");
+    if accessed(&control) == an_hour_ago {
+        eprintln!("this file system does not record access times: nothing to check");
+        return;
+    }
+
+    let cache = support::leaked_cache_with(FsCacheConfig::new(tmp.path().join("cache"), None));
+    let key = support::key("/noatime");
+    support::store(cache, &key, &support::meta(), b"a body").await;
+    let record = support::canonical_path(cache, &key);
+    set_accessed(&record);
+    let (_meta, body) = support::lookup_body(cache, &key)
+        .await
+        .expect("the stored body is a hit");
+    assert_eq!(body, b"a body");
+    assert_eq!(
+        accessed(&record),
+        an_hour_ago,
+        "the hit left the access time"
+    );
 }
 
 /// Step 6: the restart scan frees what it removes on the blocking pool: a

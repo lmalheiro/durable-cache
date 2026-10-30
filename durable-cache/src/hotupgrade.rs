@@ -237,8 +237,12 @@ mod tests {
     const THREAD_NAME_LEN: usize = 15;
 
     fn leaked_cache() -> (&'static FsCache, tempfile::TempDir) {
+        // In the system's temporary directory, maybe a tmpfs, without
+        // non-blocking reads: this test is not about reads.
         let tmp = tempfile::tempdir().expect("a cache directory");
         let config = FsCacheConfig::new(tmp.path(), None);
+        #[cfg(target_os = "linux")]
+        let config = config.with_page_cache_reads(false);
         let cache = FsCache::new(config).expect("a cache");
         (Box::leak(Box::new(cache)), tmp)
     }

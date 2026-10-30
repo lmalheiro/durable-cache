@@ -41,6 +41,38 @@ pub struct FsCache {
     pub(crate) hooks: Hooks,
 }
 
+/// With `FsCacheConfig::with_noatime`, check that the kernel lets this
+/// process open the cache's files without updating their access time: it
+/// allows `O_NOATIME` only to a file's owner, and the owner of the root
+/// stands for the owner of the files under it.
+#[cfg(target_os = "linux")]
+fn check_noatime(root: &Path) -> Result<()> {
+    crate::nowait::open_blocking(root, true)
+        .map(drop)
+        .or_err_with(ErrorType::FileOpenError, || {
+            format!(
+                "opening {} without updating its access time, as FsCacheConfig::with_noatime \
+                 asks; switch it off where this process does not own the cache's files",
+                root.display()
+            )
+        })
+}
+
+/// With `FsCacheConfig::with_page_cache_reads`, check that the kernel and
+/// the cache's file system support the calls those reads make: on the root,
+/// and on this instance's lease, the one file the cache is sure to hold.
+#[cfg(target_os = "linux")]
+fn check_page_cache_reads(root: &Path, lease: &WriterLease) -> Result<()> {
+    let lease_file = crate::writerid::lease_path(root, &lease.id());
+    crate::nowait::check_support(root, &lease_file).or_err_with(ErrorType::InternalError, || {
+        format!(
+            "checking the page-cache reads that FsCacheConfig::with_page_cache_reads asks for \
+             under {}; switch them off where the kernel or the file system lacks them",
+            root.display()
+        )
+    })
+}
+
 impl FsCache {
     /// Build a cache rooted at `config.root()`. Runs FDS-LAYOUT.STARTUP-01's
     /// construction-time shard scan; does *not* run Eviction Recovery
@@ -53,16 +85,31 @@ impl FsCache {
     ///
     /// Fails with a `FileCreateError` if the shard tree cannot be created or
     /// listed under the root, or this instance's lease cannot be created and
-    /// locked (ADR-STORAGE.WRITERID-01).
+    /// locked (ADR-STORAGE.WRITERID-01). On Linux, with the default
+    /// configuration, it also fails with a `FileOpenError` if the kernel
+    /// refuses to open the root without updating its access time, as it does
+    /// when this process does not own it (see
+    /// [`FsCacheConfig::with_noatime`]); and with an `InternalError` if the
+    /// kernel or the file system under the root does not support the calls
+    /// that page-cache reads make (see
+    /// [`FsCacheConfig::with_page_cache_reads`]).
     pub fn new(config: FsCacheConfig) -> Result<Self> {
         let dir_cache = ShardDirCache::build(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating the shard tree under {}", config.root().display())
             })?;
+        #[cfg(target_os = "linux")]
+        if config.noatime() {
+            check_noatime(config.root())?;
+        }
         let lease = WriterLease::acquire(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating a writer lease under {}", config.root().display())
             })?;
+        #[cfg(target_os = "linux")]
+        if config.page_cache_reads() {
+            check_page_cache_reads(config.root(), &lease)?;
+        }
         // With the `metrics` feature, the counters are served from here on,
         // at zero, rather than from their first event.
         metrics::register();

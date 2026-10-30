@@ -195,7 +195,7 @@ impl WriterLease {
 }
 
 /// The path of writer `id`'s lease under `root`.
-fn lease_path(root: &Path, id: &WriterId) -> PathBuf {
+pub(crate) fn lease_path(root: &Path, id: &WriterId) -> PathBuf {
     root.join(LEASE_DIR).join(format!("{id}.{LEASE_SUFFIX}"))
 }
 

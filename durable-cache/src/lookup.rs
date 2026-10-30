@@ -16,7 +16,7 @@
 
 use std::any::Any;
 use std::fs::File;
-use std::os::unix::fs::{FileExt, MetadataExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -31,6 +31,8 @@ use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
 use crate::inflight::{InFlightWriter, WriteOutcome};
+#[cfg(target_os = "linux")]
+use crate::nowait;
 use crate::record::{self, ReadError, RecordError, RecordKind};
 use crate::{blocking, key_codec, FsCache};
 
@@ -39,7 +41,11 @@ use crate::{blocking, key_codec, FsCache};
 // IMP-STORAGE.PUBLISH-01 covers the writer half.
 // IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
 
-const CHUNK_SIZE: u64 = 64 * 1024;
+/// The most body one read delivers. A larger chunk takes fewer reads and
+/// fewer trips through Pingora for a large body, but more memory per read.
+/// Measured on 1 MiB hits served from the page cache, 128 KiB was faster
+/// than 64 KiB, 256 KiB no faster than 128 KiB, and 1 MiB much slower.
+pub(crate) const CHUNK_SIZE: u64 = 128 * 1024;
 
 /// Where a hit's body comes from, and how far it has been read.
 ///
@@ -57,6 +63,9 @@ enum ReadSource {
         /// The body position to stop at, excluded: `body_len`, unless a seek
         /// set it.
         end: u64,
+        /// The body's first bytes, read with the record's metadata
+        /// (`record::LOOKUP_READ_LEN`), until the reads have passed them.
+        prefetched: Bytes,
     },
     /// The temporary of a store still in flight: a partial hit, whose body
     /// grows while it is read (FDS-STORAGE.PARTIAL-01).
@@ -83,6 +92,10 @@ pub struct FsHitHandler {
     /// The file this hit reads, which names it in the context of an error
     /// this handler returns.
     path: PathBuf,
+    /// Whether body reads try the page cache on the worker first
+    /// (`FsCacheConfig::with_page_cache_reads`).
+    #[cfg(target_os = "linux")]
+    page_cache_reads: bool,
     /// The read-time body check, while one runs: switched on in the
     /// configuration, for a published record that carries a checksum, until
     /// the read seeks (ADR-PERSISTENCE.DURABILITY-01).
@@ -168,9 +181,28 @@ pub(crate) async fn lookup(
         None => cache.inflight.most_recent(&name),
     };
     if let Some(writer) = in_flight {
-        let key_bytes = key_bytes.clone();
-        let opening = Arc::clone(&writer);
-        match blocking::run(move || open_partial_hit(cache, opening, &key_bytes)).await? {
+        // On Linux, from the page cache on this worker first: the store has
+        // just written the temporary (`crate::nowait`).
+        #[cfg(target_os = "linux")]
+        let (found, opened) = if cache.config.page_cache_reads() {
+            match open_partial_hit_nowait(cache, &writer, &key_bytes) {
+                OnWorker::Done(found) => (Some(found?), None),
+                OnWorker::ToPool(opened) => (None, opened),
+            }
+        } else {
+            (None, None)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (found, opened): (Option<InFlightTemp>, Option<File>) = (None, None);
+        let found = match found {
+            Some(found) => found,
+            None => {
+                let key_bytes = key_bytes.clone();
+                let opening = Arc::clone(&writer);
+                blocking::run(move || open_partial_hit(cache, opening, &key_bytes, opened)).await?
+            }
+        };
+        match found {
             InFlightTemp::Hit(meta, hit) => return Ok(Some((meta, hit))),
             // The store wrote this fixed part in full before registering,
             // and a read torn by its header update is retried, so this is
@@ -199,24 +231,50 @@ pub(crate) async fn lookup(
     }
 
     let canonical = cache.canonical_path(&name)?;
+    // On Linux, from the page cache on this worker when nothing has to wait
+    // for the device (`crate::nowait`); on the pool otherwise.
+    #[cfg(target_os = "linux")]
+    let opened = if cache.config.page_cache_reads() {
+        match open_published_nowait(cache, &canonical, &key_bytes) {
+            OnWorker::Done(answer) => return answer,
+            OnWorker::ToPool(opened) => opened,
+        }
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "linux"))]
+    let opened = None;
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
     // (FDS-STORAGE.EXECUTOR-01).
-    blocking::run(move || open_published(cache, &name, canonical, key_bytes)).await
+    blocking::run(move || open_published(cache, &name, canonical, key_bytes, opened)).await
+}
+
+/// What an operation tried on the worker came to (`crate::nowait`).
+#[cfg(target_os = "linux")]
+enum OnWorker<T> {
+    /// Its answer.
+    Done(T),
+    /// The pool takes over, with the file if the worker opened it: so that
+    /// the pool does not open it again, and the worker does not close it. A
+    /// close can free a file that a store, a purge or an abort has just
+    /// removed, if it was its last descriptor (see `FsHitHandler`'s `Drop`).
+    ToPool(Option<File>),
 }
 
 /// Open and validate the published record at `canonical`, the record of the
 /// key whose files are named `name`, returning the hit it answers with, or
-/// `None` for a miss. Blocking throughout; called only from the blocking
-/// pool.
+/// `None` for a miss; `opened` is the record, if the worker opened it
+/// already. Blocking throughout; called only from the blocking pool.
 fn open_published(
     cache: &'static FsCache,
     name: &str,
     canonical: PathBuf,
     key_bytes: Vec<u8>,
+    opened: Option<File>,
 ) -> Result<Option<(CacheMeta, FsHitHandler)>> {
-    let file = match File::open(&canonical) {
+    let file = match opened.map_or_else(|| open_to_read(cache, &canonical), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
@@ -227,7 +285,7 @@ fn open_published(
             )
         }
     };
-    let mut read = record::read_record_blocking(&file, RecordKind::Published, Some(&key_bytes));
+    let mut read = record::read_published_blocking(&file, &key_bytes);
     // Checksums that kept failing may be an in-place metadata update caught
     // between its two writes, by an updater the scheduler stopped there.
     // Every in-place update holds the key's publication lock from its first
@@ -238,7 +296,7 @@ fn open_published(
     // change meanwhile, as `ChangeLocks::lock_key` requires.
     if matches!(&read, Err(ReadError::Record(e)) if e.is_retryable()) {
         let _key = cache.locks.lock_key(name);
-        read = record::read_record_once(&file, RecordKind::Published, Some(&key_bytes));
+        read = record::read_published_once(&file, &key_bytes);
     }
     let parsed = match read {
         Ok(parsed) => parsed,
@@ -259,23 +317,94 @@ fn open_published(
         }
     };
     let meta = cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes)?;
-    Ok(Some((
-        meta,
-        FsHitHandler {
-            file: Some(Arc::new(file)),
-            source: ReadSource::Complete {
-                body_offset: parsed.header.body_offset() as u64,
-                body_len: parsed.header.body_len(),
-                pos: 0,
-                end: parsed.header.body_len(),
-            },
-            path: canonical,
-            #[cfg(feature = "body-crc-verify")]
-            check: BodyCheck::start(cache, parsed.header.body_crc()),
-            #[cfg(test)]
-            cache,
+    Ok(Some((meta, published_hit(cache, file, parsed, canonical))))
+}
+
+/// [`open_published`] on the worker, from the page cache only
+/// (`crate::nowait`). It answers a hit, a miss on a record that does not
+/// exist, and a call the system does not support after all. Anything else
+/// goes to the pool, which does it all again: a read that would wait for
+/// the device, a checksum mismatch that `open_published` retries under the
+/// key's lock, a record it reports as a miss, an error.
+#[cfg(target_os = "linux")]
+fn open_published_nowait(
+    cache: &'static FsCache,
+    canonical: &Path,
+    key_bytes: &[u8],
+) -> OnWorker<Result<Option<(CacheMeta, FsHitHandler)>>> {
+    let file = match nowait::open(canonical, cache.config.noatime()) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return OnWorker::Done(Ok(None)),
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+            return OnWorker::Done(page_cache_error(canonical, e))
+        }
+        Err(_) => return OnWorker::ToPool(None),
+    };
+    let parsed = match record::read_published_nowait(&file, key_bytes) {
+        Ok(parsed) => parsed,
+        Err(ReadError::Io(e)) if e.kind() == std::io::ErrorKind::Unsupported => {
+            close_on_pool(file, cache, canonical);
+            return OnWorker::Done(page_cache_error(canonical, e));
+        }
+        Err(_) => return OnWorker::ToPool(Some(file)),
+    };
+    let Ok(meta) = cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes) else {
+        return OnWorker::ToPool(Some(file));
+    };
+    let hit = published_hit(cache, file, parsed, canonical.to_path_buf());
+    OnWorker::Done(Ok(Some((meta, hit))))
+}
+
+/// The error of a page-cache read the system does not support after all,
+/// although `FsCache::new` checked that it did: a file in the cache lies on
+/// another file system than the root, or the system changed since.
+#[cfg(target_os = "linux")]
+fn page_cache_error<T>(path: &Path, e: std::io::Error) -> Result<T> {
+    Error::e_because(ErrorType::FileReadError, page_cache_read(path), e)
+}
+
+/// Close `file`, from `path`, on the blocking pool: the worker never closes
+/// a record it gives up on, as the close may free a record that a store or
+/// a purge has just removed (see `FsHitHandler`'s `Drop`).
+#[cfg(target_os = "linux")]
+fn close_on_pool(file: File, cache: &'static FsCache, path: &Path) {
+    #[cfg(not(test))]
+    let _ = (cache, path);
+    blocking::close_removed_file(
+        file,
+        #[cfg(test)]
+        cache,
+        #[cfg(test)]
+        path.to_path_buf(),
+    );
+}
+
+/// The hit handler of the published record `parsed`, open as `file`.
+fn published_hit(
+    cache: &'static FsCache,
+    file: File,
+    parsed: record::ParsedRecord,
+    path: PathBuf,
+) -> FsHitHandler {
+    #[cfg(not(target_os = "linux"))]
+    let _ = cache;
+    FsHitHandler {
+        file: Some(Arc::new(file)),
+        source: ReadSource::Complete {
+            body_offset: parsed.header.body_offset() as u64,
+            body_len: parsed.header.body_len(),
+            pos: 0,
+            end: parsed.header.body_len(),
+            prefetched: parsed.body_prefix,
         },
-    )))
+        path,
+        #[cfg(target_os = "linux")]
+        page_cache_reads: cache.config.page_cache_reads(),
+        #[cfg(feature = "body-crc-verify")]
+        check: BodyCheck::start(cache, parsed.header.body_crc()),
+        #[cfg(test)]
+        cache,
+    }
 }
 
 /// What opening an in-flight store's temporary found.
@@ -289,13 +418,15 @@ enum InFlightTemp {
     Unreadable(RecordError),
 }
 
-/// Open a partial hit on `writer`'s temporary.
+/// Open a partial hit on `writer`'s temporary; `opened` is the temporary,
+/// if the worker opened it already.
 fn open_partial_hit(
     cache: &'static FsCache,
     writer: Arc<InFlightWriter>,
     key_bytes: &[u8],
+    opened: Option<File>,
 ) -> Result<InFlightTemp> {
-    let file = match File::open(&writer.temp_path) {
+    let file = match opened.map_or_else(|| open_to_read(cache, &writer.temp_path), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(InFlightTemp::Gone),
         Err(e) => {
@@ -324,8 +455,63 @@ fn open_partial_hit(
         }
     };
     let meta = cache.decode_meta(&writer.internal_meta, &writer.header_meta)?;
+    Ok(partial_hit(cache, writer, file, &parsed, meta))
+}
+
+/// [`open_partial_hit`] on the worker, from the page cache only
+/// (`crate::nowait`). It answers a partial hit, a temporary that is gone,
+/// and a call the system does not support after all. Anything else goes to
+/// the pool, which does it all again.
+#[cfg(target_os = "linux")]
+fn open_partial_hit_nowait(
+    cache: &'static FsCache,
+    writer: &Arc<InFlightWriter>,
+    key_bytes: &[u8],
+) -> OnWorker<Result<InFlightTemp>> {
+    let path = &writer.temp_path;
+    let file = match nowait::open(path, cache.config.noatime()) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return OnWorker::Done(Ok(InFlightTemp::Gone))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+            return OnWorker::Done(page_cache_error(path, e))
+        }
+        Err(_) => return OnWorker::ToPool(None),
+    };
+    let parsed = match record::read_in_flight_nowait(&file, key_bytes) {
+        Ok(parsed) => parsed,
+        Err(ReadError::Io(e)) if e.kind() == std::io::ErrorKind::Unsupported => {
+            close_on_pool(file, cache, path);
+            return OnWorker::Done(page_cache_error(path, e));
+        }
+        Err(_) => return OnWorker::ToPool(Some(file)),
+    };
+    let Ok(meta) = cache.decode_meta(&writer.internal_meta, &writer.header_meta) else {
+        return OnWorker::ToPool(Some(file));
+    };
+    OnWorker::Done(Ok(partial_hit(
+        cache,
+        Arc::clone(writer),
+        file,
+        &parsed,
+        meta,
+    )))
+}
+
+/// The partial hit on `writer`'s temporary, open as `file`, whose fixed part
+/// is `parsed`.
+fn partial_hit(
+    cache: &'static FsCache,
+    writer: Arc<InFlightWriter>,
+    file: File,
+    parsed: &record::ParsedRecord,
+    meta: CacheMeta,
+) -> InFlightTemp {
+    #[cfg(not(target_os = "linux"))]
+    let _ = cache;
     let path = writer.temp_path.clone();
-    Ok(InFlightTemp::Hit(
+    InFlightTemp::Hit(
         meta,
         FsHitHandler {
             file: Some(Arc::new(file)),
@@ -335,26 +521,84 @@ fn open_partial_hit(
                 read_so_far: 0,
             },
             path,
+            #[cfg(target_os = "linux")]
+            page_cache_reads: cache.config.page_cache_reads(),
             #[cfg(feature = "body-crc-verify")]
             check: None,
             #[cfg(test)]
             cache,
         },
-    ))
+    )
 }
 
-/// One positional read, on the blocking pool: a body read is a `pread` that
-/// may reach the device, which must not run on the worker driving other
-/// connections (FDS-STORAGE.EXECUTOR-01).
-async fn read_at(file: Arc<File>, offset: u64, len: usize, path: &Path) -> Result<Vec<u8>> {
-    blocking::run(move || {
-        let mut buf = vec![0u8; len];
-        Ok(file.read_exact_at(&mut buf, offset).map(|()| buf))
-    })
-    .await?
-    .or_err_with(ErrorType::FileReadError, || {
-        format!("reading {}", path.display())
-    })
+/// Open a record, or a store's temporary, to read it on the blocking pool;
+/// on Linux without updating its access time if the configuration asks
+/// (`crate::nowait`).
+#[cfg(target_os = "linux")]
+fn open_to_read(cache: &FsCache, path: &Path) -> std::io::Result<File> {
+    nowait::open_blocking(path, cache.config.noatime())
+}
+
+/// Open a record, or a store's temporary, to read it on the blocking pool.
+#[cfg(not(target_os = "linux"))]
+fn open_to_read(_cache: &FsCache, path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+/// Read the file into `buf`, past the bytes it holds, until it holds `end`,
+/// the byte at index `i` of `buf` being the file's byte at `base + i`, on
+/// the blocking pool: a body read is a `pread` that may reach the device,
+/// which must not run on the worker driving other connections
+/// (FDS-STORAGE.EXECUTOR-01).
+async fn fill_on_pool(
+    file: Arc<File>,
+    mut buf: Vec<u8>,
+    end: usize,
+    base: u64,
+    path: &Path,
+) -> Result<Vec<u8>> {
+    blocking::run(move || Ok(fill_waiting(&file, &mut buf, end, base).map(|()| buf)))
+        .await?
+        .or_err_with(ErrorType::FileReadError, || {
+            format!("reading {}", path.display())
+        })
+}
+
+/// [`fill_on_pool`]'s read: on Linux into bytes not zeroed first
+/// (`crate::nowait`).
+#[cfg(target_os = "linux")]
+fn fill_waiting(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> std::io::Result<()> {
+    nowait::fill(file, buf, end, base, nowait::Wait::Allowed)
+}
+
+/// [`fill_on_pool`]'s read, into zeroed bytes.
+#[cfg(not(target_os = "linux"))]
+fn fill_waiting(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> std::io::Result<()> {
+    let start = buf.len();
+    buf.resize(end, 0);
+    std::os::unix::fs::FileExt::read_exact_at(file, &mut buf[start..], base + start as u64)
+}
+
+/// [`fill_on_pool`] on the worker, from the page cache only
+/// (`crate::nowait`): `false` to carry on on the pool, which also reports
+/// any error with its context. A call the system does not support after
+/// all is an error.
+#[cfg(target_os = "linux")]
+fn fill_on_worker(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> std::io::Result<bool> {
+    match nowait::fill(file, buf, end, base, nowait::Wait::Never) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => Err(e),
+        Err(_) => Ok(false),
+    }
+}
+
+/// The context of an error reading `path` from the page cache.
+#[cfg(target_os = "linux")]
+fn page_cache_read(path: &Path) -> String {
+    format!(
+        "reading {} from the page cache, as FsCacheConfig::with_page_cache_reads asks",
+        path.display()
+    )
 }
 
 impl FsHitHandler {
@@ -372,6 +616,7 @@ impl FsHitHandler {
                 body_offset,
                 pos,
                 end,
+                prefetched,
                 ..
             } => {
                 if *pos >= *end {
@@ -382,14 +627,47 @@ impl FsHitHandler {
                     return Ok(None);
                 }
                 let len = (*end - *pos).min(CHUNK_SIZE) as usize;
-                let offset = *body_offset + *pos;
-                let buf = read_at(Arc::clone(&file), offset, len, &self.path).await?;
+                // How much of this chunk the lookup has already read.
+                let held = (prefetched.len() as u64)
+                    .saturating_sub(*pos)
+                    .min(len as u64) as usize;
+                let buf = if held == len {
+                    let start = *pos as usize;
+                    prefetched.slice(start..start + len)
+                } else {
+                    // The rest comes from the file: from the page cache on
+                    // this worker if it can, on the pool otherwise, after
+                    // the bytes already held, so a chunk keeps its size.
+                    let mut buf = Vec::with_capacity(len);
+                    if held > 0 {
+                        let start = *pos as usize;
+                        buf.extend_from_slice(&prefetched[start..start + held]);
+                    }
+                    let base = *body_offset + *pos;
+                    #[cfg(target_os = "linux")]
+                    let filled = self.page_cache_reads
+                        && fill_on_worker(&file, &mut buf, len, base)
+                            .or_err_with(ErrorType::FileReadError, || {
+                                page_cache_read(&self.path)
+                            })?;
+                    #[cfg(not(target_os = "linux"))]
+                    let filled = false;
+                    if !filled {
+                        let file = Arc::clone(&file);
+                        buf = fill_on_pool(file, buf, len, base, &self.path).await?;
+                    }
+                    Bytes::from(buf)
+                };
                 #[cfg(feature = "body-crc-verify")]
                 if let Some(check) = &mut self.check {
                     check.running = crc32c::crc32c_append(check.running, &buf);
                 }
                 *pos += len as u64;
-                Ok(Some(Bytes::from(buf)))
+                if *pos >= prefetched.len() as u64 {
+                    // Passed: release the lookup's read.
+                    *prefetched = Bytes::new();
+                }
+                Ok(Some(buf))
             }
             ReadSource::Partial {
                 writer,
@@ -407,7 +685,21 @@ impl FsHitHandler {
                 if *read_so_far < valid {
                     let len = (valid - *read_so_far).min(CHUNK_SIZE) as usize;
                     let offset = *body_offset + *read_so_far;
-                    let buf = read_at(Arc::clone(&file), offset, len, &self.path).await?;
+                    // The store has just written these bytes: from the page
+                    // cache on this worker if it can, on the pool otherwise.
+                    let mut buf = Vec::with_capacity(len);
+                    #[cfg(target_os = "linux")]
+                    let filled = self.page_cache_reads
+                        && fill_on_worker(&file, &mut buf, len, offset)
+                            .or_err_with(ErrorType::FileReadError, || {
+                                page_cache_read(&self.path)
+                            })?;
+                    #[cfg(not(target_os = "linux"))]
+                    let filled = false;
+                    if !filled {
+                        let file = Arc::clone(&file);
+                        buf = fill_on_pool(file, buf, len, offset, &self.path).await?;
+                    }
                     *read_so_far += len as u64;
                     return Ok(Some(Bytes::from(buf)));
                 }

@@ -51,7 +51,7 @@ async fn tc_compat_streaming_01_followers_never_cause_a_second_upstream_fetch() 
         },
     );
 
-    let cache_dir = tempfile::tempdir().unwrap();
+    let cache_dir = durable_cache_harness::cache_dir();
     let listen_addr = free_port().unwrap();
     let proxy = FixtureProxyHandle::start(FixtureProxyOptions {
         cache_dir: cache_dir.path(),
