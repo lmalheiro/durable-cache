@@ -1960,6 +1960,9 @@
       to keep correct --- machinery \reqref{HLR-SCOPE.V1-01} asks not to build
       when a pool that ships with the runtime already closes the gap.
   \end{itemize}
+  Appendix~\ref{app:executor} records an investigation left to a later
+  version: running the file I/O on the workers instead, \texttt{io\_uring},
+  and the file systems that suit each.
 
   \textbf{Consequences:}
   \begin{itemize}

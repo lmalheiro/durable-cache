@@ -1,0 +1,580 @@
+% =====================================================================
+% Appendix: Storage I/O Without the Blocking Pool.
+%
+% Records an investigation this version leaves open: whether the
+% backend's file I/O could run on the Pingora workers instead of Tokio's
+% blocking pool, what that costs when the kernel holds writes back, and
+% what io_uring and the choice of file system could change. Nothing here
+% is normative; it is the starting point for a later version.
+% =====================================================================
+
+This appendix records an investigation that this version leaves open:
+whether the backend could do its file I/O on the worker threads that poll
+it, instead of handing each operation to Tokio's blocking pool as
+\reqref{ADR-STORAGE.EXECUTOR-01} decides. It collects what was measured,
+what the kernel allows, and the directions a later version could take.
+Nothing here is normative: no requirement, decision or test case of this
+version depends on it. A later version that takes the work up would
+complement \reqref{ADR-STORAGE.EXECUTOR-01} and
+\reqref{FDS-STORAGE.EXECUTOR-01}, as \reqref{ADR-STORAGE.PAGECACHE-01} does
+for reads, and each mechanism it adds would have to meet
+\reqref{HLR-SCOPE.V1-01}: improve, by at least 20\,\%, a figure that a
+performance test case measures.
+
+All the measurements were made in October 2026 on one host: an Intel Core
+i7-4770HQ processor (four cores, eight hardware threads), 16~GB of memory,
+and an Apple SM0256G SSD holding an ext4 file system mounted with
+\texttt{relatime}, under Linux 6.12. They guide the work; they do not set
+its targets. What the kernel does is cited from the Linux 6.12 source.
+
+\section{What the Blocking Pool Still Costs}
+\label{app:executor-cost}
+
+A handoff to the blocking pool wakes a pool thread, which runs the
+operation and then wakes the worker. Measured on 23~October~2026, one
+handoff took 8 to 11~microseconds, from the call to its return, on an idle
+runtime, and about 20~microseconds of processor time under load, shared
+between the worker and the pool thread.
+
+On Linux, the reads that the page cache answers no longer pay it
+(\reqref{ADR-STORAGE.PAGECACHE-01}); stores still do. A store makes at
+least three handoffs: one to create its temporary and write the record's
+fixed part, one per body chunk, and one to publish it
+(\reqref{FDS-STORAGE.EXECUTOR-01}). A synchronised store is dominated by its
+\texttt{fdatasync}, which held a pool thread for 16 to 25~ms on this host.
+Without it (\reqref{ADR-PERSISTENCE.UNSYNCED-01}), the handoffs are a large
+share of what a store costs.
+
+Two earlier attempts to cut what the pool costs failed:
+\begin{itemize}
+  \item \emph{Capping the pool} (\texttt{ServerConf::max\_blocking\_threads}),
+    on 22~October~2026, as \reqref{ADR-STORAGE.PAGECACHE-01} reports among
+    its alternatives: a cap small enough to speed hits up starved the
+    synchronised stores, each of whose syncs holds a pool thread.
+  \item \emph{Threads of the backend's own}, beside Tokio's pool, which the
+    backend fed directly, on 23~October~2026. Without spinning, stores ran
+    as fast as on Tokio's pool. Spinning for 20 to 100~microseconds on an
+    empty queue, so that a thread would take the next operation before
+    falling asleep, made them 3 to 9\,\% slower, since the server's
+    processors were already busy. A handoff costs much the same whichever
+    pool it goes to.
+\end{itemize}
+
+\section{The Experiment: File I/O on the Workers}
+\label{app:executor-experiment}
+
+The idea tested on 30~October~2026: give the server more worker threads,
+and run each storage operation on the worker that polls it, with no handoff
+at all. A worker blocked in a system call then stalls only the tasks it
+holds, and with work stealing on, the Pingora default, the other workers
+take over the tasks queued on it.
+
+A prototype changed only the function through which every operation
+reaches the pool, and the close of a removed file
+(\reqref{FDS-STORAGE.EXECUTOR-01}). An environment variable, read once,
+chose among three executors:
+\begin{itemize}
+  \item \emph{pool}: \reqref{ADR-STORAGE.EXECUTOR-01} as specified, the
+    reference;
+  \item \emph{inline}: each operation runs on the worker that polls it;
+  \item \emph{block in place}: each operation runs on the worker too,
+    inside Tokio's \texttt{block\_in\_place}, which first hands the
+    worker's other tasks to another thread.
+\end{itemize}
+Page-cache reads (\reqref{ADR-STORAGE.PAGECACHE-01}) were on unless stated
+otherwise.
+
+\textbf{Method.} The setup of \reqref{TC-PERFORMANCE.HITRATE-01}, run by a
+script of its own: the fixture proxy on four of the eight hardware threads,
+the load generator and the origin (nginx) on the other four; 64 client
+connections; 10~seconds per scenario; three rounds, in a different order
+each round, reporting the medians. Hit scenarios first stored 100 objects
+and then requested them at random, so every hit was on an object the page
+cache held. Store scenarios requested a new URL every time, so every request
+was a miss that the proxy fetched and stored. Each configuration started
+with an empty cache. Unsynchronised stores were measured with
+\texttt{Durability::NoStoreSync} (\reqref{ADR-PERSISTENCE.UNSYNCED-01}),
+synchronised ones with the default.
+
+\textbf{Hits} ran within 5\,\% of the reference with every executor and
+every number of workers, for 1~KiB, 64~KiB and 1~MiB bodies, since they
+already stay on the worker. The inline executor with page-cache reads
+switched off ran as fast: a read that the page cache answers does not
+block, whichever call makes it.
+
+\textbf{Unsynchronised stores} ran 24 to 32\,\% faster inline, with 4, 16
+or 64 workers alike (Table~\ref{tab:executor-unsynced}): above the 20\,\%
+that \reqref{HLR-SCOPE.V1-01} asks of a new mechanism, on the figure
+\reqref{TC-PERFORMANCE.STORERATE-01} measures. With four workers, the
+server's threads fell from about 90 to 8. More workers did not help the
+pool: with 64, its rate stayed within 3\,\% of its rate with 4.
+
+\begin{table}[tb]
+\centering\small\renewcommand{\arraystretch}{1.3}%
+\caption{Unsynchronised stores by executor: stores per second (median of
+three rounds) and change against the pool with four workers; the 99th
+percentile of latency (p99) and the server's threads for 4~KiB bodies}%
+\label{tab:executor-unsynced}
+\begin{tabular}{|l|r|r|r|r|}
+\hline
+\textbf{Executor, workers} & \textbf{4~KiB} & \textbf{64~KiB} &
+\textbf{p99} & \textbf{Threads} \\
+\hline
+Pool, 4 & 8,883 & 7,158 & 12~ms & 88 \\
+\hline
+Pool, 64 & 9,092 ($+2$\,\%) & 6,990 ($-2$\,\%) & 36~ms & 385 \\
+\hline
+Inline, 4 & 11,612 ($+31$\,\%) & 8,948 ($+25$\,\%) & 10~ms & 8 \\
+\hline
+Inline, 16 & 11,652 ($+31$\,\%) & 8,991 ($+26$\,\%) & 21~ms & 20 \\
+\hline
+Inline, 64 & 11,723 ($+32$\,\%) & 8,889 ($+24$\,\%) & 42~ms & 68 \\
+\hline
+Block in place, 4 & 9,043 ($+2$\,\%) & 7,054 ($-1$\,\%) & 37~ms & 473 \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Synchronised stores} collapsed inline with few workers
+(Table~\ref{tab:executor-strict}). A worker waiting in \texttt{fdatasync}
+can do nothing else, so stores complete only as fast as the workers' syncs
+do: 4 workers made 229 stores of 4~KiB a second, one per worker every
+17.5~ms, and 16 workers made 802, one every 20~ms --- the time an
+\texttt{fdatasync} takes on this host. With 64 workers, as many as there
+were connections, the rate matched the pool's, which had grown to 150
+threads and so never ran short of them, and the server used 10 to 14\,\%
+less processor time than on the pool.
+
+\begin{table}[tb]
+\centering\small\renewcommand{\arraystretch}{1.3}%
+\caption{Synchronised stores by executor: stores per second (median of
+three rounds) and change against the pool with four workers; the 99th
+percentile of latency (p99) and the processor time used, in processors, for
+4~KiB bodies}%
+\label{tab:executor-strict}
+\begin{tabular}{|l|r|r|r|r|}
+\hline
+\textbf{Executor, workers} & \textbf{4~KiB} & \textbf{64~KiB} &
+\textbf{p99} & \textbf{Processors} \\
+\hline
+Pool, 4 & 2,642 & 1,749 & 37~ms & 1.46 \\
+\hline
+Inline, 4 & 229 ($-91$\,\%) & 198 ($-89$\,\%) & 519~ms & 0.24 \\
+\hline
+Inline, 16 & 802 ($-70$\,\%) & 668 ($-62$\,\%) & 135~ms & 0.50 \\
+\hline
+Inline, 64 & 2,613 ($-1$\,\%) & 1,663 ($-5$\,\%) & 35~ms & 1.26 \\
+\hline
+Inline, 128 & 2,646 ($0$\,\%) & 1,720 ($-2$\,\%) & 34~ms & 1.28 \\
+\hline
+Block in place, 4 & 2,727 ($+3$\,\%) & 1,744 ($0$\,\%) & 33~ms & 1.53 \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{More workers cost latency.} With 64 workers sharing four hardware
+threads, the 99th percentile of 1~KiB hits rose from 2.3~ms to 14~ms, on the
+pool as inline; with 16 workers, to 6.3~ms. A server that needs one worker
+per concurrent sync to keep synchronised stores inline pays this on every
+request.
+
+\textbf{\texttt{block\_in\_place} saves nothing.} It ran as fast as the
+pool, with a worse tail --- the 99th percentile of unsynchronised 4~KiB
+stores rose from 12~ms to 37~ms --- and the server ran 473 threads. Before
+each operation, it sends the worker's queue to a thread that it starts
+through the blocking
+pool:\footnote{\href{https://github.com/tokio-rs/tokio/blob/tokio-1.53.3/tokio/src/runtime/scheduler/multi_thread/worker.rs\#L477-L489}{Tokio
+source (release 1.53.3):
+\texttt{tokio/src/runtime/scheduler/multi\_thread/worker.rs}, lines
+477--489}.} a handoff on every call, in another form.
+
+\textbf{The test suite.} Inline, seven tests failed and two never ended.
+The seven check that work leaves the worker, or the thread that drops a
+handler: four of \reqref{TC-STORAGE.EXECUTOR-01}, and three others, for
+aborted stores, purged records and published stores. The two that never
+ended pause an update between its writes, to check that a lookup waits it
+out (\reqref{TC-LAYOUT.OBJECTFILE-01}, \reqref{TC-STORAGE.RECLAIM-01}); the
+test's runtime has one thread, which the paused update then holds. These
+tests check \reqref{FDS-STORAGE.EXECUTOR-01}, which the inline executor
+sets aside by design: a mode that runs work on the workers needs a
+functional design and test cases of its own.
+
+\section{Why a Write on the Worker Can Stall}
+\label{app:executor-stalls}
+
+The inline gain on unsynchronised stores rests on their writes not
+blocking: a write to the page cache copies the bytes and returns. Two
+mechanisms of the kernel can make it wait regardless, and on a worker that
+wait stalls every task the worker holds.
+
+\textbf{Dirty-page throttling.} Linux lets \emph{dirty} data --- written to
+the page cache but not yet to the device --- grow up to a threshold, and
+then makes the writers themselves wait for the device. Background
+write-back starts at \texttt{vm.dirty\_background\_ratio} of the memory
+available for the page cache, 10\,\% by default, and writers are throttled
+once dirty data passes the midpoint between that and
+\texttt{vm.dirty\_ratio}, 20\,\% by
+default.\footnote{\href{https://www.kernel.org/doc/html/latest/admin-guide/sysctl/vm.html\#dirty-ratio}{Linux
+kernel documentation: ``Documentation for /proc/sys/vm/''},
+\texttt{dirty\_background\_ratio} and \texttt{dirty\_ratio}, both percentages
+``of total available memory that contains free pages and reclaimable
+pages''; the midpoint:
+\href{https://github.com/torvalds/linux/blob/v6.12/mm/page-writeback.c\#L837-L841}{Linux
+source (release 6.12): \texttt{mm/page-writeback.c}, lines 837--841}.} On this
+host, at the time of writing, the kernel put the two thresholds at about
+0.7 and 1.4~GiB, so writers would be throttled from about 1~GiB of dirty
+data. A throttled writer sleeps for up to 200~ms at a time and, while dirty
+data stays above the upper threshold, sleeps again; only a fatal signal
+ends the sleep
+early.\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/mm/page-writeback.c\#L48}{Linux
+source (release 6.12): \texttt{mm/page-writeback.c}, line 48}
+(\texttt{MAX\_PAUSE}, a fifth of a second), and
+\href{https://github.com/torvalds/linux/blob/v6.12/mm/page-writeback.c\#L2005-L2007}{lines
+2005--2007} (the sleep, \texttt{TASK\_KILLABLE}).} The throttle applies to
+every task that dirties pages while the threshold is exceeded. Under a burst
+of writes --- fills of large objects arriving faster than the device writes
+them --- every worker that writes stalls at once, and more workers help only
+while some of them are not writing.
+
+In a memory cgroup, as in most containers, the kernel applies the same
+ratios to the memory the cgroup may use, and enforces whichever limit is the
+more
+restrictive:\footnote{\href{https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html\#writeback}{Linux
+kernel documentation: ``Control Group v2''}, Writeback.} a container limited
+to 2~GiB of memory throttles its writers from at most about 300~MiB of dirty
+data.
+
+Whether the store runs of Section~\ref{app:executor-experiment} reached the
+throttle is not known. They may well have: the 64~KiB runs wrote bodies at
+about 560~MiB a second for 10~seconds, several times the threshold, but the
+script recorded no dirty-data figures.
+
+\textbf{The ext4 journal.} On ext4, a write that changes a file's timestamps
+marks its inode dirty, which starts a journal handle, and so does every
+create and
+rename.\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/ext4/inode.c\#L5977-L5981}{Linux
+source (release 6.12): \texttt{fs/ext4/inode.c}, lines 5977--5981}
+(\texttt{ext4\_dirty\_inode}).} While the journal commits its running
+transaction, starting a handle waits for the commit to end, and that wait
+cannot be
+interrupted.\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/jbd2/transaction.c\#L142-L150}{Linux
+source (release 6.12): \texttt{fs/jbd2/transaction.c}, lines 142--150}
+(\texttt{wait\_transaction\_locked}, \texttt{TASK\_UNINTERRUPTIBLE}).}
+Commits follow \texttt{fdatasync} calls, such as synchronised stores make,
+and the journal's periodic commit, every 5~seconds by
+default;\footnote{\href{https://www.kernel.org/doc/html/latest/admin-guide/ext4.html}{Linux
+kernel documentation: ``ext4 General Information''},
+\texttt{commit=nrsec}.} in the default \texttt{data=ordered} mode, a commit
+first writes out the data of the files it covers. A synchronised store on
+one worker can thus hold up an unsynchronised store's write on another for
+as long as the device takes.
+
+\textbf{No non-blocking writes on ext4.} \texttt{preadv2} with
+\texttt{RWF\_NOWAIT} lets a read fail rather than wait
+(\reqref{ADR-STORAGE.PAGECACHE-01}); \texttt{pwritev2} takes the same flag,
+although its manual page documents it for reads
+only.\footnote{\href{https://man7.org/linux/man-pages/man2/pwritev2.2.html}{Linux
+manual page: \texttt{pwritev2(2)}}: ``Currently, this flag is meaningful
+only for preadv2().''} In Linux 6.12, ext4 refuses it for buffered writes,
+with
+\texttt{EOPNOTSUPP},\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/ext4/file.c\#L291-L292}{Linux
+source (release 6.12): \texttt{fs/ext4/file.c}, lines 291--292}.} as this host
+confirmed; so does tmpfs. On ext4, then, a write on the worker can neither
+be kept from stalling nor be cut short once it has.
+Section~\ref{app:executor-fs} lists the file systems that accept the flag.
+
+\section{Directions for a Later Version}
+\label{app:executor-directions}
+
+\subsection{Bounded inline writes}
+\label{app:executor-bounded}
+
+Of the directions in this section, this is the one the investigation
+favours, as a mode chosen by configuration beside today's. The backend
+keeps a fixed number $K$ of
+\emph{inline slots}, fewer than the workers. The operations of an
+unsynchronised store that do not wait for the device by nature --- creating
+its temporary, writing it, renaming it --- take a slot, with one atomic
+operation, and run on the worker; when every slot is taken, they go to the
+pool, as today. \texttt{fdatasync}, and the reads that the page cache cannot
+answer, always go to the pool.
+\begin{itemize}
+  \item In normal operation, writes take microseconds and the slots are
+    rarely all taken: most stores make no handoff, and keep most of the gain
+    measured above.
+  \item Under a burst of writes, at most $K$ workers stall. The others go on
+    serving hits, and further writes queue on the pool. The server slows
+    down during the burst, but does not stop.
+  \item The cost falls on the tasks that a stalled worker holds: they wait
+    out the stall, up to 200~ms for each throttle pause. That includes the
+    task in the worker's \emph{LIFO slot}, the one it is to poll next, which
+    other workers cannot
+    steal.\footnote{\href{https://github.com/tokio-rs/tokio/blob/tokio-1.53.3/tokio/src/runtime/builder.rs\#L1310-L1313}{Tokio
+    source (release 1.53.3): \texttt{tokio/src/runtime/builder.rs}, lines
+    1310--1313}: ``this slot cannot be stolen by other worker threads''.}
+  \item With $K = 0$, the backend behaves as this version does.
+\end{itemize}
+Open questions:
+\begin{itemize}
+  \item The backend does not see \texttt{ServerConf::threads}, so it cannot
+    check that $K$ is below the number of workers. The option could take
+    both numbers, or the backend could read the number of workers from the
+    runtime, once.
+  \item With work stealing off, each Pingora worker runs a runtime of its
+    own, and nothing takes over the tasks of a stalled worker: the mode
+    needs work stealing on.
+  \item The deviation \reqref{ADR-STORAGE.EXECUTOR-01} records --- an
+    upstream \texttt{103 Early Hints} lost while a sole worker was blocked
+    --- came from a stalled worker: \reqref{TC-COMPLIANCE.RFC-01}'s
+    differential would have to pass in this mode too.
+  \item \reqref{FDS-STORAGE.EXECUTOR-01} and its test cases describe the mode
+    with $K = 0$; the others need a functional design and test cases of their
+    own.
+\end{itemize}
+
+\subsection{Early write-back}
+\label{app:executor-writeback}
+
+After publishing an unsynchronised store, the backend could ask the kernel
+to start writing its data to the device, without waiting for it:
+\texttt{sync\_file\_range} with \texttt{SYNC\_FILE\_RANGE\_WRITE}. The call
+can still block when the device's queue is
+full,\footnote{\href{https://man7.org/linux/man-pages/man2/sync_file_range.2.html}{Linux
+manual page: \texttt{sync\_file\_range(2)}}: ``Note that even this may block
+if you attempt to write more than request queue size.''} so it would run on
+the pool, with nothing waiting for it. The cache's own dirty data would then
+stay small, so the cache alone would rarely push the host towards the
+throttle, and a host crash would lose fewer stores. The cost: the device
+writes each store sooner, including stores that are evicted or replaced
+before the kernel would have written them, and a store makes one more
+handoff. It does nothing against the dirty data that other programs on the
+host make.
+
+\subsection{Non-blocking writes where the file system has them}
+\label{app:executor-nowait-writes}
+
+Writes could follow \reqref{ADR-STORAGE.PAGECACHE-01}: write on the worker
+with \texttt{pwritev2} and \texttt{RWF\_NOWAIT}, and run the store on the
+pool from the first call that reports it would wait. On XFS, such a write
+returns \texttt{EAGAIN} instead of waiting for the file's I/O
+lock,\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/xfs/xfs_file.c\#L194-L196}{Linux
+source (release 6.12): \texttt{fs/xfs/xfs\_file.c}, lines 194--196}.} for the
+dirty-page
+throttle,\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/iomap/buffered-io.c\#L918}{Linux
+source (release 6.12): \texttt{fs/iomap/buffered-io.c}, line 918} and
+\href{https://github.com/torvalds/linux/blob/v6.12/fs/iomap/buffered-io.c\#L932-L933}{lines
+932--933}; \href{https://github.com/torvalds/linux/blob/v6.12/mm/page-writeback.c\#L2001-L2003}{\texttt{mm/page-writeback.c},
+lines 2001--2003}.} or to update the file's
+timestamps.\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/inode.c\#L2310-L2314}{Linux
+source (release 6.12): \texttt{fs/inode.c}, lines 2310--2314}.} The last will
+matter most: a write that would change the file's modification time fails,
+and on a file being written that is any write made after the clock has
+moved since the previous one. How often stores would fall back to the pool
+needs measuring. Creating the temporary and renaming it stay blocking calls
+on every file system: \texttt{openat2} refuses \texttt{RESOLVE\_CACHED} for
+a
+create,\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/open.c\#L1331-L1334}{Linux
+source (release 6.12): \texttt{fs/open.c}, lines 1331--1334}.} and no flag makes a
+rename fail rather than wait.
+
+As with page-cache reads, this would be an option, checked once when the
+cache is constructed --- a file system that refuses the flag then makes the
+construction fail, naming the option --- and never a silent detour at run
+time.
+
+\subsection{io\_uring}
+\label{app:executor-iouring}
+
+\texttt{io\_uring} submits operations through a ring of memory shared with
+the kernel, and reports their completions through another, with no thread
+of the process waiting on them. The kernel first tries each operation
+without blocking, and hands one that would block to worker threads of its
+own. What that means for the backend's operations, in Linux 6.12:
+\begin{itemize}
+  \item A read that misses the page cache needs no thread on ext4, XFS or
+    btrfs: the kernel completes it when the device delivers the
+    data.\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/io_uring/rw.c\#L752-L753}{Linux
+    source (release 6.12): \texttt{io\_uring/rw.c}, lines 752--753}: the file
+    system must declare \texttt{FOP\_BUFFER\_RASYNC}, as those three do.}
+    This is the case \reqref{HLR-PERSISTENCE.CAPACITY-01} makes common, and
+    today it costs a failed page-cache read and a handoff.
+  \item A buffered write runs without blocking on XFS, as above. On ext4, it
+    always goes to the kernel's
+    threads.\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/io_uring/rw.c\#L1055-L1059}{Linux
+    source (release 6.12): \texttt{io\_uring/rw.c}, lines 1055--1059}.}
+  \item \texttt{fdatasync}, \texttt{sync\_file\_range}, renames and unlinks
+    always go to the kernel's
+    threads.\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/io_uring/sync.c\#L76-L77}{Linux
+    source (release 6.12): \texttt{io\_uring/sync.c}, lines 76--77} and
+    \href{https://github.com/torvalds/linux/blob/v6.12/io_uring/sync.c\#L45-L46}{45--46};
+    \href{https://github.com/torvalds/linux/blob/v6.12/io_uring/fs.c\#L77}{\texttt{io\_uring/fs.c},
+    line 77} and \href{https://github.com/torvalds/linux/blob/v6.12/io_uring/fs.c\#L126}{126}.}
+\end{itemize}
+On ext4, then, \texttt{io\_uring} would move stores from Tokio's pool to the
+kernel's, at a cost not measured; its clear gain is on reads from the
+device.
+
+Integration is the larger task, and Tokio offers two starting points.
+\texttt{tokio-uring} drives \texttt{io\_uring} from a runtime of its
+own,\footnote{\href{https://github.com/tokio-rs/tokio-uring\#getting-started}{\texttt{tokio-uring}
+README}: ``Using \texttt{tokio-uring} requires starting a
+\texttt{tokio-uring} runtime.''} which Pingora does not use. Tokio itself
+has experimental support: built with \texttt{-{}-cfg tokio\_unstable} and
+its \texttt{io-uring} feature, a runtime that enables all its drivers ---
+as the Pingora runtimes
+do\footnote{\texttt{pingora-runtime} calls
+\pgsrc{pingora-runtime/src/lib.rs}{470}{\texttt{enable\_all}} on a
+work-stealing runtime (\pgsrc{pingora-runtime/src/lib.rs}{627}{L627} on the
+others).} --- also drives a ring, which \texttt{tokio::fs} uses
+to open, read, write and rename
+files.\footnote{\href{https://github.com/tokio-rs/tokio/blob/tokio-1.53.3/tokio/src/lib.rs\#L481-L482}{Tokio
+source (release 1.53.3): \texttt{tokio/src/lib.rs}, lines 481--482}, and
+\href{https://github.com/tokio-rs/tokio/blob/tokio-1.53.3/tokio/src/runtime/builder.rs\#L384-L391}{\texttt{tokio/src/runtime/builder.rs},
+lines 384--391}.} It offers no positional reads or writes, which this
+layout depends on, and the opt-in to unstable features belongs to the
+integrator's build, not to this backend. Short of either, the backend would
+drive a ring itself, through the \texttt{io-uring} crate, and wake each task
+when its completion arrives. Two constraints follow:
+\begin{itemize}
+  \item The kernel owns a buffer until the operation that uses it
+    completes. A handler that Pingora drops --- its client gone --- cannot
+    free its buffer before then: buffers must belong to the operation in
+    flight, and an abandoned operation must be cancelled or awaited.
+  \item Every operation the backend makes needs its own opcode: renames and
+    unlinks exist since Linux 5.11, \texttt{openat2} and plain writes since
+    5.6,\footnote{\href{https://man7.org/linux/man-pages/man2/io_uring_enter.2.html}{Linux
+    manual page: \texttt{io\_uring\_enter(2)}}, \texttt{IORING\_OP\_RENAMEAT},
+    \texttt{IORING\_OP\_UNLINKAT}, \texttt{IORING\_OP\_OPENAT2},
+    \texttt{IORING\_OP\_WRITE}.} so the mode would need Linux 5.11 or later.
+\end{itemize}
+
+Deployment limits it further. The default seccomp profile of Docker Engine
+has blocked the \texttt{io\_uring} system calls since release~25, so in a
+default container \texttt{io\_uring\_setup}
+fails.\footnote{\href{https://github.com/moby/moby/pull/46762}{moby/moby
+pull request 46762}, ``seccomp: block io\_uring\_* syscalls in default
+profile'', merged on 2~November~2023: \texttt{profiles/seccomp/default.json}
+allows the calls at tag \texttt{v24.0.0} and no longer at \texttt{v25.0.0}.}
+Google disabled it on its production servers after 60\,\% of the
+submissions to its kernel exploit reward programme, in the year to
+June~2023, used
+it,\footnote{\href{https://security.googleblog.com/2023/06/learnings-from-kctf-vrps-42-linux.html}{Google
+Security Blog, ``Learnings from kCTF VRP's 42 Linux kernel exploits
+submissions''}, 14~June~2023.} and Linux 6.6 added a setting that disables
+it for the whole
+host.\footnote{\href{https://www.kernel.org/doc/html/latest/admin-guide/sysctl/kernel.html\#io-uring-disabled}{Linux
+kernel documentation: ``Documentation for /proc/sys/kernel/''},
+\texttt{io\_uring\_disabled};
+\href{https://kernelnewbies.org/Linux_6.6}{Linux 6.6 release notes
+(kernelnewbies.org)}.} \texttt{io\_uring} can therefore only be an option
+beside the pool, checked when the cache is constructed, as page-cache reads
+are. It is the largest of the mechanisms in this appendix, and
+\reqref{HLR-SCOPE.V1-01} would weigh it accordingly.
+
+\subsection{Not pursued}
+\label{app:executor-not-pursued}
+
+\begin{itemize}
+  \item \emph{A lazy handoff.} The Go runtime lets a goroutine make a
+    blocking system call on its own thread. A monitor thread, which checks
+    every 20~microseconds while it finds work to do and backs off to every
+    10~milliseconds while it finds none, hands the thread's queue of
+    goroutines to another thread if the call is still running at its next
+    check.\footnote{\href{https://github.com/golang/go/blob/go1.25.0/src/runtime/proc.go\#L6226-L6233}{Go
+    source (release 1.25.0): \texttt{src/runtime/proc.go}, lines
+    6226--6233} (the monitor's period),
+    \href{https://github.com/golang/go/blob/go1.25.0/src/runtime/proc.go\#L6413}{line
+    6413} and
+    \href{https://github.com/golang/go/blob/go1.25.0/src/runtime/proc.go\#L6441}{line
+    6441} (the handoff).} A short call costs nothing, and a long one a
+    single handoff. Tokio has no such monitor, and adding one is a change to
+    Tokio, out of this backend's reach.
+  \item \emph{Routing writes by the host's dirty data}, read from
+    \texttt{/proc/vmstat} before each store. It would detect the host's
+    state on the hot path, which this project avoids: its features are
+    chosen by configuration and checked once, as page-cache reads are. The
+    reading would also be stale by the time the write runs.
+\end{itemize}
+
+\section{File Systems for the Cache}
+\label{app:executor-fs}
+
+What the investigation suggests for the file system that holds the cache
+directory. Only ext4 has been measured with this backend; a later version
+should confirm the rest.
+\begin{itemize}
+  \item \emph{XFS}, on Linux 6.0 or later, is the one to evaluate first. Of
+    ext4, XFS and btrfs, it is the only one whose ordinary files accept
+    non-blocking buffered
+    writes,\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/xfs/xfs_file.c\#L1597-L1598}{Linux
+    source (release 6.12): \texttt{fs/xfs/xfs\_file.c}, lines 1597--1598}
+    (\texttt{FOP\_BUFFER\_WASYNC}); since Linux 6.0, per its
+    \href{https://kernelnewbies.org/Linux_6.0}{release notes
+    (kernelnewbies.org)}.} which the direction of
+    Section~\ref{app:executor-nowait-writes} needs, and page-cache reads
+    should work on it as on ext4. How it compares with ext4 on synchronised
+    stores, which their \texttt{fdatasync} dominates, is not measured.
+  \item \emph{ext4}, on which every figure in this specification was
+    measured, serves both kinds of store, with page-cache reads. A write on
+    it cannot avoid the waits of Section~\ref{app:executor-stalls}. When
+    stores are unsynchronised, keep its default \texttt{data=ordered} mode
+    (\reqref{ADR-PERSISTENCE.UNSYNCED-01}).
+  \item \emph{btrfs} accepts non-blocking buffered writes only for files
+    that do not use copy-on-write; for the others, the default, it returns
+    \texttt{EAGAIN} at
+    once.\footnote{\href{https://github.com/torvalds/linux/blob/v6.12/fs/btrfs/file.c\#L1159-L1161}{Linux
+    source (release 6.12): \texttt{fs/btrfs/file.c}, lines 1159--1161}.} A file
+    without copy-on-write also has no data
+    checksums,\footnote{\href{https://btrfs.readthedocs.io/en/latest/Administration.html}{btrfs
+    documentation: ``Administration''}, mount options: ``Nodatacow implies
+    nodatasum, and disables compression.''} which are the reason to choose
+    btrfs (\reqref{ADR-PERSISTENCE.DURABILITY-01}). It serves today's modes,
+    and offers nothing to the directions above.
+  \item \emph{tmpfs} does not suit: it refuses \texttt{RWF\_NOWAIT} for
+    reads and writes alike, so page-cache reads cannot be used on it; it
+    loses its contents when the host restarts; and it holds no more than
+    memory, against \reqref{HLR-PERSISTENCE.CAPACITY-01}.
+  \item \emph{Network file systems} are ruled out already: the cache
+    directory must be on a local file system
+    (\reqref{ADR-STORAGE.WRITERID-01}).
+\end{itemize}
+
+Two choices help whatever the file system:
+\begin{itemize}
+  \item \emph{A file system of its own.} On a file system it does not
+    share, the cache's stores wait on no other program's journal commits,
+    and other programs wait on none of the cache's. The dirty-data limits
+    remain the host's, or the container's, so throttling stays shared.
+  \item \emph{\texttt{noatime}.} Under \texttt{relatime}, the Linux default,
+    the first read of a record after it is written updates its access time.
+    On ext4 that is a journalled inode update, and a page-cache read
+    (\reqref{ADR-STORAGE.PAGECACHE-01}) makes it on the worker. Mounting the
+    file system \texttt{noatime} removes those updates.
+\end{itemize}
+
+\section{What a Later Version Should Measure}
+\label{app:executor-measure}
+
+\begin{itemize}
+  \item \emph{Hits during a burst of writes}: the latency of hits while
+    unsynchronised stores of large objects keep dirty data above the
+    throttle, with the pool, with bounded inline writes for several values
+    of $K$, and with non-blocking writes on XFS; on the host, and in a
+    container with a memory limit; recording the dirty and write-back
+    figures of \texttt{/proc/meminfo} throughout. The script used so far
+    runs one load at a time, and would need a second load generator.
+  \item \emph{Reads from the device}: every hit measured so far was on an
+    object the page cache held. Reads that miss it, the normal case for a
+    cache larger than memory, should be measured on the pool and, if it is
+    prototyped, with \texttt{io\_uring}.
+  \item \emph{Synchronised stores on XFS}, against ext4 on the same device.
+  \item \emph{Early write-back}: store rate, dirty data and device writes,
+    with and without it.
+\end{itemize}
+
+No performance requirement of this version bounds the latency of hits while
+stores run: \reqref{HLR-PERFORMANCE.LOOKUP-01} bounds lookup latency against
+the size of the cache, and \reqref{HLR-PERFORMANCE.HITRATE-01} and
+\reqref{HLR-PERFORMANCE.STORERATE-01} bound rates. A later version that keeps
+writes on the workers would need one, so that the gain on stores, which
+\reqref{HLR-SCOPE.V1-01} counts, is weighed against the stalls it risks.
