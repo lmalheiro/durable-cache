@@ -95,17 +95,12 @@ impl fmt::Display for WriterId {
 }
 
 impl WriterId {
-    /// A fresh identity for this process. `RandomState` is seeded from the
-    /// operating system's randomness, and the time and a call counter make
-    /// each value differ; exclusive creation of the lease catches the
-    /// unlikely collision anyway.
+    /// A fresh identity for this process; exclusive creation of the lease
+    /// catches the unlikely collision of two nonces.
     fn fresh() -> Self {
-        static CALLS: AtomicU64 = AtomicU64::new(0);
-        let nonce =
-            RandomState::new().hash_one((SystemTime::now(), CALLS.fetch_add(1, Ordering::Relaxed)));
         WriterId {
             pid: std::process::id(),
-            nonce,
+            nonce: random_nonce(),
         }
     }
 
@@ -115,7 +110,7 @@ impl WriterId {
     /// zeros, an uppercase or a short nonce.
     ///
     /// [`Display`]: fmt::Display
-    fn parse(s: &str) -> Option<Self> {
+    pub(crate) fn parse(s: &str) -> Option<Self> {
         let (pid, nonce) = s.split_once('-')?;
         let id = WriterId {
             pid: pid.parse().ok()?,
@@ -123,6 +118,14 @@ impl WriterId {
         };
         (id.to_string() == s).then_some(id)
     }
+}
+
+/// A random 64-bit number. `RandomState` is seeded from the operating
+/// system's randomness, and the time and a call counter make each value
+/// differ.
+pub(crate) fn random_nonce() -> u64 {
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+    RandomState::new().hash_one((SystemTime::now(), CALLS.fetch_add(1, Ordering::Relaxed)))
 }
 
 /// A backend instance's lease, locked for as long as it is held.
@@ -195,7 +198,7 @@ impl WriterLease {
 }
 
 /// The path of writer `id`'s lease under `root`.
-fn lease_path(root: &Path, id: &WriterId) -> PathBuf {
+pub(crate) fn lease_path(root: &Path, id: &WriterId) -> PathBuf {
     root.join(LEASE_DIR).join(format!("{id}.{LEASE_SUFFIX}"))
 }
 

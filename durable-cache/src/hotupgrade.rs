@@ -13,6 +13,14 @@
 //!   and leaves the backend writable: no incoming process takes over the
 //!   cache, so stores that complete while sessions drain should still be
 //!   published.
+//! - **Flushing.** The same watcher flushes the backend
+//!   ([`FsCache::flush`], FDS-PERSISTENCE.CRASHDISCARD-01) on the blocking
+//!   pool: once it has made the backend read-only, and once the server
+//!   announces `ShutdownRuntimes`, at the end of a shutdown's grace period,
+//!   the last moment a server that ends with `run_forever` gives. A store
+//!   published after that writes its unsynchronised-store marker again, and
+//!   a flush the runtime shutdown cuts short leaves the marker: either way
+//!   the next start after a host restart discards the cache, the safe side.
 //! - **Incoming side.** The recovery service runs [`crate::recover`] as a
 //!   background service. In a process that takes over from an outgoing one,
 //!   it starts only once the server holds the listening sockets and a
@@ -69,8 +77,9 @@ impl BackgroundService for UpgradeWatcher {
         let mut phases = self.phases.lock().await;
         loop {
             match phases.recv().await {
-                Ok(ExecutionPhase::GracefulUpgradeTransferringFds) => {
-                    self.cache.set_read_only();
+                Ok(ExecutionPhase::GracefulUpgradeTransferringFds) => read_only(self.cache).await,
+                Ok(ExecutionPhase::ShutdownRuntimes) => {
+                    flush(self.cache).await;
                     return;
                 }
                 Ok(_) => continue,
@@ -83,12 +92,28 @@ impl BackgroundService for UpgradeWatcher {
                         "missed {n} execution phase(s); \
                          making the backend read-only to be safe"
                     );
-                    self.cache.set_read_only();
-                    return;
+                    read_only(self.cache).await;
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
             }
         }
+    }
+}
+
+/// Make `cache` read-only, here, as the switch takes milliseconds, and then
+/// [`flush`] it.
+pub(crate) async fn read_only(cache: &'static FsCache) {
+    cache.set_read_only();
+    flush(cache).await;
+}
+
+/// [`FsCache::flush`] on the blocking pool, as it waits for the device; a
+/// failure is logged, and leaves the marker in place.
+pub(crate) async fn flush(cache: &'static FsCache) {
+    match tokio::task::spawn_blocking(move || cache.flush()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => log::error!("{e}"),
+        Err(e) => log::error!("flushing the backend did not complete: {e}"),
     }
 }
 
@@ -139,18 +164,28 @@ async fn shutting_down(shutdown: &mut ShutdownWatch) {
 const WATCHER_NAME: &str = "upgrade watcher";
 const RECOVERY_NAME: &str = "eviction recovery";
 
+impl UpgradeWatcher {
+    /// A watcher of `cache` on the execution phases `phases` delivers.
+    pub(crate) fn watching(
+        cache: &'static FsCache,
+        phases: broadcast::Receiver<ExecutionPhase>,
+    ) -> Self {
+        UpgradeWatcher {
+            cache,
+            phases: Mutex::new(phases),
+        }
+    }
+}
+
 /// The outgoing half: a service that makes the backend read-only when the
-/// upgrade signal arrives.
+/// upgrade signal arrives, and flushes it then and as the server shuts down.
 pub(crate) fn read_only_on_upgrade(
     server: &Server,
     cache: &'static FsCache,
 ) -> GenBackgroundService<UpgradeWatcher> {
     background_service(
         WATCHER_NAME,
-        UpgradeWatcher {
-            cache,
-            phases: Mutex::new(server.watch_execution_phase()),
-        },
+        UpgradeWatcher::watching(cache, server.watch_execution_phase()),
     )
 }
 
@@ -237,8 +272,12 @@ mod tests {
     const THREAD_NAME_LEN: usize = 15;
 
     fn leaked_cache() -> (&'static FsCache, tempfile::TempDir) {
+        // In the system's temporary directory, maybe a tmpfs, without
+        // non-blocking reads: this test is not about reads.
         let tmp = tempfile::tempdir().expect("a cache directory");
         let config = FsCacheConfig::new(tmp.path(), None);
+        #[cfg(target_os = "linux")]
+        let config = config.with_page_cache_reads(false);
         let cache = FsCache::new(config).expect("a cache");
         (Box::leak(Box::new(cache)), tmp)
     }
@@ -260,7 +299,8 @@ mod tests {
     }
 
     /// A watcher that fell behind the broadcast takes the phases it missed
-    /// for the upgrade's, and makes the backend read-only.
+    /// for the upgrade's, and makes the backend read-only. It then watches
+    /// on, for the end of the shutdown, until the broadcast closes.
     #[tokio::test]
     async fn a_lagging_watcher_makes_the_backend_read_only() {
         let (cache, _tmp) = leaked_cache();
@@ -270,14 +310,12 @@ mod tests {
         phases
             .send(ExecutionPhase::GracefulTerminate)
             .expect("a subscriber");
-        let watcher = UpgradeWatcher {
-            cache,
-            phases: Mutex::new(receiver),
-        };
+        drop(phases);
+        let watcher = UpgradeWatcher::watching(cache, receiver);
         let (_shutdown, watch) = tokio::sync::watch::channel(false);
         tokio::time::timeout(Duration::from_secs(5), watcher.start(watch))
             .await
-            .expect("the watcher stops watching");
+            .expect("the watcher stops once the broadcast closes");
         assert!(cache.is_read_only());
     }
 }
