@@ -177,7 +177,7 @@ async fn tc_compliance_incomplete_01_follower_of_an_aborted_store_gets_an_error(
 
     // Give the follower a moment to catch up and start waiting on the next
     // chunk before aborting -- not required for correctness (the wakeup
-    // can't be missed either way, see lookup.rs), but it makes this test
+    // can't be missed either way, see lookup/mod.rs), but it makes this test
     // actually exercise the wakeup-on-abort path instead of a pre-abort read.
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     drop(handler); // abort: no finish() ever called

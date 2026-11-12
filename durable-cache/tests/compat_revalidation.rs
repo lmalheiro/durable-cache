@@ -7,7 +7,7 @@
 //! guaranteed by construction rather than forced here as a literal race:
 //! the header write is the sole commit point, and `crate::lookup`'s
 //! bounded retry absorbs a reader catching it mid-write (see
-//! `metaupdate.rs`'s and `lookup.rs`'s own doc comments).
+//! `metaupdate.rs`'s and `lookup/mod.rs`'s own doc comments).
 
 use std::time::{Duration, SystemTime};
 
