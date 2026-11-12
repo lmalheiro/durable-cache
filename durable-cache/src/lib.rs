@@ -120,7 +120,8 @@ extern crate self as durable_cache;
 #[cfg(test)]
 #[path = "../tests"]
 mod integration_tests {
-    mod support;
+    // Reachable from the crate's unit tests too, for `support::tempdir()`.
+    pub(super) mod support;
 
     mod compat_abortspace;
     mod compat_body;

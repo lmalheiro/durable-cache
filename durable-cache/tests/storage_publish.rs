@@ -15,7 +15,7 @@
 
 use bytes::Bytes;
 use durable_cache::hooks::FaultPoint;
-use durable_cache::writerid;
+use durable_cache::{writerid, Durability, FsCacheConfig};
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::Storage;
 
@@ -191,6 +191,37 @@ async fn tc_storage_publish_01_synchronises_before_renaming() {
         support::temp_entries(cache, &key).is_empty(),
         "the failed store's temporary is removed with its handler"
     );
+}
+
+/// With `Durability::NoStoreSync`, a store is renamed into place without
+/// being synchronised: a fault injected at the synchronisation is never
+/// reached, and the record is published whole.
+#[tokio::test]
+async fn tc_storage_publish_01_no_store_sync_publishes_without_synchronising() {
+    let tmp = support::tempdir();
+    let cache = support::leaked_cache_with(
+        FsCacheConfig::new(tmp.path(), None).with_durability(Durability::NoStoreSync),
+    );
+    let key = support::key("/publish-no-store-sync");
+    let meta = support::meta();
+    let trace = support::inactive_trace();
+
+    cache.hooks().inject_fault(FaultPoint::SyncTemp, 1);
+    let mut handler = cache
+        .get_miss_handler(&key, &meta, &trace)
+        .await
+        .expect("the store opens");
+    handler
+        .write_body(Bytes::from_static(b"body"), true)
+        .await
+        .expect("the body is written");
+    handler
+        .finish()
+        .await
+        .expect("a store that skips the synchronisation never meets its fault");
+
+    let (_, body) = support::read_and_validate_record(&support::canonical_path(cache, &key));
+    assert_eq!(body, b"body", "the record is published whole");
 }
 
 /// Step 6: a store completing once the backend is read-only reports
@@ -447,4 +478,27 @@ fn holding_a_record_open_warns_only_when_it_cannot_be_opened() {
     let reports = logs.matching(&unopenable.display().to_string());
     assert_eq!(reports.len(), 1, "reported once: {reports:?}");
     assert!(reports[0].starts_with("WARN"), "as a warning: {reports:?}");
+}
+
+/// With page-cache reads on, the default on Linux, a cache whose file
+/// system lacks non-blocking reads fails to start, naming the option that
+/// switches them off, rather than serve every hit from the blocking pool
+/// unnoticed; with the option off, it starts. `/dev/shm` is a tmpfs, which
+/// lacks them as of Linux 6.12; where it has them, nothing can tell.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_cache_on_a_file_system_without_non_blocking_reads_fails_to_start() {
+    let Ok(tmp) = tempfile::tempdir_in("/dev/shm") else {
+        eprintln!("no /dev/shm: nothing to check");
+        return;
+    };
+    match durable_cache::FsCache::new(FsCacheConfig::new(tmp.path(), None)) {
+        Ok(_) => eprintln!("this tmpfs has non-blocking reads: nothing to check"),
+        Err(e) => assert!(
+            format!("{e}").contains("with_page_cache_reads"),
+            "the error names the option: {e}"
+        ),
+    }
+    let off = FsCacheConfig::new(tmp.path().join("off"), None).with_page_cache_reads(false);
+    durable_cache::FsCache::new(off).expect("without page-cache reads, the cache starts");
 }

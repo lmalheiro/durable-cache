@@ -508,7 +508,7 @@ mod tests {
     /// buffer already holds, waiting or not.
     #[test]
     fn fill_reads_the_range_and_carries_on_from_what_it_holds() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
+        let dir = crate::integration_tests::support::tempdir();
         let (file, bytes) = file_of(dir.path(), 300_000);
 
         let mut buf = Vec::new();
@@ -537,7 +537,7 @@ mod tests {
     /// `UnexpectedEof`, and the bytes read until then stay in the buffer.
     #[test]
     fn fill_past_the_end_of_the_file_is_unexpected_eof() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
+        let dir = crate::integration_tests::support::tempdir();
         let (file, bytes) = file_of(dir.path(), 10_000);
         let mut buf = Vec::new();
         let e = fill(&file, &mut buf, 5000, 8000, Wait::Allowed).expect_err("the file ends first");
@@ -549,7 +549,7 @@ mod tests {
     /// time as it was, where a plain open and read would update it.
     #[test]
     fn reading_a_record_leaves_its_access_time() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
+        let dir = crate::integration_tests::support::tempdir();
         let mut buf = [0u8; 4096];
 
         // On a file system mounted without access times, nothing can tell.

@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use durable_cache::FsCacheConfig;
 use pingora_cache::storage::Storage;
 
 use super::support;
@@ -126,9 +127,22 @@ fn tc_storage_executor_01_storage_calls_do_not_stall_the_worker() {
 /// the backend has the most opportunity to hold the worker.
 #[test]
 fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
+    streaming_does_not_stall_the_worker(std::convert::identity);
+}
+
+/// The same with page-cache reads switched off: the partial hit opens and
+/// reads the store's temporary on the blocking pool.
+#[cfg(target_os = "linux")]
+#[test]
+fn tc_storage_executor_01_streaming_through_the_pool_does_not_stall_the_worker() {
+    streaming_does_not_stall_the_worker(|config| config.with_page_cache_reads(false));
+}
+
+fn streaming_does_not_stall_the_worker(configure: fn(FsCacheConfig) -> FsCacheConfig) {
     let rt = single_worker_runtime();
     rt.block_on(async {
-        let (cache, _tmp) = support::leaked_cache();
+        let tmp = support::tempdir();
+        let cache = support::leaked_cache_with(configure(FsCacheConfig::new(tmp.path(), None)));
         let key = support::key("/executor-streaming");
         let chunk = vec![7u8; 1024 * 1024];
         let trace = support::inactive_trace();

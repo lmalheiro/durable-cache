@@ -107,6 +107,19 @@ pub enum FaultPoint {
     SyncDir,
 }
 
+/// A call on the async worker, from the page cache only, that a test can
+/// make report that it would wait for the device (TC-STORAGE.PAGECACHE-01).
+/// Linux only, as those calls are.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerCall {
+    /// A lookup's open of a record or of a store's temporary. Path: that
+    /// file.
+    Open,
+    /// A read of a body chunk. Path: the record or temporary read.
+    BodyRead,
+}
+
 type NameOverride = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -172,6 +185,19 @@ pub struct HookConfig {
     /// Maps the name a key's files would have to the one the backend
     /// uses for its path (TC-LAYOUT.SHARDING-01).
     pub object_name: Option<NameOverride>,
+    /// The file the backend reads the current boot's identity from, in
+    /// place of `/proc/sys/kernel/random/boot_id`
+    /// (TC-PERSISTENCE.CRASHDISCARD-01).
+    pub boot_id_path: Option<PathBuf>,
+}
+
+/// One armed worker wait: the call to make wait, on which file, after how
+/// many such calls go through.
+#[cfg(target_os = "linux")]
+struct WorkerWait {
+    call: WorkerCall,
+    path: PathBuf,
+    skip: usize,
 }
 
 /// The runtime hooks of one backend instance.
@@ -181,6 +207,10 @@ pub struct Hooks {
     pauses: Mutex<HashMap<PausePoint, Vec<Armed>>>,
     faults: Mutex<HashMap<FaultPoint, usize>>,
     meta_decodes: AtomicU64,
+    #[cfg(target_os = "linux")]
+    worker_waits: Mutex<Vec<WorkerWait>>,
+    handoffs: AtomicU64,
+    marker_writes: AtomicU64,
 }
 
 impl Hooks {
@@ -260,6 +290,52 @@ impl Hooks {
 
     pub(crate) fn count_meta_decode(&self) {
         self.meta_decodes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Make one `call` on the worker, on the file at `path`, report that it
+    /// would wait: the first after `skip` such calls go through.
+    #[cfg(target_os = "linux")]
+    pub fn arm_worker_wait(&self, call: WorkerCall, path: &Path, skip: usize) {
+        lock(&self.worker_waits).push(WorkerWait {
+            call,
+            path: path.to_path_buf(),
+            skip,
+        });
+    }
+
+    /// Whether this `call` on `path` is to report that it would wait.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn worker_would_wait(&self, call: WorkerCall, path: &Path) -> bool {
+        let mut waits = lock(&self.worker_waits);
+        let Some(i) = waits.iter().position(|w| w.call == call && w.path == path) else {
+            return false;
+        };
+        if waits[i].skip > 0 {
+            waits[i].skip -= 1;
+            return false;
+        }
+        waits.remove(i);
+        true
+    }
+
+    /// How many lookups and body reads this backend has handed to the
+    /// blocking pool (TC-STORAGE.PAGECACHE-01).
+    pub fn handoffs(&self) -> u64 {
+        self.handoffs.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn count_handoff(&self) {
+        self.handoffs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many times this backend has written its unsynchronised-store
+    /// marker (TC-PERSISTENCE.CRASHDISCARD-01).
+    pub fn marker_writes(&self) -> u64 {
+        self.marker_writes.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn count_marker_write(&self) {
+        self.marker_writes.fetch_add(1, Ordering::Relaxed);
     }
 }
 
