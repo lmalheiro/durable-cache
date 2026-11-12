@@ -19,6 +19,12 @@
 //! The remedy is Tokio's blocking pool: one handoff per storage operation —
 //! not per syscall — so the synchronous code below stays exactly as it was
 //! and the worker is free again immediately.
+//!
+//! On Linux, unless the configuration turns them off, a lookup and each
+//! read of a hit's body, a partial hit's included, first try the page cache
+//! on the worker itself, with calls that fail rather than wait for the
+//! device (`crate::nowait`). What the worker leaves comes here: a lookup
+//! again from the start, and the rest of a body read.
 
 use std::fs::File;
 #[cfg(test)]
@@ -74,14 +80,16 @@ where
     }
 }
 
-/// Close a file that has no name left, without making the caller wait
+/// Close a file that may have no name left, without making the caller wait
 /// (FDS-STORAGE.EXECUTOR-01).
 ///
 /// Closing such a file frees its storage, and for a large file that can
-/// take a long time. The callers are `Drop` implementations, which cannot
-/// wait, and under Pingora they usually run on an async worker. So, inside
-/// a Tokio runtime, the close runs on the blocking pool, and this function
-/// returns at once. Outside a runtime, the file is closed here.
+/// take a long time. The callers cannot wait: `Drop` implementations, and
+/// the lookups in `lookup::page_cache`, which give up a file they opened on
+/// an async worker; under Pingora, the `Drop` implementations usually run
+/// on one too. So, inside a Tokio runtime, the close runs on the blocking
+/// pool, and this function returns at once. Outside a runtime, the file is
+/// closed here.
 ///
 /// Two cases come from Tokio itself. If the runtime is shutting down, it
 /// drops the task at once, and that closes the file here. If the pool has
