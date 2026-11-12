@@ -887,7 +887,10 @@
   (\reqref{FDS-STORAGE.METAUPDATE-01}): every taker of that lock enters the
   gate first. \texttt{set\_read\_only} takes the gate exclusively to set the
   flag, so when it returns, nothing that entered the gate before it is still
-  running, and nothing can enter afterwards.
+  running, and nothing can enter afterwards. It does not flush the cache,
+  and so returns as soon as the changes in progress end: the hot-upgrade
+  helper flushes it afterwards, on the blocking pool
+  (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}).
 
   \textbf{Once read-only.} The process keeps draining its sessions; only its
   backend's changes to the shared cache stop. From then on the backend
