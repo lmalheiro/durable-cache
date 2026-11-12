@@ -121,6 +121,11 @@ enum Cmd {
         /// Rounds of every scenario; the report gives the medians.
         #[arg(long, default_value_t = 3)]
         rounds: usize,
+        /// What durable-cache's stores do before they are published, as
+        /// fixture-proxy's `--durability` takes it: `strict`, the default,
+        /// or `no-store-sync` for TC-PERFORMANCE.STORERATE-01.
+        #[arg(long, default_value = "strict", value_parser = ["strict", "no-store-sync"])]
+        durability: String,
     },
 }
 
@@ -169,6 +174,7 @@ fn main() -> Result<()> {
             duration,
             connections,
             rounds,
+            durability,
         } => bench::bench(bench::Options {
             nginx,
             oha,
@@ -179,6 +185,7 @@ fn main() -> Result<()> {
             duration,
             connections,
             rounds,
+            durability,
         }),
     }
 }
@@ -380,7 +387,13 @@ fn run_suite(
     origin_addr: SocketAddr,
 ) -> Result<serde_json::Value> {
     let proxy_addr = free_port()?;
-    let cache_dir = tempfile::tempdir().context("failed to create a temp cache directory")?;
+    // On disk, under the target directory: page-cache reads, on by default
+    // on Linux, need a file system with non-blocking reads, which tmpfs
+    // lacks.
+    let caches = target_dir(root)?.join("test-tmp");
+    std::fs::create_dir_all(&caches).context("failed to create a directory for caches")?;
+    let cache_dir =
+        tempfile::tempdir_in(&caches).context("failed to create a temp cache directory")?;
     let proxy = ChildGuard::spawn(
         "fixture-proxy",
         Command::new(target_dir(root)?.join("release/fixture-proxy"))

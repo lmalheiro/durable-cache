@@ -12,6 +12,11 @@
 //! generator, oha, gets the others. Every round starts each server with an
 //! empty cache, in a different order each round, and the report gives the
 //! medians.
+//!
+//! It is the harness of TC-PERFORMANCE.HITRATE-01, with durable-cache in its
+//! default configuration, and of TC-PERFORMANCE.STORERATE-01, with
+//! `--durability no-store-sync`: each compares durable-cache's median rates
+//! with those of `MemCache`.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -23,6 +28,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::{free_port, target_dir, wait_until_listening, workspace_root, ChildGuard};
+
+// IMP-TC.PERFORMANCE.HITRATE-01: satisfy TC-PERFORMANCE.HITRATE-01
+// IMP-TC.PERFORMANCE.STORERATE-01: satisfy TC-PERFORMANCE.STORERATE-01
 
 /// The cache-hit scenarios: body sizes, each over `HIT_OBJECTS` objects.
 const HIT_SIZES: [&str; 3] = ["1k", "64k", "1m"];
@@ -48,6 +56,8 @@ pub struct Options {
     pub duration: u64,
     pub connections: usize,
     pub rounds: usize,
+    /// fixture-proxy's `--durability` for durable-cache.
+    pub durability: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -205,6 +215,8 @@ pub fn bench(options: Options) -> Result<()> {
                             .arg(dir.join("cache"))
                             .arg("--storage")
                             .arg(storage)
+                            .arg("--durability")
+                            .arg(&options.durability)
                             .arg("--threads")
                             .arg(machine.threads.to_string()),
                     )?
@@ -590,9 +602,9 @@ fn report(
     writeln!(
         out,
         "{cpu}; servers on CPUs {} with {} workers each, oha on CPUs {}; \
-         {nginx_version}, {oha_version}; caches in {}. Medians of {} round(s), \
-         {} connections; errors and origin requests are totals over the \
-         rounds.\n",
+         {nginx_version}, {oha_version}; caches in {}; durable-cache stores \
+         {}. Medians of {} round(s), {} connections; errors and origin \
+         requests are totals over the rounds.\n",
         if machine.server_cpus.is_empty() {
             "(unpinned)"
         } else {
@@ -605,6 +617,7 @@ fn report(
             &machine.load_cpus
         },
         work.display(),
+        options.durability,
         options.rounds,
         options.connections,
     )?;
@@ -631,12 +644,11 @@ fn report(
         writeln!(out, "## {title}\n")?;
         writeln!(
             out,
-            "| server | req/s | vs nginx | p50 | p99 | errors | origin requests |"
+            "| server | req/s | vs nginx | vs MemCache | p50 | p99 | errors | origin requests |"
         )?;
-        writeln!(out, "|---|---:|---:|---:|---:|---:|---:|")?;
-        let nginx_rps = runs
-            .get(&(scenario.clone(), Server::Nginx))
-            .map(|runs| median(runs.iter().map(|r| r.requests_per_sec).collect()));
+        writeln!(out, "|---|---:|---:|---:|---:|---:|---:|---:|")?;
+        let nginx_rps = median_rps(runs, scenario, Server::Nginx);
+        let memcache_rps = median_rps(runs, scenario, Server::MemCache);
         for server in Server::ALL {
             let Some(server_runs) = runs.get(&(scenario.clone(), server)) else {
                 continue;
@@ -647,9 +659,10 @@ fn report(
             let errors: u64 = server_runs.iter().map(|r| r.errors + r.non_200).sum();
             let origin: usize = server_runs.iter().map(|r| r.origin_requests).sum();
             let ratio = nginx_rps.map_or("-".to_owned(), |n| format!("{:.2}", rps / n));
+            let vs_memcache = memcache_rps.map_or("-".to_owned(), |m| format!("{:.2}", rps / m));
             writeln!(
                 out,
-                "| {} | {:.0} | {ratio} | {} | {} | {errors} | {origin} |",
+                "| {} | {:.0} | {ratio} | {vs_memcache} | {} | {} | {errors} | {origin} |",
                 server.label(),
                 rps,
                 millis(p50),
@@ -658,5 +671,77 @@ fn report(
         }
         writeln!(out)?;
     }
+    write_verdicts(&mut out, runs, options)?;
     Ok(out)
+}
+
+/// The median request rate of `server` in `scenario`, if it ran.
+fn median_rps(
+    runs: &BTreeMap<(String, Server), Vec<Run>>,
+    scenario: &str,
+    server: Server,
+) -> Option<f64> {
+    runs.get(&(scenario.to_owned(), server))
+        .map(|runs| median(runs.iter().map(|r| r.requests_per_sec).collect()))
+}
+
+/// The expected results of TC-PERFORMANCE.HITRATE-01 and
+/// TC-PERFORMANCE.STORERATE-01: durable-cache's median rate at least 0.60
+/// (hits) or 0.40 (fills, with stores unsynchronised) of MemCache's, no
+/// request failing, and the origin asked for nothing during a hit run and
+/// for each new URL of a fill run once.
+fn write_verdicts(
+    out: &mut String,
+    runs: &BTreeMap<(String, Server), Vec<Run>>,
+    options: &Options,
+) -> Result<()> {
+    let check = |scenario: &str, bound: f64, origin_expected: usize| -> Option<(bool, String)> {
+        let durable = runs.get(&(scenario.to_owned(), Server::DurableCache))?;
+        let ratio = median_rps(runs, scenario, Server::DurableCache)?
+            / median_rps(runs, scenario, Server::MemCache)?;
+        let errors: u64 = durable.iter().map(|r| r.errors + r.non_200).sum();
+        let origin: usize = durable.iter().map(|r| r.origin_requests).sum();
+        let pass = ratio >= bound && errors == 0 && origin == origin_expected;
+        Some((
+            pass,
+            format!("{scenario}: {ratio:.2} of MemCache (at least {bound:.2}), {errors} errors, {origin} origin requests (expected {origin_expected})"),
+        ))
+    };
+    writeln!(out, "## Test-case verdicts\n")?;
+    let mut write = |id: &str, results: Vec<Option<(bool, String)>>| -> Result<()> {
+        let pass = results
+            .iter()
+            .all(|r| r.as_ref().is_some_and(|(pass, _)| *pass));
+        writeln!(out, "- **{id}: {}**", if pass { "pass" } else { "FAIL" })?;
+        for result in results {
+            let line = result.map_or("a scenario did not run".to_owned(), |(_, line)| line);
+            writeln!(out, "  - {line}")?;
+        }
+        Ok(())
+    };
+    write(
+        "TC-PERFORMANCE.HITRATE-01",
+        HIT_SIZES
+            .iter()
+            .map(|size| check(&format!("hit-{size}"), 0.60, 0))
+            .collect(),
+    )?;
+    if options.durability == "no-store-sync" {
+        write(
+            "TC-PERFORMANCE.STORERATE-01",
+            FILLS
+                .iter()
+                .map(|(size, requests)| {
+                    check(&format!("fill-{size}"), 0.40, requests * options.rounds)
+                })
+                .collect(),
+        )?;
+    } else {
+        writeln!(
+            out,
+            "- TC-PERFORMANCE.STORERATE-01: not measured; it needs `--durability no-store-sync`"
+        )?;
+    }
+    writeln!(out)?;
+    Ok(())
 }

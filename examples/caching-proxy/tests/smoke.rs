@@ -25,7 +25,7 @@ async fn the_second_request_is_answered_from_the_cache() {
         ),
     );
 
-    let cache_dir = tempfile::tempdir().expect("failed to create the cache directory");
+    let cache_dir = cache_dir();
     let listen = free_port().expect("failed to find a free port");
     let mut command = Command::new(env!("CARGO_BIN_EXE_caching-proxy"));
     command
@@ -62,4 +62,18 @@ async fn the_second_request_is_answered_from_the_cache() {
         1,
         "the origin was asked more than once"
     );
+}
+
+/// A fresh temporary directory for a cache. It lies under the build's target
+/// directory, on disk, rather than in the system's temporary directory:
+/// page-cache reads, on by default on Linux, need a file system with
+/// non-blocking reads, which tmpfs lacks (`FsCacheConfig::with_page_cache_reads`).
+fn cache_dir() -> tempfile::TempDir {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+    let base = target.join("test-tmp");
+    std::fs::create_dir_all(&base).expect("a directory for temporary caches");
+    tempfile::tempdir_in(&base).expect("a temporary directory for a cache")
 }

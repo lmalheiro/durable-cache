@@ -107,7 +107,18 @@ runs each one on tokio's blocking pool rather than on the worker Pingora
 polls it from (`ADR-STORAGE.EXECUTOR-01`). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
-or a page-cache miss. The pool is sized by two `ServerConf` settings:
+or a page-cache miss. On Linux, hits are the exception when what they read
+is in the page cache: the lookup and its body reads run on the worker, with
+`openat2` and `preadv2` flags that fail rather than wait for the device, and
+whatever would wait goes to the pool. That includes partial hits on a store
+still being written, through which Pingora also serves each fill's own
+response. These page-cache reads are on by default, through an option that
+exists only on Linux (`FsCacheConfig::with_page_cache_reads`). They need
+Linux 5.12 and a file system with non-blocking reads, as ext4, XFS and
+btrfs have and, as of Linux 6.12, tmpfs and overlayfs do not (overlayfs is
+the file system of a container without a volume): `FsCache::new` fails,
+and logs the error, where they are missing, and `with_page_cache_reads(false)` switches them
+off. The pool is sized by two `ServerConf` settings:
 `max_blocking_threads` (unset keeps tokio's 512) and
 `blocking_threads_ttl_seconds`, how long an idle thread lives (unset keeps
 10 s). The pool's threads mostly wait on the disk, so the maximum caps how
@@ -139,6 +150,38 @@ fetches again (see [Caveats](#caveats)). `None` selects the design's
 default, 512 bytes.
 Each body chunk is written to disk before its `write_body` call returns;
 the backend holds no body bytes in memory beyond the chunk in hand.
+
+**Access times.** Under the default `relatime`, the first read of a record
+after a store wrote it updates its access time, and on ext4 that starts a
+journal transaction, which can stall the worker serving the hit. So by
+default the backend reads records with `O_NOATIME`, through an option that
+exists only on Linux (`FsCacheConfig::with_noatime`); the crate never reads
+access times. The kernel allows that flag only to a file's owner, or to
+root, so `FsCache::new` fails unless this process owns the cache root, and a
+read of a record another user owns fails: `with_noatime(false)` switches it
+off. A file system mounted `noatime` or `lazytime` does not need it.
+
+**Durability.** By default each store is synchronised to the device
+(`fdatasync`) before it is published, so a host crash or a power loss can
+lose a store but never publish a record whose data is not on the device.
+`FsCacheConfig::with_durability(Durability::NoStoreSync)` publishes stores
+without that wait, which takes most of a fill's time on a slow device.
+A process crash or a restart still loses nothing, but a host crash may lose
+the stores the kernel had not written back yet. It may also leave a record
+whose body never reached the device: a short one is a miss, but one
+zero-filled under a valid header would be served
+(ADR-PERSISTENCE.DURABILITY-01). File systems that record a file's length
+only once its data is written, as ext4 in its default `data=ordered` mode,
+XFS and btrfs do, leave such a record short. For the others, which may
+record the length first, `FsCacheConfig::with_discard_after_host_restart(true)`
+(Linux only) closes the gap: before the first unsynchronised store, the
+backend writes a marker naming the current boot, `FsCache::flush` removes it
+once everything is on the device, and a backend that finds a marker from
+another boot starts empty (ADR-PERSISTENCE.UNSYNCED-01). The hot-upgrade
+helper flushes after making the backend read-only, and at the end of a
+shutdown's grace period; without it, call `flush` once the server has
+stopped, which `Server::run` allows and `run_forever` does not. A cache not
+flushed is emptied by the next host restart.
 
 **Features.** `body-crc` (on by default) computes each body's CRC-32C as it
 is stored and records it in the header; without it (`default-features =
@@ -174,9 +217,9 @@ test scaffolding, or tooling.
 .
 ├── durable-cache/     ← THE DELIVERABLE. The only published crate.
 │   ├── src/
-│   │   ├── lib.rs               re-exports FsCache, FsCacheConfig, recover,
-│   │   │                        RecoveryReport; hotupgrade is the one public
-│   │   │                        module, the rest are crate-private
+│   │   ├── lib.rs               re-exports FsCache, FsCacheConfig, Durability,
+│   │   │                        recover, RecoveryReport; hotupgrade is the one
+│   │   │                        public module, the rest are crate-private
 │   │   ├── storage_impl.rs      impl Storage for FsCache — glues the modules below
 │   │   │
 │   │   │                        ── on-disk contract ──
@@ -191,8 +234,13 @@ test scaffolding, or tooling.
 │   │   │
 │   │   │                        ── operations ──
 │   │   ├── miss.rs              write path: get_miss_handler / HandleMiss
-│   │   ├── lookup.rs            read path: lookup / HandleHit, incl. partial hits
+│   │   ├── lookup/
+│   │   │   ├── mod.rs           read path: lookup / HandleHit, incl. partial hits
+│   │   │   └── page_cache.rs    Linux: lookups and body reads tried first on
+│   │   │                        the worker, from the page cache
 │   │   ├── publish.rs           sync, atomic rename, discard; holds the old record open
+│   │   ├── crashdiscard.rs      unsynchronised-store markers, flush, and the discard
+│   │   │                        after a host restart
 │   │   ├── metaupdate.rs        update_meta: in place, or withdraws when outgrown
 │   │   ├── expire.rs            expire: marks an object stale in place, keeping its body
 │   │   ├── purge.rs             unlink the canonical name; an invalidation also syncs the shard dir
@@ -205,7 +253,9 @@ test scaffolding, or tooling.
 │   │   ├── config.rs            FsCacheConfig
 │   │   ├── error.rs             the two error types callers can tell apart
 │   │   ├── blocking.rs          runs each operation's file I/O on tokio's
-│   │   │                        blocking pool, never on the service worker
+│   │   │                        blocking pool, not on the service worker
+│   │   ├── nowait.rs            Linux: page-cache reads on the worker, which
+│   │   │                        fail rather than wait for the device
 │   │   ├── hooks.rs             test-only pauses, faults and instrumentation
 │   │   └── metrics.rs           prometheus counters (feature `metrics`)
 │   └── tests/                 integration tests against the real Storage trait
@@ -364,6 +414,11 @@ three rounds.
 cargo xtask bench --work-dir /var/tmp/durable-cache-bench
 ```
 
+`--durability no-store-sync` runs durable-cache with its stores published
+without synchronisation, as TC-PERFORMANCE.STORERATE-01 measures them; the
+default, `strict`, is durable-cache's own default, which
+TC-PERFORMANCE.HITRATE-01 measures.
+
 It needs `nginx` and [`oha`](https://github.com/hatoo/oha), the load
 generator; `--nginx` and `--oha` name them if they are not on the `PATH`.
 nginx runs as an ordinary user, with its files in the work directory. Put
@@ -382,7 +437,7 @@ Two differences shape the results:
   it, its crash safety; nginx never synchronises its cache files. The fill
   scenarios show that cost.
 - nginx sends a hit's body from the file with `sendfile`, without copying it
-  through user space; durable-cache reads it in 64 KiB chunks.
+  through user space; durable-cache reads it in 128 KiB chunks.
 
 ### Continuous integration
 
