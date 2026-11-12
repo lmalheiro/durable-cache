@@ -33,8 +33,15 @@ In another terminal, point the proxy at it:
 
 ```bash
 cargo run -p caching-proxy -- --upstream 127.0.0.1:41281 \
-    --cache-dir /tmp/caching-proxy
+    --cache-dir /var/tmp/caching-proxy
 ```
+
+The cache directory is on disk, under `/var/tmp`, rather than in `/tmp`,
+which is a tmpfs on many systems: on Linux the cache reads hits from the page
+cache on the async worker, which needs a file system with non-blocking
+reads, and tmpfs lacks them. On such a file system `FsCache::new` fails,
+unless `FsCacheConfig::with_page_cache_reads(false)` switches those reads
+off.
 
 The proxy listens on `127.0.0.1:6188` (`--listen` changes it). The first
 request goes to the origin; the second is answered from the cache:
@@ -54,7 +61,7 @@ without refusing a connection. Start it with `-u` and the same arguments:
 
 ```bash
 cargo run -p caching-proxy -- -u --upstream 127.0.0.1:41281 \
-    --cache-dir /tmp/caching-proxy
+    --cache-dir /var/tmp/caching-proxy
 ```
 
 It waits for the hand-over, logging `No incoming socket transfer, sleep 1s
