@@ -28,6 +28,25 @@ use crate::{blocking, FsCache};
 
 // IMP-STORAGE.PAGECACHE-01: satisfy FDS-STORAGE.PAGECACHE-01
 
+/// `$call`, a call on the worker, which the test hooks name `$point`, on the
+/// file at `$path`: in the crate's test build, the error a test armed for it
+/// instead, if it armed one, so that the error takes the same path a real
+/// one would (TC-STORAGE.PAGECACHE-01).
+macro_rules! on_worker {
+    ($cache:expr, $point:ident, $path:expr, $call:expr) => {{
+        #[cfg(test)]
+        let armed = $cache
+            .hooks
+            .worker_fault(crate::hooks::WorkerCall::$point, $path);
+        #[cfg(not(test))]
+        let armed: Option<std::io::Error> = None;
+        match armed {
+            Some(e) => Err(e.into()),
+            None => $call,
+        }
+    }};
+}
+
 /// What an operation tried on the worker came to.
 pub(super) enum OnWorker<T> {
     /// Its answer.
@@ -53,12 +72,7 @@ pub(super) fn open_published(
     let Some(reads) = &cache.page_cache_reads else {
         return OnWorker::ToPool(None);
     };
-    test_hook! {
-        if cache.hooks.worker_would_wait(crate::hooks::WorkerCall::Open, canonical) {
-            return OnWorker::ToPool(None);
-        }
-    }
-    let file = match reads.open(canonical) {
+    let file = match on_worker!(cache, Open, canonical, reads.open(canonical)) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return OnWorker::Done(Ok(None)),
         Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
@@ -66,7 +80,12 @@ pub(super) fn open_published(
         }
         Err(_) => return OnWorker::ToPool(None),
     };
-    let parsed = match record::read_published_nowait(&file, key_bytes) {
+    let parsed = match on_worker!(
+        cache,
+        RecordRead,
+        canonical,
+        record::read_published_nowait(&file, key_bytes)
+    ) {
         Ok(parsed) => parsed,
         Err(ReadError::Io(e)) if e.kind() == std::io::ErrorKind::Unsupported => {
             close_on_pool(file, cache, canonical);
@@ -94,12 +113,7 @@ pub(super) fn open_partial_hit(
         return OnWorker::ToPool(None);
     };
     let path = &writer.temp_path;
-    test_hook! {
-        if cache.hooks.worker_would_wait(crate::hooks::WorkerCall::Open, path) {
-            return OnWorker::ToPool(None);
-        }
-    }
-    let file = match reads.open(path) {
+    let file = match on_worker!(cache, Open, path, reads.open(path)) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return OnWorker::Done(Ok(InFlightTemp::Gone))
@@ -109,7 +123,12 @@ pub(super) fn open_partial_hit(
         }
         Err(_) => return OnWorker::ToPool(None),
     };
-    let parsed = match record::read_in_flight_nowait(&file, key_bytes) {
+    let parsed = match on_worker!(
+        cache,
+        RecordRead,
+        path,
+        record::read_in_flight_nowait(&file, key_bytes)
+    ) {
         Ok(parsed) => parsed,
         Err(ReadError::Io(e)) if e.kind() == std::io::ErrorKind::Unsupported => {
             close_on_pool(file, cache, path);
@@ -145,12 +164,7 @@ pub(super) fn fill(
     let Some(reads) = &cache.page_cache_reads else {
         return Ok(false);
     };
-    test_hook! {
-        if cache.hooks.worker_would_wait(crate::hooks::WorkerCall::BodyRead, path) {
-            return Ok(false);
-        }
-    }
-    match reads.fill(file, buf, end, base) {
+    match on_worker!(cache, BodyRead, path, reads.fill(file, buf, end, base)) {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::Unsupported => unsupported(path, e),
         Err(_) => Ok(false),

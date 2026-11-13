@@ -12,7 +12,7 @@
 //! page cache holds them.
 
 use bytes::Bytes;
-use durable_cache::hooks::WorkerCall;
+use durable_cache::hooks::{PausePoint, WorkerCall};
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
 use pingora_cache::CacheKey;
@@ -219,4 +219,205 @@ async fn tc_storage_pagecache_01_partial_hits_stay_on_the_worker() {
         .await
         .expect("the store ends");
     store.finish().await.expect("the store publishes");
+}
+
+/// Whether `e`, the error of an operation whose call on the worker the
+/// system lacks, names the file and the option that asked for the call.
+fn names_file_and_option(e: &pingora_error::Error, path: &std::path::Path) -> bool {
+    let text = e.to_string();
+    text.contains(&path.display().to_string()) && text.contains("with_page_cache_reads")
+}
+
+/// A call the system lacks, at run time, fails the operation with an error
+/// naming the file and the option, and the pool does not do it instead: the
+/// open, the record's first read, which also hands the open file to the pool
+/// to close, and a body read (FDS-STORAGE.PAGECACHE-01, "Calls the system
+/// lacks").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tc_storage_pagecache_01_a_call_the_system_lacks_fails_the_operation() {
+    let (cache, _tmp) = support::leaked_cache();
+    let [(small, _), (large, _)] = store_all(cache).await;
+    let trace = support::inactive_trace();
+
+    let path = support::canonical_path(cache, &small);
+    cache
+        .hooks()
+        .arm_worker_unsupported(WorkerCall::Open, &path, 0);
+    let before = cache.hooks().handoffs();
+    match cache.lookup(&small, &trace).await {
+        Err(e) => assert!(names_file_and_option(&e, &path), "the open: {e}"),
+        Ok(_) => panic!("an open the system lacks fails the lookup"),
+    }
+    assert_eq!(cache.hooks().handoffs(), before, "no pool did the lookup");
+
+    cache
+        .hooks()
+        .arm_worker_unsupported(WorkerCall::RecordRead, &path, 0);
+    let closing = cache
+        .hooks()
+        .arm_pause(PausePoint::BeforeClosingRemovedFile, Some(&path));
+    match cache.lookup(&small, &trace).await {
+        Err(e) => assert!(names_file_and_option(&e, &path), "the first read: {e}"),
+        Ok(_) => panic!("a read the system lacks fails the lookup"),
+    }
+    assert!(
+        closing.wait_reached(std::time::Duration::from_secs(5)),
+        "the worker hands the open file to the pool to close"
+    );
+    closing.release();
+
+    let path = support::canonical_path(cache, &large);
+    cache
+        .hooks()
+        .arm_worker_unsupported(WorkerCall::BodyRead, &path, 0);
+    let (_meta, mut hit) = support::lookup_hit(cache, &large).await;
+    let e = support::drain_body(&mut hit)
+        .await
+        .expect_err("a body read the system lacks fails");
+    assert!(names_file_and_option(&e, &path), "the body read: {e}");
+}
+
+/// The same for a partial hit's open and first read of a store's temporary.
+#[tokio::test]
+async fn tc_storage_pagecache_01_a_partial_hits_call_the_system_lacks_fails() {
+    let (cache, _tmp) = support::leaked_cache();
+    let key = support::key("/pagecache-partial-unsupported");
+    let trace = support::inactive_trace();
+    let mut store = cache
+        .get_miss_handler(&key, &support::meta(), &trace)
+        .await
+        .expect("a store opens");
+    store
+        .write_body(Bytes::from_static(b"in flight"), false)
+        .await
+        .expect("a chunk is written");
+    let tag = store
+        .streaming_write_tag()
+        .map(<[u8]>::to_vec)
+        .expect("a write tag");
+    let [temp] = support::temp_entries(cache, &key)
+        .try_into()
+        .expect("one temporary");
+    let temp = support::shard_dir_of(cache, &key).join(temp);
+
+    for call in [WorkerCall::Open, WorkerCall::RecordRead] {
+        cache.hooks().arm_worker_unsupported(call, &temp, 0);
+        match cache.lookup_streaming_write(&key, Some(&tag), &trace).await {
+            Err(e) => assert!(names_file_and_option(&e, &temp), "{call:?}: {e}"),
+            Ok(_) => panic!("{call:?}: a call the system lacks fails the partial hit"),
+        }
+    }
+    drop(store);
+}
+
+/// A partial hit whose temporary is gone when the worker opens it, as when
+/// its store publishes in between, is answered on the worker: the lookup
+/// with the store's tag finds nothing, without a handoff
+/// (FDS-STORAGE.PAGECACHE-01). The hook makes the open report the file
+/// missing while it is still there, so a pool that opened it again would
+/// find the partial hit.
+#[tokio::test]
+async fn tc_storage_pagecache_01_a_gone_temporary_is_answered_on_the_worker() {
+    let (cache, _tmp) = support::leaked_cache();
+    let key = support::key("/pagecache-partial-gone");
+    let trace = support::inactive_trace();
+    let mut store = cache
+        .get_miss_handler(&key, &support::meta(), &trace)
+        .await
+        .expect("a store opens");
+    store
+        .write_body(Bytes::from_static(b"in flight"), false)
+        .await
+        .expect("a chunk is written");
+    let tag = store
+        .streaming_write_tag()
+        .map(<[u8]>::to_vec)
+        .expect("a write tag");
+    let [temp] = support::temp_entries(cache, &key)
+        .try_into()
+        .expect("one temporary");
+    let temp = support::shard_dir_of(cache, &key).join(temp);
+
+    cache.hooks().arm_worker_missing(WorkerCall::Open, &temp, 0);
+    let before = cache.hooks().handoffs();
+    let found = cache
+        .lookup_streaming_write(&key, Some(&tag), &trace)
+        .await
+        .expect("the lookup succeeds");
+    assert!(
+        found.is_none(),
+        "the store's temporary is gone: nothing is found"
+    );
+    assert_eq!(
+        cache.hooks().handoffs() - before,
+        0,
+        "the worker answered the lookup"
+    );
+    drop(store);
+}
+
+/// With `O_NOATIME`, on by default (`FsCacheConfig::with_noatime`), a hit
+/// leaves its record's access time as it was, where `relatime` would update
+/// it, whether the worker opens the record or the pool does: the update can
+/// start a journal transaction, and the hit's body reads, on the worker, go
+/// through the file the pool opened (FDS-STORAGE.PAGECACHE-01, "Access
+/// times"). A file system that records no access times cannot tell, and the
+/// test says so.
+#[tokio::test]
+async fn tc_storage_pagecache_01_hits_leave_the_access_time() {
+    use std::fs::{File, FileTimes};
+    use std::os::unix::fs::FileExt;
+    use std::time::{Duration, SystemTime};
+
+    let tmp = support::tempdir();
+    let an_hour_ago = SystemTime::now() - Duration::from_secs(3600);
+    let set_accessed = |path: &std::path::Path| {
+        File::options()
+            .write(true)
+            .open(path)
+            .and_then(|f| f.set_times(FileTimes::new().set_accessed(an_hour_ago)))
+            .expect("the access time is set");
+    };
+    let accessed = |path: &std::path::Path| {
+        std::fs::metadata(path)
+            .and_then(|m| m.accessed())
+            .expect("the access time reads")
+    };
+
+    let control = tmp.path().join("control");
+    std::fs::write(&control, [7u8; 4096]).expect("the control file is written");
+    set_accessed(&control);
+    File::open(&control)
+        .and_then(|f| f.read_exact_at(&mut [0u8; 4096], 0))
+        .expect("the control file reads");
+    if accessed(&control) == an_hour_ago {
+        eprintln!("this file system does not record access times: nothing to check");
+        return;
+    }
+
+    let cache = support::leaked_cache_with(FsCacheConfig::new(tmp.path().join("cache"), None));
+    let key = support::key("/noatime");
+    support::store(cache, &key, &support::meta(), b"a body").await;
+    let record = support::canonical_path(cache, &key);
+    for (step, through_the_pool) in [("on the worker", false), ("through the pool", true)] {
+        set_accessed(&record);
+        if through_the_pool {
+            cache.hooks().arm_worker_wait(WorkerCall::Open, &record, 0);
+        }
+        let before = cache.hooks().handoffs();
+        let (_meta, body) = support::lookup_body(cache, &key)
+            .await
+            .expect("the stored body is a hit");
+        assert_eq!(body, b"a body", "{step}");
+        assert_eq!(
+            cache.hooks().handoffs() - before,
+            u64::from(through_the_pool),
+            "{step}: the lookup took that path"
+        );
+        assert_eq!(
+            accessed(&record),
+            an_hour_ago,
+            "{step}: the hit left the access time"
+        );
+    }
 }

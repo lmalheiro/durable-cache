@@ -35,6 +35,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
+#[cfg(test)]
+use crate::hooks::{FaultPoint, Hooks};
 use crate::writerid::{self, WriterId, LEASE_DIR};
 use crate::{sharding, FsCacheConfig};
 
@@ -94,7 +96,12 @@ impl Marker {
     /// place, with all its data written: make sure the marker of instance
     /// `id` is in place under `root`, writing it if not. Nothing with the
     /// discard off. Whether this call wrote it.
-    pub(crate) fn ensure(&self, root: &Path, id: &WriterId) -> io::Result<bool> {
+    pub(crate) fn ensure(
+        &self,
+        root: &Path,
+        id: &WriterId,
+        #[cfg(test)] hooks: &Hooks,
+    ) -> io::Result<bool> {
         let Some(boot_id) = &self.boot_id else {
             return Ok(false);
         };
@@ -102,7 +109,13 @@ impl Marker {
         if *written {
             return Ok(false);
         }
-        write_marker(root, id, boot_id)?;
+        write_marker(
+            root,
+            id,
+            boot_id,
+            #[cfg(test)]
+            hooks,
+        )?;
         *written = true;
         Ok(true)
     }
@@ -110,16 +123,33 @@ impl Marker {
     /// Flush the file system that holds the cache at `root`, then remove the
     /// marker of instance `id` and those of instances whose lease is no
     /// longer held: the flush made what they published durable too.
-    pub(crate) fn flush(&self, root: &Path, id: &WriterId) -> io::Result<()> {
+    pub(crate) fn flush(
+        &self,
+        root: &Path,
+        id: &WriterId,
+        #[cfg(test)] hooks: &Hooks,
+    ) -> io::Result<()> {
         let mut written = self.written();
-        sync_file_system(root)?;
+        sync_file_system(
+            root,
+            #[cfg(test)]
+            hooks,
+        )?;
+        // Before the marker goes, so that a removal that fails halfway, or
+        // whose directory sync fails, never leaves this instance believing
+        // in a marker that is gone: the next unsynchronised store writes it
+        // again. A removal a host crash undoes errs on the safe side.
+        *written = false;
         let removed = remove_markers(root, |writer| {
             writer == *id || !writerid::writer_may_be_running(root, &writer)
         })?;
         if removed > 0 {
-            sync_dir(&root.join(LEASE_DIR))?;
+            sync_dir(
+                &root.join(LEASE_DIR),
+                #[cfg(test)]
+                hooks,
+            )?;
         }
-        *written = false;
         Ok(())
     }
 }
@@ -138,7 +168,12 @@ fn staging_path(marker: &Path) -> PathBuf {
 
 /// Write instance `id`'s marker, naming `boot_id`, durably: a staging file,
 /// synchronised, renamed into place, and the lease directory synchronised.
-fn write_marker(root: &Path, id: &WriterId, boot_id: &str) -> io::Result<()> {
+fn write_marker(
+    root: &Path,
+    id: &WriterId,
+    boot_id: &str,
+    #[cfg(test)] hooks: &Hooks,
+) -> io::Result<()> {
     let marker = marker_path(root, id);
     let staging = staging_path(&marker);
     let mut file = OpenOptions::new()
@@ -149,7 +184,11 @@ fn write_marker(root: &Path, id: &WriterId, boot_id: &str) -> io::Result<()> {
     file.write_all(format!("{boot_id}\n").as_bytes())?;
     file.sync_data()?;
     std::fs::rename(&staging, &marker)?;
-    sync_dir(&root.join(LEASE_DIR))
+    sync_dir(
+        &root.join(LEASE_DIR),
+        #[cfg(test)]
+        hooks,
+    )
 }
 
 /// The writer a marker or a staging marker belongs to, if `name` is one,
@@ -236,6 +275,7 @@ pub(crate) fn at_construction(
     root: &Path,
     discard: bool,
     boot_id_path: &Path,
+    #[cfg(test)] hooks: &Hooks,
 ) -> Result<Option<String>> {
     let boots = marker_boots(root).or_err_with(ErrorType::FileReadError, || {
         format!(
@@ -272,7 +312,12 @@ pub(crate) fn at_construction(
              and was never flushed: discarding every record and temporary",
             root.display()
         );
-        discard_cache(root).or_err_with(ErrorType::FileWriteError, || {
+        discard_cache(
+            root,
+            #[cfg(test)]
+            hooks,
+        )
+        .or_err_with(ErrorType::FileWriteError, || {
             format!("discarding the cache under {}", root.display())
         })?;
     }
@@ -286,7 +331,7 @@ pub(crate) fn at_construction(
 /// markers, and the discard is done again at the next start. A running
 /// instance's marker stays: that instance believes it in place, and writes
 /// it only once until a flush of its own.
-fn discard_cache(root: &Path) -> io::Result<()> {
+fn discard_cache(root: &Path, #[cfg(test)] hooks: &Hooks) -> io::Result<()> {
     let discarded = root.join(format!(
         "{DISCARDED_PREFIX}{:016x}",
         writerid::random_nonce()
@@ -302,11 +347,19 @@ fn discard_cache(root: &Path) -> io::Result<()> {
             Err(e) => return Err(e),
         }
     }
-    sync_dir(root)?;
+    sync_dir(
+        root,
+        #[cfg(test)]
+        hooks,
+    )?;
     remove_markers(root, |writer| {
         !writerid::writer_may_be_running(root, &writer)
     })?;
-    sync_dir(&root.join(LEASE_DIR))
+    sync_dir(
+        &root.join(LEASE_DIR),
+        #[cfg(test)]
+        hooks,
+    )
 }
 
 /// Whether `name` names a directory of discarded shards, spelled exactly as
@@ -362,15 +415,25 @@ pub(crate) fn remove_discarded(root: &Path) {
 
 /// `fsync` the directory at `path`, so the entries just changed in it
 /// survive a host crash.
-fn sync_dir(path: &Path) -> io::Result<()> {
+fn sync_dir(path: &Path, #[cfg(test)] hooks: &Hooks) -> io::Result<()> {
+    test_hook! { injected(hooks, FaultPoint::SyncCacheDir)?; }
     File::open(path)?.sync_all()
+}
+
+/// The fault a test armed at `point`, as an I/O error.
+#[cfg(test)]
+fn injected(hooks: &Hooks, point: FaultPoint) -> io::Result<()> {
+    hooks
+        .fault(point)
+        .map_err(|e| io::Error::other(e.to_string()))
 }
 
 /// Flush the file system that holds `root`: with `syncfs` on Linux, and
 /// elsewhere with `sync`, which flushes every file system, and on some
 /// systems returns before the writes complete. No marker depends on the
 /// latter: the discard exists only on Linux.
-fn sync_file_system(root: &Path) -> io::Result<()> {
+fn sync_file_system(root: &Path, #[cfg(test)] hooks: &Hooks) -> io::Result<()> {
+    test_hook! { injected(hooks, FaultPoint::SyncFileSystem)?; }
     #[cfg(target_os = "linux")]
     {
         rustix::fs::syncfs(File::open(root)?).map_err(io::Error::from)

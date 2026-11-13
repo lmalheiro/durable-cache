@@ -617,6 +617,16 @@ stock run is the reference: a test that fails on both runs is a limitation of
       one record's file short as a store the device never received would be
       left, construct another backend with a different boot identity, and
       look up every key.
+    \item With the discard on, store objects from three instances, stop one,
+      flush another, and inspect the markers.
+    \item Make each synchronisation of the protocol fail in turn: the lease
+      directory's after a marker is written, the file system's flush and the
+      lease directory's in a flush, and the cache root's in a discard at
+      construction; after each, carry on as step 1 or step 3 does.
+    \item With the discard on, store objects from an instance that keeps
+      running, and from another under a different boot identity, which then
+      stops; construct a backend with the running instance's boot identity,
+      look up a stored key, and inspect the markers.
   \end{enumerate}
 
   \textbf{Expected result:} In step 1 every finished store is published
@@ -627,7 +637,13 @@ stock run is the reference: a test that fails on both runs is a limitation of
   is a hit. In step 5 no marker is written and every object is a hit. In
   step 6 construction fails with an error naming the boot identity's source.
   In step 7 no marker is written, the shortened record is a miss, and every
-  other object is a hit.
+  other object is a hit. In step 8 only the running instance's marker
+  remains. In step 9 each failure fails its operation with an error --- the
+  store, the flush, the construction --- and leaves nothing unsafe: the next
+  unsynchronised store writes the marker again, a flush that failed before
+  removing it keeps it, and a discard that failed keeps the markers, so that
+  the next start discards again. In step 10 the key is a miss, and only the
+  running instance's marker remains.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
@@ -1591,7 +1607,8 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
   interface on Linux, with test hooks that count the operations handed to the
   blocking pool, and that make the worker's open, or a given read, report
-  that it would wait.
+  that it would wait, that the system lacks the call, or that the file is
+  missing.
 
   \textbf{Steps:}
   \begin{enumerate}
@@ -1601,23 +1618,39 @@ stock run is the reference: a test that fails on both runs is a limitation of
     \item Make the worker's open report a wait, and repeat step 1.
     \item Make the second body read of the larger record report a wait, and
       repeat step 1.
-    \item Look up a key never stored, and a record whose metadata checksum
-      does not match.
+    \item Look up a key never stored, twice, and a record whose metadata
+      checksum does not match.
     \item Switch page-cache reads off in the configuration, and repeat
       step 1.
     \item With page-cache reads on, open a store, write part of its body,
       look it up with the store's streaming write tag, and read what it
       holds (\reqref{FDS-STORAGE.PARTIAL-01}).
+    \item Make the worker's open, the record's first read and a body read
+      report in turn that the system lacks the call, for a published record
+      and for a store's temporary.
+    \item Open a store, write part of its body, make the worker's open of its
+      temporary report the file missing, as when the store publishes in
+      between, and look it up with the store's streaming write tag.
+    \item With \texttt{O\_NOATIME} on, the default, store a record, set its
+      access time back, look it up and read its body; set it back again,
+      make the worker's open report a wait, and repeat.
   \end{enumerate}
 
   \textbf{Expected result:} In step 1 no operation is handed to the pool. In
   step 2 each lookup is handed over once, and in step 3 the larger record's
-  second chunk once. In step 4 both lookups are misses, the damaged record's
-  reached through the pool's locked re-read. In step 5 every lookup is handed
+  second chunk once. In step 4 every lookup is a miss: the second lookup of
+  the key never stored is not handed over, as the kernel's lookup cache
+  knows its path to be missing, and the damaged record's is reached through
+  the pool's locked re-read. In step 5 every lookup is handed
   over once, and so is every chunk the lookup's first read did not already
   hold, as \reqref{FDS-STORAGE.EXECUTOR-01} specifies. In step 6 neither the
-  partial hit's lookup nor its read is handed over. In every step, each
-  hit's metadata and body are exactly those stored.
+  partial hit's lookup nor its read is handed over. In step 7 each operation
+  fails with an error naming the file and the option that asked for the
+  call, none is handed to the pool, and a file opened before the failing
+  read is closed on the pool. In step 8 the lookup finds nothing and is not
+  handed over. In step 9 neither hit changes the record's access time, the
+  first served on the worker and the second opened on the pool. In every other step, each hit's metadata and body are exactly
+  those stored.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
