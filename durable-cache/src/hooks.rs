@@ -6,8 +6,9 @@
 //! only in this crate's own test build (`cfg(test)`). Every call into it is
 //! wrapped in `test_hook!`, and everything else that reaches it is a
 //! `#[cfg(test)]` item: `FsCache`'s `hooks` field, `with_test_hooks` and
-//! `hooks`, the test build's `map_name`, and `close_removed_file`'s
-//! test-only parameters. So no other build contains a hook, a hook call, or
+//! `hooks`, the test build's `map_name`, the test-only parameters of
+//! `close_removed_file` and of the discard's synchronisations, and the
+//! test-build line of `on_worker!` in `lookup/page_cache.rs`. So no other build contains a hook, a hook call, or
 //! anything a hook call's arguments compute.
 //!
 //! Hooks are per [`crate::FsCache`] instance, so tests running in parallel
@@ -105,6 +106,30 @@ pub enum FaultPoint {
     WithdrawRecord,
     /// Synchronising a shard directory after a purge (TC-STORAGE.PURGE-01).
     SyncDir,
+    /// Synchronising a directory in the discard after a host restart: the
+    /// lease directory after a marker is written or removed, and the cache
+    /// root after its shards are discarded (TC-PERSISTENCE.CRASHDISCARD-01).
+    SyncCacheDir,
+    /// Flushing the file system that holds the cache, in `FsCache::flush`
+    /// (TC-PERSISTENCE.CRASHDISCARD-01).
+    SyncFileSystem,
+}
+
+/// A call on the async worker, from the page cache only, that a test can
+/// make fail: report that it would wait for the device, or that the system
+/// does not support it (TC-STORAGE.PAGECACHE-01). Linux only, as those calls
+/// are.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerCall {
+    /// A lookup's open of a record or of a store's temporary. Path: that
+    /// file.
+    Open,
+    /// A lookup's read of a record's fixed part. Path: the record or
+    /// temporary.
+    RecordRead,
+    /// A read of a body chunk. Path: the record or temporary read.
+    BodyRead,
 }
 
 type NameOverride = Arc<dyn Fn(&str) -> String + Send + Sync>;
@@ -172,6 +197,24 @@ pub struct HookConfig {
     /// Maps the name a key's files would have to the one the backend
     /// uses for its path (TC-LAYOUT.SHARDING-01).
     pub object_name: Option<NameOverride>,
+    /// The file the backend reads the current boot's identity from, in
+    /// place of `/proc/sys/kernel/random/boot_id`
+    /// (TC-PERSISTENCE.CRASHDISCARD-01).
+    pub boot_id_path: Option<PathBuf>,
+    /// Faults armed from the start, for the operations construction makes:
+    /// the next `times` operations at each point fail, as
+    /// [`Hooks::inject_fault`] arms them later.
+    pub faults: Vec<(FaultPoint, usize)>,
+}
+
+/// One armed worker fault: the call to make fail, on which file, after how
+/// many such calls go through, and with what kind of error.
+#[cfg(target_os = "linux")]
+struct WorkerWait {
+    call: WorkerCall,
+    path: PathBuf,
+    skip: usize,
+    kind: std::io::ErrorKind,
 }
 
 /// The runtime hooks of one backend instance.
@@ -181,12 +224,18 @@ pub struct Hooks {
     pauses: Mutex<HashMap<PausePoint, Vec<Armed>>>,
     faults: Mutex<HashMap<FaultPoint, usize>>,
     meta_decodes: AtomicU64,
+    #[cfg(target_os = "linux")]
+    worker_waits: Mutex<Vec<WorkerWait>>,
+    handoffs: AtomicU64,
+    marker_writes: AtomicU64,
 }
 
 impl Hooks {
     pub(crate) fn new(config: HookConfig) -> Self {
+        let faults = config.faults.iter().copied().collect();
         Hooks {
             config,
+            faults: Mutex::new(faults),
             ..Default::default()
         }
     }
@@ -260,6 +309,72 @@ impl Hooks {
 
     pub(crate) fn count_meta_decode(&self) {
         self.meta_decodes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Make one `call` on the worker, on the file at `path`, report that it
+    /// would wait: the first after `skip` such calls go through.
+    #[cfg(target_os = "linux")]
+    pub fn arm_worker_wait(&self, call: WorkerCall, path: &Path, skip: usize) {
+        self.arm_worker_fault(call, path, skip, std::io::ErrorKind::WouldBlock);
+    }
+
+    /// Make one `call` on the worker, on the file at `path`, report that the
+    /// system does not support it: the first after `skip` such calls go
+    /// through.
+    #[cfg(target_os = "linux")]
+    pub fn arm_worker_unsupported(&self, call: WorkerCall, path: &Path, skip: usize) {
+        self.arm_worker_fault(call, path, skip, std::io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn arm_worker_fault(
+        &self,
+        call: WorkerCall,
+        path: &Path,
+        skip: usize,
+        kind: std::io::ErrorKind,
+    ) {
+        lock(&self.worker_waits).push(WorkerWait {
+            call,
+            path: path.to_path_buf(),
+            skip,
+            kind,
+        });
+    }
+
+    /// The error this `call` on `path` is to fail with, if a test armed one.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn worker_fault(&self, call: WorkerCall, path: &Path) -> Option<std::io::Error> {
+        let mut waits = lock(&self.worker_waits);
+        let i = waits
+            .iter()
+            .position(|w| w.call == call && w.path == path)?;
+        if waits[i].skip > 0 {
+            waits[i].skip -= 1;
+            return None;
+        }
+        let kind = waits.remove(i).kind;
+        Some(std::io::Error::new(kind, format!("injected at {call:?}")))
+    }
+
+    /// How many lookups and body reads this backend has handed to the
+    /// blocking pool (TC-STORAGE.PAGECACHE-01).
+    pub fn handoffs(&self) -> u64 {
+        self.handoffs.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn count_handoff(&self) {
+        self.handoffs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many times this backend has written its unsynchronised-store
+    /// marker (TC-PERSISTENCE.CRASHDISCARD-01).
+    pub fn marker_writes(&self) -> u64 {
+        self.marker_writes.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn count_marker_write(&self) {
+        self.marker_writes.fetch_add(1, Ordering::Relaxed);
     }
 }
 

@@ -10,10 +10,13 @@
 //! file, answers an invalidation only once the shard directory is
 //! synchronised, and fails once the backend is read-only.
 
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 use bytes::Bytes;
-use durable_cache::hooks::{FaultPoint, PausePoint};
+use durable_cache::hooks::FaultPoint;
+#[cfg(target_os = "linux")]
+use durable_cache::hooks::PausePoint;
 use pingora_cache::storage::{PurgeOutcome, PurgeTarget, PurgeType, Storage};
 
 use super::support;

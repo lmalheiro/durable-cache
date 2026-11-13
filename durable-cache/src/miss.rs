@@ -33,7 +33,7 @@ use crate::format::{self, RecordHeader};
 #[cfg(test)]
 use crate::hooks::FaultPoint;
 use crate::inflight::{InFlightWriter, WriteOutcome};
-use crate::{blocking, key_codec, publish, sharding, FsCache};
+use crate::{blocking, key_codec, publish, sharding, Durability, FsCache};
 
 /// How many counter values a store tries before giving up on finding a free
 /// temporary name (FDS-STORAGE.PUBLISH-01, "advance the counter and retry").
@@ -227,10 +227,39 @@ impl FsMissHandler {
                 .or_err_with(ErrorType::FileWriteError, || {
                     format!("writing the header of {}", h.temp_path.display())
                 })?;
-            test_hook! { h.cache.hooks.fault(FaultPoint::SyncTemp)?; }
-            publish::sync_temp(h.file()).or_err_with(ErrorType::FileWriteError, || {
-                format!("synchronising {}", h.temp_path.display())
-            })
+            if h.cache.config.durability() == Durability::Strict {
+                test_hook! { h.cache.hooks.fault(FaultPoint::SyncTemp)?; }
+                publish::sync_temp(h.file()).or_err_with(ErrorType::FileWriteError, || {
+                    format!("synchronising {}", h.temp_path.display())
+                })?;
+            } else {
+                // Unsynchronised: with the discard after a host restart on,
+                // this instance's marker is in place before the rename
+                // (FDS-PERSISTENCE.CRASHDISCARD-01).
+                let wrote = h
+                    .cache
+                    .marker
+                    .ensure(
+                        h.cache.root(),
+                        &h.cache.lease.id(),
+                        #[cfg(test)]
+                        &h.cache.hooks,
+                    )
+                    .or_err_with(ErrorType::FileWriteError, || {
+                        format!(
+                            "writing the unsynchronised-store marker under {}",
+                            h.cache.root().display()
+                        )
+                    })?;
+                test_hook! {
+                    if wrote {
+                        h.cache.hooks.count_marker_write();
+                    }
+                }
+                #[cfg(not(test))]
+                let _ = wrote;
+            }
+            Ok(())
         };
         patch(self).inspect_err(|_| self.failed = true)?;
 
@@ -381,9 +410,10 @@ impl HandleMiss for FsMissHandler {
     }
 
     async fn finish(self: Box<Self>) -> Result<MissFinishType> {
-        // `finish` patches the header, `fdatasync`s, and renames: three
-        // syscalls, one of them a flush that can take milliseconds on a real
-        // device. So the whole handler moves to the blocking pool
+        // `finish` patches the header, `fdatasync`s unless the configured
+        // durability skips it, and renames: up to three syscalls, one of them
+        // a flush that can take milliseconds on a real device. So the whole
+        // handler moves to the blocking pool
         // (FDS-STORAGE.EXECUTOR-01), and is dropped there as the closure
         // ends, whether the store published or failed. A failed store's
         // `Drop` aborts it and removes its temporary

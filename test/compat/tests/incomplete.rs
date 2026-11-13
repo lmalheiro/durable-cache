@@ -76,7 +76,7 @@ async fn tc_compliance_incomplete_01_killed_process_leaves_an_orphan_that_gets_r
     };
     origin.set_scenario("/incomplete-kill", scenario.clone());
 
-    let cache_dir = tempfile::tempdir().unwrap();
+    let cache_dir = durable_cache_harness::cache_dir();
     let listen_addr = free_port().unwrap();
     let mut proxy = FixtureProxyHandle::start(FixtureProxyOptions {
         cache_dir: cache_dir.path(),

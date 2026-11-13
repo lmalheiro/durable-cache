@@ -63,7 +63,7 @@ async fn tc_compat_hotupgrade_01_cache_consistent_across_hot_upgrade() {
         ),
     );
 
-    let cache_dir = tempfile::tempdir().unwrap();
+    let cache_dir = durable_cache_harness::cache_dir();
     let listen_addr = free_port().unwrap();
     let client = durable_cache_harness::http_client::client();
     let url_a = format!("http://{listen_addr}/hotupgrade-a");
@@ -230,7 +230,7 @@ async fn tc_compat_hotupgrade_01_a_store_completing_after_the_signal_is_not_publ
         },
     );
 
-    let cache_dir = tempfile::tempdir().unwrap();
+    let cache_dir = durable_cache_harness::cache_dir();
     let listen_addr = free_port().unwrap();
     let client = durable_cache_harness::http_client::client();
     let url = format!("http://{listen_addr}{path}");

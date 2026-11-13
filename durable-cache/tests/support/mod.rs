@@ -225,12 +225,26 @@ pub fn inactive_trace() -> SpanHandle {
 
 // --- caches ---------------------------------------------------------------
 
+/// A fresh temporary directory for a cache. It lies under the build's target
+/// directory, on disk, rather than in the system's temporary directory:
+/// page-cache reads, on by default on Linux, need a file system with
+/// non-blocking reads, which tmpfs lacks (`FsCacheConfig::with_page_cache_reads`).
+pub fn tempdir() -> tempfile::TempDir {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../target"));
+    let base = target.join("test-tmp");
+    std::fs::create_dir_all(&base).expect("a directory for temporary caches");
+    tempfile::tempdir_in(&base).expect("a temporary directory for a cache")
+}
+
 /// Leaked (intentionally never freed, matching how a real process holds its
 /// one `FsCache` for its whole lifetime) `'static` cache rooted at a fresh
 /// temp dir. Returns the `TempDir` too so it isn't dropped/cleaned up out
 /// from under the test while `cache` is still in use.
 pub fn leaked_cache() -> (&'static FsCache, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let cache = leaked_cache_at(tmp.path());
     (cache, tmp)
 }
@@ -252,7 +266,7 @@ pub fn leaked_cache_configured(config: FsCacheConfig, hooks: HookConfig) -> &'st
 
 /// A fresh cache that reserves `meta_headroom` bytes of metadata headroom.
 pub fn leaked_cache_with_headroom(meta_headroom: u32) -> (&'static FsCache, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let config = FsCacheConfig::new(tmp.path(), Some(meta_headroom));
     (leaked_cache_with(config), tmp)
 }

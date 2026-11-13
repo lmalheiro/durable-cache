@@ -9,6 +9,7 @@
 //! `Storage::get_miss_handler`/`lookup` -- no HTTP needed.
 
 use bytes::Bytes;
+use durable_cache::lookup::CHUNK_SIZE;
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
 
@@ -68,20 +69,37 @@ fn random_body(len: usize, seed: u64) -> Vec<u8> {
 #[tokio::test]
 async fn tc_compliance_body_01_boundary_sizes_round_trip() {
     let (cache, _tmp) = support::leaked_cache();
+    boundary_sizes_round_trip(cache).await;
+}
 
+/// The same with page-cache reads switched off: every lookup and every read
+/// goes to the blocking pool, the path Linux otherwise takes only for what
+/// would wait for the device.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn tc_compliance_body_01_boundary_sizes_round_trip_through_the_pool() {
+    let tmp = support::tempdir();
+    let cache = support::leaked_cache_with(
+        FsCacheConfig::new(tmp.path(), None).with_page_cache_reads(false),
+    );
+    boundary_sizes_round_trip(cache).await;
+}
+
+async fn boundary_sizes_round_trip(cache: &'static FsCache) {
     // Empty, one byte, either side of a 4 KiB filesystem block boundary,
-    // either side of the backend's internal 64 KiB read-chunk boundary, and
-    // a large multi-chunk body.
+    // either side of the backend's read-chunk boundary, and a large
+    // multi-chunk body.
+    let chunk = CHUNK_SIZE as usize;
     let sizes = [
         0usize,
         1,
         4095,
         4096,
         4097,
-        64 * 1024 - 1,
-        64 * 1024,
-        64 * 1024 + 1,
-        3 * 64 * 1024 + 12345,
+        chunk - 1,
+        chunk,
+        chunk + 1,
+        3 * chunk + 12345,
     ];
 
     for (i, &size) in sizes.iter().enumerate() {
@@ -125,18 +143,35 @@ async fn tc_compliance_body_01_survives_a_restart() {
 #[tokio::test]
 async fn tc_compliance_body_01_seeked_reads_deliver_exactly_the_requested_slice() {
     let (cache, _tmp) = support::leaked_cache();
+    seeked_reads_deliver_exactly_the_requested_slice(cache).await;
+}
+
+/// The same with page-cache reads switched off: on the blocking pool.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn tc_compliance_body_01_seeked_reads_through_the_pool() {
+    let tmp = support::tempdir();
+    let cache = support::leaked_cache_with(
+        FsCacheConfig::new(tmp.path(), None).with_page_cache_reads(false),
+    );
+    seeked_reads_deliver_exactly_the_requested_slice(cache).await;
+}
+
+async fn seeked_reads_deliver_exactly_the_requested_slice(cache: &'static FsCache) {
     let key = support::key("/body-seek");
-    let body = random_body(200_000, 7);
+    let chunk = CHUNK_SIZE as usize;
+    let len = 2 * chunk + 4000;
+    let body = random_body(len, 7);
     support::store(cache, &key, &support::meta(), &body).await;
 
-    // The start, an interior slice spanning the backend's 64 KiB read-chunk
+    // The start, an interior slice spanning the backend's read-chunk
     // boundary, the tail, a single byte, and an end past the last byte.
     let ranges: [(usize, Option<usize>); 5] = [
         (0, Some(1000)),
-        (64 * 1024 - 10, Some(64 * 1024 + 10)),
-        (150_000, None),
+        (chunk - 10, Some(chunk + 10)),
+        (len - 50_000, None),
         (4096, Some(4097)),
-        (199_000, Some(500_000)),
+        (len - 1000, Some(len + 300_000)),
     ];
     for (start, end) in ranges {
         let (_meta, mut hit) = support::lookup_hit(cache, &key).await;
@@ -147,6 +182,49 @@ async fn tc_compliance_body_01_seeked_reads_deliver_exactly_the_requested_slice(
         assert_eq!(
             read, expected,
             "seek({start}, {end:?}) must deliver exactly that slice"
+        );
+    }
+}
+
+/// A lookup reads the body's start along with the metadata, in one read of
+/// the record's first `record::LOOKUP_READ_LEN` bytes, and the hit serves
+/// it from there. Bodies whose record ends just before, at, and just after
+/// the end of that read round-trip whole, and from a seek that starts in
+/// the bytes it holds and ends past them; a multi-chunk body continues from
+/// the file.
+#[tokio::test]
+async fn tc_compliance_body_01_bodies_around_the_end_of_the_lookups_first_read() {
+    let (cache, _tmp) = support::leaked_cache();
+    // One metadata for every record, so they share a body offset.
+    let meta = support::meta();
+    let probe = support::key("/first-read-probe");
+    support::store(cache, &probe, &meta, b"probe").await;
+    let body_offset = support::read_header(&support::canonical_path(cache, &probe)).body_offset();
+    // The body bytes the first read holds, in a record longer than it.
+    let held = durable_cache::record::LOOKUP_READ_LEN as usize - body_offset;
+
+    let sizes = [held - 1, held, held + 1, 3 * CHUNK_SIZE as usize + 12345];
+    for (i, size) in sizes.into_iter().enumerate() {
+        let key = support::key(&format!("/first-read-{i}"));
+        let body = random_body(size, 0xF125 ^ i as u64);
+        support::store(cache, &key, &meta, &body).await;
+
+        let (_meta, mut hit) = support::lookup_hit(cache, &key).await;
+        let read = support::drain_body(&mut hit).await.expect("the body reads");
+        assert_eq!(read, body, "a {size}-byte body round-trips");
+
+        let start = held - 100;
+        let end = start + 300;
+        let (_meta, mut hit) = support::lookup_hit(cache, &key).await;
+        hit.seek(start, Some(end))
+            .expect("the seek starts inside the body");
+        let read = support::drain_body(&mut hit)
+            .await
+            .expect("the slice reads");
+        assert_eq!(
+            read,
+            &body[start..end.min(size)],
+            "seek({start}, {end}) in a {size}-byte body delivers exactly that slice"
         );
     }
 }
