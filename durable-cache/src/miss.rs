@@ -239,7 +239,12 @@ impl FsMissHandler {
                 let wrote = h
                     .cache
                     .marker
-                    .ensure(h.cache.root(), &h.cache.lease.id())
+                    .ensure(
+                        h.cache.root(),
+                        &h.cache.lease.id(),
+                        #[cfg(test)]
+                        &h.cache.hooks,
+                    )
                     .or_err_with(ErrorType::FileWriteError, || {
                         format!(
                             "writing the unsynchronised-store marker under {}",

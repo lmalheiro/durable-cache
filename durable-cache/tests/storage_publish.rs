@@ -484,6 +484,34 @@ fn holding_a_record_open_warns_only_when_it_cannot_be_opened() {
 /// system lacks non-blocking reads fails to start, naming the option that
 /// switches them off, rather than serve every hit from the blocking pool
 /// unnoticed; with the option off, it starts. `/dev/shm` is a tmpfs, which
+/// Whether the file system holding `dir` has the calls page-cache reads
+/// make: `openat2` with `RESOLVE_CACHED` and `preadv2` with `RWF_NOWAIT`,
+/// tried here with rustix rather than through the backend.
+#[cfg(target_os = "linux")]
+fn non_blocking_reads(dir: &std::path::Path) -> bool {
+    use rustix::fs::{openat2, Mode, OFlags, ResolveFlags, CWD};
+    use rustix::io::{preadv2, Errno, ReadWriteFlags};
+    let lacks = |e: Errno| e == Errno::NOSYS || e == Errno::INVAL || e == Errno::OPNOTSUPP;
+    let probe = dir.join("probe");
+    std::fs::write(&probe, b"probe").expect("the probe is written");
+    let file = std::fs::File::open(&probe).expect("the probe opens");
+    let read = preadv2(
+        &file,
+        &mut [std::io::IoSliceMut::new(&mut [0u8; 1])],
+        0,
+        ReadWriteFlags::NOWAIT,
+    );
+    let open = openat2(
+        CWD,
+        dir,
+        OFlags::RDONLY,
+        Mode::empty(),
+        ResolveFlags::CACHED,
+    );
+    std::fs::remove_file(&probe).expect("the probe is removed");
+    !matches!(read, Err(e) if lacks(e)) && !matches!(open, Err(e) if lacks(e))
+}
+
 /// lacks them as of Linux 6.12; where it has them, nothing can tell.
 #[cfg(target_os = "linux")]
 #[test]
@@ -492,12 +520,21 @@ fn a_cache_on_a_file_system_without_non_blocking_reads_fails_to_start() {
         eprintln!("no /dev/shm: nothing to check");
         return;
     };
+    // Probed directly, not through the backend: the check the backend makes
+    // at construction must agree with the file system.
+    let supported = non_blocking_reads(tmp.path());
     match durable_cache::FsCache::new(FsCacheConfig::new(tmp.path(), None)) {
-        Ok(_) => eprintln!("this tmpfs has non-blocking reads: nothing to check"),
-        Err(e) => assert!(
-            format!("{e}").contains("with_page_cache_reads"),
-            "the error names the option: {e}"
+        Ok(_) => assert!(
+            supported,
+            "a file system without non-blocking reads must fail construction"
         ),
+        Err(e) => {
+            assert!(!supported, "construction failed where the calls work: {e}");
+            assert!(
+                format!("{e}").contains("with_page_cache_reads"),
+                "the error names the option: {e}"
+            );
+        }
     }
     let off = FsCacheConfig::new(tmp.path().join("off"), None).with_page_cache_reads(false);
     durable_cache::FsCache::new(off).expect("without page-cache reads, the cache starts");

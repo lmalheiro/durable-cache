@@ -12,7 +12,7 @@
 //! page cache holds them.
 
 use bytes::Bytes;
-use durable_cache::hooks::WorkerCall;
+use durable_cache::hooks::{PausePoint, WorkerCall};
 use durable_cache::{FsCache, FsCacheConfig};
 use pingora_cache::storage::Storage;
 use pingora_cache::CacheKey;
@@ -207,4 +207,93 @@ async fn tc_storage_pagecache_01_partial_hits_stay_on_the_worker() {
         .await
         .expect("the store ends");
     store.finish().await.expect("the store publishes");
+}
+
+/// Whether `e`, the error of an operation whose call on the worker the
+/// system lacks, names the file and the option that asked for the call.
+fn names_file_and_option(e: &pingora_error::Error, path: &std::path::Path) -> bool {
+    let text = e.to_string();
+    text.contains(&path.display().to_string()) && text.contains("with_page_cache_reads")
+}
+
+/// A call the system lacks, at run time, fails the operation with an error
+/// naming the file and the option, and the pool does not do it instead: the
+/// open, the record's first read, which also hands the open file to the pool
+/// to close, and a body read (FDS-STORAGE.PAGECACHE-01, "Calls the system
+/// lacks").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tc_storage_pagecache_01_a_call_the_system_lacks_fails_the_operation() {
+    let (cache, _tmp) = support::leaked_cache();
+    let [(small, _), (large, _)] = store_all(cache).await;
+    let trace = support::inactive_trace();
+
+    let path = support::canonical_path(cache, &small);
+    cache
+        .hooks()
+        .arm_worker_unsupported(WorkerCall::Open, &path, 0);
+    let before = cache.hooks().handoffs();
+    match cache.lookup(&small, &trace).await {
+        Err(e) => assert!(names_file_and_option(&e, &path), "the open: {e}"),
+        Ok(_) => panic!("an open the system lacks fails the lookup"),
+    }
+    assert_eq!(cache.hooks().handoffs(), before, "no pool did the lookup");
+
+    cache
+        .hooks()
+        .arm_worker_unsupported(WorkerCall::RecordRead, &path, 0);
+    let closing = cache
+        .hooks()
+        .arm_pause(PausePoint::BeforeClosingRemovedFile, Some(&path));
+    match cache.lookup(&small, &trace).await {
+        Err(e) => assert!(names_file_and_option(&e, &path), "the first read: {e}"),
+        Ok(_) => panic!("a read the system lacks fails the lookup"),
+    }
+    assert!(
+        closing.wait_reached(std::time::Duration::from_secs(5)),
+        "the worker hands the open file to the pool to close"
+    );
+    closing.release();
+
+    let path = support::canonical_path(cache, &large);
+    cache
+        .hooks()
+        .arm_worker_unsupported(WorkerCall::BodyRead, &path, 0);
+    let (_meta, mut hit) = support::lookup_hit(cache, &large).await;
+    let e = support::drain_body(&mut hit)
+        .await
+        .expect_err("a body read the system lacks fails");
+    assert!(names_file_and_option(&e, &path), "the body read: {e}");
+}
+
+/// The same for a partial hit's open and first read of a store's temporary.
+#[tokio::test]
+async fn tc_storage_pagecache_01_a_partial_hits_call_the_system_lacks_fails() {
+    let (cache, _tmp) = support::leaked_cache();
+    let key = support::key("/pagecache-partial-unsupported");
+    let trace = support::inactive_trace();
+    let mut store = cache
+        .get_miss_handler(&key, &support::meta(), &trace)
+        .await
+        .expect("a store opens");
+    store
+        .write_body(Bytes::from_static(b"in flight"), false)
+        .await
+        .expect("a chunk is written");
+    let tag = store
+        .streaming_write_tag()
+        .map(<[u8]>::to_vec)
+        .expect("a write tag");
+    let [temp] = support::temp_entries(cache, &key)
+        .try_into()
+        .expect("one temporary");
+    let temp = support::shard_dir_of(cache, &key).join(temp);
+
+    for call in [WorkerCall::Open, WorkerCall::RecordRead] {
+        cache.hooks().arm_worker_unsupported(call, &temp, 0);
+        match cache.lookup_streaming_write(&key, Some(&tag), &trace).await {
+            Err(e) => assert!(names_file_and_option(&e, &temp), "{call:?}: {e}"),
+            Ok(_) => panic!("{call:?}: a call the system lacks fails the partial hit"),
+        }
+    }
+    drop(store);
 }

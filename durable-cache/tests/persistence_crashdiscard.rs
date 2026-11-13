@@ -362,3 +362,116 @@ async fn tc_persistence_crashdiscard_01_without_the_discard_a_short_record_is_a_
         }
     }
 }
+
+/// A flush removes this instance's marker, and those of instances that
+/// stopped, whose stores it made durable too; it keeps those of instances
+/// still running (FDS-PERSISTENCE.CRASHDISCARD-01, "Flushing").
+#[tokio::test]
+async fn tc_persistence_crashdiscard_01_a_flush_keeps_a_running_instances_marker() {
+    let tmp = support::tempdir();
+    let boots = support::tempdir();
+    let boot_id = boot(boots.path(), "boot-m");
+    let flushing = unsynced(tmp.path(), true, &boot_id);
+    let running = unsynced(tmp.path(), true, &boot_id);
+    let stopped = unsynced(tmp.path(), true, &boot_id);
+    for (i, cache) in [flushing, running, stopped].into_iter().enumerate() {
+        store_some(cache, &format!("instance-{i}"), 1).await;
+    }
+    assert_eq!(markers(tmp.path()).len(), 3);
+    stop(stopped);
+
+    flushing.flush().expect("the cache flushes");
+    assert_eq!(
+        markers(tmp.path()),
+        [format!("{}.unsynced", running.lease.id())],
+        "only the running instance's marker stays"
+    );
+}
+
+/// Every synchronisation of the protocol is made, and its failure reported:
+/// a marker whose directory sync fails fails its store, and the next store
+/// writes it again; a flush whose file-system flush fails keeps the marker;
+/// a flush whose directory sync fails reports it, and the next store writes
+/// the marker again; a discard whose directory sync fails fails
+/// construction, and keeps the markers for the next start to discard again.
+#[tokio::test]
+async fn tc_persistence_crashdiscard_01_every_synchronisation_is_checked() {
+    let tmp = support::tempdir();
+    let boots = support::tempdir();
+    let boot_a = boot(boots.path(), "boot-n");
+    let cache = unsynced(tmp.path(), true, &boot_a);
+    let trace = support::inactive_trace();
+
+    cache.hooks().inject_fault(FaultPoint::SyncCacheDir, 1);
+    let key = support::key("/sync-marker");
+    let mut store = cache
+        .get_miss_handler(&key, &support::meta(), &trace)
+        .await
+        .expect("a store opens");
+    store
+        .write_body(Bytes::from_static(b"body"), true)
+        .await
+        .expect("the body is written");
+    assert!(
+        store.finish().await.is_err(),
+        "the marker's sync failed the store"
+    );
+    store_some(cache, "after-marker-fault", 1).await;
+    assert_eq!(
+        cache.hooks().marker_writes(),
+        1,
+        "the next store wrote the marker"
+    );
+
+    cache.hooks().inject_fault(FaultPoint::SyncFileSystem, 1);
+    assert!(
+        cache.flush().is_err(),
+        "the file-system flush failed the flush"
+    );
+    assert_eq!(markers(tmp.path()).len(), 1, "the marker stays");
+
+    cache.hooks().inject_fault(FaultPoint::SyncCacheDir, 1);
+    assert!(
+        cache.flush().is_err(),
+        "the directory sync failed the flush"
+    );
+    store_some(cache, "after-flush-fault", 1).await;
+    assert_eq!(
+        markers(tmp.path()).len(),
+        1,
+        "the next store wrote the marker again"
+    );
+
+    stop(cache);
+    let restart = |faults| {
+        FsCache::with_test_hooks(
+            FsCacheConfig::new(tmp.path(), None)
+                .with_durability(Durability::NoStoreSync)
+                .with_discard_after_host_restart(true),
+            HookConfig {
+                boot_id_path: Some(boot(boots.path(), "boot-o")),
+                faults,
+                ..HookConfig::default()
+            },
+        )
+    };
+    assert!(
+        restart(vec![(FaultPoint::SyncCacheDir, 1)]).is_err(),
+        "the discard's sync failed construction"
+    );
+    assert_eq!(
+        markers(tmp.path()).len(),
+        1,
+        "the markers stay for the next start"
+    );
+    let restarted: &'static FsCache = Box::leak(Box::new(
+        restart(Vec::new()).expect("the next start discards"),
+    ));
+    assert!(markers(tmp.path()).is_empty(), "the discard ran");
+    assert!(
+        support::lookup_body(restarted, &support::key("/after-flush-fault-0"))
+            .await
+            .is_none(),
+        "the cache was discarded"
+    );
+}

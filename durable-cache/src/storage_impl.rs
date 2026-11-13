@@ -143,6 +143,8 @@ impl FsCache {
             config.root(),
             crashdiscard::discard_on(&config),
             boot_id_path,
+            #[cfg(test)]
+            &hooks,
         )?;
         let dir_cache = ShardDirCache::build(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
@@ -234,7 +236,12 @@ impl FsCache {
     /// fails; the marker then stays.
     pub fn flush(&self) -> Result<()> {
         self.marker
-            .flush(self.root(), &self.lease.id())
+            .flush(
+                self.root(),
+                &self.lease.id(),
+                #[cfg(test)]
+                &self.hooks,
+            )
             .or_err_with(ErrorType::FileWriteError, || {
                 format!("flushing the cache under {}", self.root().display())
             })
@@ -395,5 +402,25 @@ impl Storage for FsCache {
 
     fn as_any(&self) -> &(dyn Any + Send + Sync + 'static) {
         self
+    }
+}
+
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use super::*;
+
+    /// The kernel refuses `O_NOATIME` on a file of another owner, and the
+    /// check at construction says so, naming the option: `/` belongs to
+    /// root.
+    #[test]
+    fn the_noatime_check_fails_on_a_directory_of_another_owner() {
+        // SAFETY: `geteuid` takes no arguments and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("root opens any file without updating its access time: nothing to check");
+            return;
+        }
+        let e = check_noatime(Path::new("/")).expect_err("/ belongs to root");
+        assert!(e.to_string().contains("with_noatime"), "{e}");
     }
 }

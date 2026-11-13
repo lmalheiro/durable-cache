@@ -617,6 +617,12 @@ stock run is the reference: a test that fails on both runs is a limitation of
       one record's file short as a store the device never received would be
       left, construct another backend with a different boot identity, and
       look up every key.
+    \item With the discard on, store objects from three instances, stop one,
+      flush another, and inspect the markers.
+    \item Make each synchronisation of the protocol fail in turn: the lease
+      directory's after a marker is written, the file system's flush and the
+      lease directory's in a flush, and the cache root's in a discard at
+      construction; after each, carry on as step 1 or step 3 does.
   \end{enumerate}
 
   \textbf{Expected result:} In step 1 every finished store is published
@@ -627,7 +633,12 @@ stock run is the reference: a test that fails on both runs is a limitation of
   is a hit. In step 5 no marker is written and every object is a hit. In
   step 6 construction fails with an error naming the boot identity's source.
   In step 7 no marker is written, the shortened record is a miss, and every
-  other object is a hit.
+  other object is a hit. In step 8 only the running instance's marker
+  remains. In step 9 each failure fails its operation with an error --- the
+  store, the flush, the construction --- and leaves nothing unsafe: the next
+  unsynchronised store writes the marker again, a flush that failed before
+  removing it keeps it, and a discard that failed keeps the markers, so that
+  the next start discards again.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
@@ -1608,6 +1619,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
     \item With page-cache reads on, open a store, write part of its body,
       look it up with the store's streaming write tag, and read what it
       holds (\reqref{FDS-STORAGE.PARTIAL-01}).
+    \item Make the worker's open, the record's first read and a body read
+      report in turn that the system lacks the call, for a published record
+      and for a store's temporary.
   \end{enumerate}
 
   \textbf{Expected result:} In step 1 no operation is handed to the pool. In
@@ -1616,8 +1630,11 @@ stock run is the reference: a test that fails on both runs is a limitation of
   reached through the pool's locked re-read. In step 5 every lookup is handed
   over once, and so is every chunk the lookup's first read did not already
   hold, as \reqref{FDS-STORAGE.EXECUTOR-01} specifies. In step 6 neither the
-  partial hit's lookup nor its read is handed over. In every step, each
-  hit's metadata and body are exactly those stored.
+  partial hit's lookup nor its read is handed over. In step 7 each operation
+  fails with an error naming the file and the option that asked for the
+  call, none is handed to the pool, and a file opened before the failing
+  read is closed on the pool. In every other step, each hit's metadata and
+  body are exactly those stored.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
