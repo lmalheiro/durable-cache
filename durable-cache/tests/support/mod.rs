@@ -419,7 +419,7 @@ pub fn temp_entries(cache: &FsCache, key: &CacheKey) -> Vec<String> {
 /// Read a canonical record file back from disk, independently re-deriving
 /// segment offsets from the header rather than reusing any writer-side
 /// state, and check it exactly as a real reader would
-/// (SDS-LAYOUT.OBJECTFILE-01). Returns the header and the body bytes.
+/// (SDS-LAYOUT.OBJECTFILE-02). Returns the header and the body bytes.
 pub fn read_and_validate_record(path: &Path) -> (RecordHeader, Vec<u8>) {
     let all = std::fs::read(path).unwrap();
     let header = header_of(&all);

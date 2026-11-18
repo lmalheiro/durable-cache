@@ -23,7 +23,7 @@
     "across runs. Those are exempt from the 'this baselined test now passes,",
     "remove it' notice, since a passing run does not make the entry stale.",
     "",
-    "2026-09-15: partial-use-headers and partial-use-stored-headers were removed from this allowlist. Both failed only because the backend did not advertise HandleHit::can_seek, so pingora-cache served a full 200 instead of assembling a 206; SDS-LAYOUT.OBJECTFILE-01 now requires seek support on a published record, and both tests pass."
+    "2026-09-15: partial-use-headers and partial-use-stored-headers were removed from this allowlist. Both failed only because the backend did not advertise HandleHit::can_seek, so pingora-cache served a full 200 instead of assembling a 206; SDS-LAYOUT.OBJECTFILE-02 now requires seek support on a published record, and both tests pass."
   ],
   "allowed_required_failures": {
     "304-etag-update-response-Content-Foo": "pingora-cache merges only a fixed 5-header allowlist from a 304 (cache-control, expires, cache-tag, cdn-cache-control, etag) rather than RFC 9111 4.3.4's 'update its header fields with the header fields provided in the 304' -- pingora-cache/src/lib.rs:1096 revalidate_merge_header. Arbitrary headers are never merged, upstream of Storage entirely: the backend persists verbatim whatever CacheMeta update_meta is handed (proven by compat_validators.rs / compat_freshness.rs).",

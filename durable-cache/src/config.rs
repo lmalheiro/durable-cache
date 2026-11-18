@@ -13,7 +13,7 @@ pub enum Durability {
     /// Each store's temporary is synchronised to stable storage before it
     /// is renamed into place. A host crash or a power loss can lose a
     /// store, but never leave a published record over data that is not on
-    /// stable storage (HLR-PERSISTENCE.CRASHSAFE-01). The default.
+    /// stable storage (HLR-PERSISTENCE.CRASHSAFE-02). The default.
     #[default]
     Strict,
     /// Stores are renamed into place without being synchronised first, so
@@ -25,7 +25,7 @@ pub enum Durability {
     /// a lookup reports as a miss, or zero-filled under a valid header,
     /// which a hit would serve. A file system that records a file's length
     /// only once its data is written leaves only short ones; on one that
-    /// may record the length first, HLR-PERSISTENCE.CRASHSAFE-01 accepts the
+    /// may record the length first, HLR-PERSISTENCE.CRASHSAFE-02 accepts the
     /// zero-filled ones in this mode, unless the discard after a host
     /// restart is switched on (see
     /// [`FsCacheConfig::with_discard_after_host_restart`], Linux only).
@@ -127,7 +127,7 @@ impl FsCacheConfig {
     /// the device. A backend constructed under another boot that finds a
     /// marker starts empty (FDS-PERSISTENCE.CRASHDISCARD-01). That keeps a
     /// host crash from making the cache serve content that differs from
-    /// what was stored, on any file system (HLR-PERSISTENCE.CRASHSAFE-01),
+    /// what was stored, on any file system (HLR-PERSISTENCE.CRASHSAFE-02),
     /// at the cost of the whole cache after a host crash, or after any host
     /// restart that the integrator did not prepare by calling `flush` once
     /// its server had stopped.
@@ -210,7 +210,7 @@ impl FsCacheConfig {
     }
 
     /// The metadata region's capacity for segments of `segments_len` bytes:
-    /// the segments plus the headroom (SDS-LAYOUT.OBJECTFILE-01).
+    /// the segments plus the headroom (SDS-LAYOUT.OBJECTFILE-02).
     #[inline]
     pub(crate) fn meta_capacity_for(&self, segments_len: u32) -> u32 {
         segments_len.saturating_add(self.meta_headroom)

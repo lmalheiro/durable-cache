@@ -324,7 +324,7 @@ async fn process_entry(
     // between its two writes. Every in-place update holds the key's
     // publication lock from its first write to its last, so one more read
     // under that lock finds the record whole, and only a mismatch then is
-    // damage. A lookup re-reads the same way (SDS-LAYOUT.OBJECTFILE-01), but
+    // damage. A lookup re-reads the same way (SDS-LAYOUT.OBJECTFILE-02), but
     // it reports damage as a miss and leaves the file for a later store of
     // the key to replace; the scan reclaims the file, since that store may
     // never come. The read changes nothing, so it takes the lock alone,

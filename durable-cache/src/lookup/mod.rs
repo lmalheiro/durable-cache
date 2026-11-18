@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `Storage::lookup` / `HandleHit` — the read side (SDS-LAYOUT.OBJECTFILE-01,
+//! `Storage::lookup` / `HandleHit` — the read side (SDS-LAYOUT.OBJECTFILE-02,
 //! FDS-STORAGE.PARTIAL-01).
 //!
 //! A store in flight takes precedence over the published record: a lookup
@@ -48,7 +48,7 @@ use crate::nowait;
 use crate::record::{self, ReadError, RecordError, RecordKind};
 use crate::{blocking, key_codec, FsCache};
 
-// IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-01 -- the read
+// IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-02 -- the read
 // protocol (validation order, retry, optional body check, seek); miss.rs's
 // IMP-STORAGE.PUBLISH-02 covers the writer half.
 // IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
@@ -261,7 +261,7 @@ fn open_published(
     // Every in-place update holds the key's publication lock from its first
     // write to its last, so one more read under that lock finds the record
     // whole, before or after the update, and a mismatch then is damage
-    // (SDS-LAYOUT.OBJECTFILE-01). A lookup changes nothing, so it takes the
+    // (SDS-LAYOUT.OBJECTFILE-02). A lookup changes nothing, so it takes the
     // lock alone, without entering the read-only gate, and it holds no
     // change meanwhile, as `ChangeLocks::lock_key` requires.
     if matches!(&read, Err(ReadError::Record(e)) if e.is_retryable()) {

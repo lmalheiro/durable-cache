@@ -118,7 +118,7 @@ individually-identified cases (e.g.\ \texttt{freshness-max-age},
           (\path{partial-store-partial-reuse-partial},
           \path{partial-use-stored-headers}) exercise combining partial
           content, which neither backend does
-          (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}), so both runs report them
+          (\reqref{FRE-COMPLIANCE.INCOMPLETE-02}), so both runs report them
           alike.
     \item Cacheable non-\texttt{200} status codes, whose faithful round trip
           \reqref{FRE-COMPLIANCE.HEADERS-01} requires ---
@@ -152,7 +152,7 @@ following remain the sole responsibility of the corresponding hand-written
           behaviour, \reqref{FRE-COMPLIANCE.READERISOLATION-01},
           \reqref{FRE-COMPLIANCE.METAATOMIC-01},
           \reqref{FRE-COMPLIANCE.PARTIALABORT-01}, and
-          \reqref{FRE-COMPLIANCE.INCOMPLETE-01}'s crash/torn-write handling
+          \reqref{FRE-COMPLIANCE.INCOMPLETE-02}'s crash/torn-write handling
           --- cache-tests treats the cache as an HTTP black box; it cannot
           orchestrate concurrent same-key access, pause a store mid-body, or
           kill the process under test mid-store.

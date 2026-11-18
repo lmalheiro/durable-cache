@@ -42,7 +42,7 @@
 
   A process exit leaves the host's own state intact; what the cache owes
   after the host itself crashes or loses power is stated separately in
-  \reqref{HLR-PERSISTENCE.CRASHSAFE-01}, and the size of the cache it can
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-02}, and the size of the cache it can
   hold in \reqref{HLR-PERSISTENCE.CAPACITY-01}.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
@@ -68,7 +68,7 @@
   \reqcover{verify}{TC}
 \end{requirement}
 
-\begin{requirement}{HLR-PERSISTENCE.CRASHSAFE-01}[draft][stakeholderRequirement]{Host-crash safety}
+\begin{requirement}{HLR-PERSISTENCE.CRASHSAFE-02}[draft][stakeholderRequirement]{Host-crash safety}
 
   \localreqdiagram*{hlr07}{\reqid}{\reqdesc}
 
@@ -209,14 +209,14 @@
   \texttt{pingora-cache}, on the same host under the same load.
 
   By default the cache keeps what it has stored across a host crash or a
-  power loss, as far as \reqref{HLR-PERSISTENCE.CRASHSAFE-01} lets it, and
+  power loss, as far as \reqref{HLR-PERSISTENCE.CRASHSAFE-02} lets it, and
   pays for that by waiting, for each store, until the storage device confirms
   that it holds the data. On a consumer SSD that wait limits stores to about
   a sixth of the in-memory rate. A deployment may prefer losing some of its
   objects in a host crash, and fetching them again from the origin, to
   storing at the device's pace; this configuration is for it.
   \reqref{HLR-PERSISTENCE.DURABLE-01} holds in it unchanged: a process exit
-  loses nothing. \reqref{HLR-PERSISTENCE.CRASHSAFE-01} holds with the
+  loses nothing. \reqref{HLR-PERSISTENCE.CRASHSAFE-02} holds with the
   exception it states for this configuration: on a file system that may
   record a file's length before its data, a host crash can make the cache
   serve content that differs from what was stored, unless the integrator

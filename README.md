@@ -593,7 +593,7 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
   `Durability::NoStoreSync`, a crash can also leave a zero-filled body to be
   served, on a file system that may record a file's length before its data,
   unless the discard after a host restart is on (see **Durability** above,
-  and HLR-PERSISTENCE.CRASHSAFE-01).
+  and HLR-PERSISTENCE.CRASHSAFE-02).
 - **Storage that honours flushes and keeps data intact.** Those guarantees
   assume the storage stack makes a flush it acknowledges durable, as a
   local disk does; a device or virtualisation layer that acknowledges
@@ -604,7 +604,7 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
   bcachefs) or on `dm-integrity`, which turn a corrupted block into a read
   error, and the read ends with an error. ext4 and XFS checksum only their
   own metadata. The `body-crc-verify` feature can log mismatches, but only
-  after the corrupted bytes have been sent (HLR-PERSISTENCE.CRASHSAFE-01).
+  after the corrupted bytes have been sent (HLR-PERSISTENCE.CRASHSAFE-02).
 - **One host, a local file system.** Every process sharing a cache directory
   must run on the same host, with the directory on a local file system: each
   backend instance holds a lease in the directory's `writers/`, locked with

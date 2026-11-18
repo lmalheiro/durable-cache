@@ -441,7 +441,7 @@
 
   The backend meets this without tying its records to any Pingora release.
   Each record carries the backend's \emph{own} format version
-  (\reqref{SDS-LAYOUT.OBJECTFILE-01}), which the backend changes whenever
+  (\reqref{SDS-LAYOUT.OBJECTFILE-02}), which the backend changes whenever
   records written before would no longer be read back exactly: a change to
   its own layout, or a \texttt{pingora-cache} release whose encoding of the
   metadata differs. A record of another version is reported as a miss. A
@@ -485,7 +485,7 @@
   exactly this purpose.\footnote{\pgsrc{pingora-cache/src/storage.rs}{357}{\texttt{HandleMiss::write\_body}}
   returns \texttt{Result<()>}.} A store that has failed this way is
   incomplete, so what lookups may then observe of it is governed by
-  \reqref{FRE-COMPLIANCE.INCOMPLETE-01}, and the storage it consumed by
+  \reqref{FRE-COMPLIANCE.INCOMPLETE-02}, and the storage it consumed by
   \reqref{FRE-COMPAT.ABORTSPACE-01}.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
@@ -496,7 +496,7 @@
   \reqcover{verify}{TC}
 
   \deriveReqt{HLR-COMPAT.PINGORA-01}
-  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-02}
   \trace{FRE-COMPAT.ABORTSPACE-01}
 \end{requirement}
 
@@ -533,7 +533,7 @@
   \reqcover{verify}{TC}
 
   \deriveReqt{HLR-EFFICIENCY.SPACE-01}
-  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-02}
   \trace{FRE-COMPAT.WRITEFAIL-01}
   \trace{FRE-COMPAT.STARTRECLAIM-01}
 \end{requirement}
@@ -566,7 +566,7 @@
   \reqcover{verify}{TC}
 
   \deriveReqt{HLR-EFFICIENCY.SPACE-01}
-  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-02}
   \trace{FRE-COMPAT.ABORTSPACE-01}
 \end{requirement}
 
@@ -655,7 +655,7 @@
   \begin{itemize}
     \item \emph{Atomic publication.} A file being written when the process
       dies is not rolled back, so object publication must be made atomic
-      and leftovers discarded (\reqref{FRE-COMPLIANCE.INCOMPLETE-01},
+      and leftovers discarded (\reqref{FRE-COMPLIANCE.INCOMPLETE-02},
       \reqref{FRE-COMPAT.STARTRECLAIM-01},
       \reqref{ADR-STORAGE.ATOMICPUBLISH-01}).
     \item \emph{Crash safety of its own writes.} A write can be reported as
@@ -791,7 +791,7 @@
   \satisfy{FRE-COMPAT.UNSIZED-01}
   \trace{FRE-COMPAT.HOTUPGRADE-01}
   \trace{FRE-COMPAT.EVICTION-01}
-  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-02}
 \end{requirement}
 
 \begin{requirement}{REQ-EFFICIENCY.FRAGMENTATION-01}[draft][requirement]{Sub-linear small-object overhead}

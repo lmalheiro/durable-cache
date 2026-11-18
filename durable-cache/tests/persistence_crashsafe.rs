@@ -6,7 +6,7 @@
 //! In every state a host crash or power loss could leave on disk, the
 //! restarted cache serves no object whose content differs from what was
 //! stored and no object whose purge it had acknowledged; objects that did
-//! not survive are misses (HLR-PERSISTENCE.CRASHSAFE-01).
+//! not survive are misses (HLR-PERSISTENCE.CRASHSAFE-02).
 //!
 //! The test case's setup replays a device-mapper `log-writes` device to
 //! every flush and FUA point. That needs root, a scratch block device, and

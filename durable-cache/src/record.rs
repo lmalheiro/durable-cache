@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The read-time validation of a record (SDS-LAYOUT.OBJECTFILE-01), which
+//! The read-time validation of a record (SDS-LAYOUT.OBJECTFILE-02), which
 //! makes a damaged or foreign record a miss rather than a corrupt read. The
 //! format it validates, the header included, is defined in `format.rs`.
 
@@ -15,7 +15,7 @@ use zerocopy::{FromZeros, IntoBytes};
 use crate::format::{self, HeaderError, RecordHeader};
 
 /// How many times a reader reads the header and metadata region on a CRC
-/// mismatch: the first read plus three more (SDS-LAYOUT.OBJECTFILE-01,
+/// mismatch: the first read plus three more (SDS-LAYOUT.OBJECTFILE-02,
 /// "Metadata updates in place"). A lookup then reads once more holding the
 /// key's publication lock (see `crate::lookup`); a caller that already holds
 /// it takes a mismatch that persists as damage.
@@ -128,7 +128,7 @@ pub enum ReadError {
 }
 
 /// Read and validate one record, once, in the order
-/// SDS-LAYOUT.OBJECTFILE-01 specifies: magic and version, `header_crc`,
+/// SDS-LAYOUT.OBJECTFILE-02 specifies: magic and version, `header_crc`,
 /// `meta_crc`, the stored key (when `expected_key` is given), and, for a
 /// published record, the exact length.
 ///

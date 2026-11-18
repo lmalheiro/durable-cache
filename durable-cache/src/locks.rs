@@ -243,7 +243,7 @@ impl ChangeLocks {
     /// progress, and none can begin. A lookup takes it to read once more a
     /// record whose checksums kept failing: every in-place metadata update
     /// holds this lock from its first write to its last, so under it the
-    /// record is whole (SDS-LAYOUT.OBJECTFILE-01). A reader changes nothing,
+    /// record is whole (SDS-LAYOUT.OBJECTFILE-02). A reader changes nothing,
     /// so it does not enter the read-only gate, and this works once the
     /// backend is read-only too.
     ///

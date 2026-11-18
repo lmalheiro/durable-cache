@@ -223,7 +223,7 @@
   \refine{SDS-LAYOUT.SHARDING-01}
 \end{requirement}
 
-\begin{requirement}{SDS-LAYOUT.OBJECTFILE-01}[draft][structuralRequirement]{Object-file record layout}
+\begin{requirement}{SDS-LAYOUT.OBJECTFILE-02}[draft][structuralRequirement]{Object-file record layout}
 
   \localreqdiagram*{dsn2}{\reqid}{\reqdesc}
 
@@ -410,7 +410,7 @@
   sizes any read by a length the header carries, so no header, however
   forged, makes it allocate or read beyond the file. Any failure --- a truncated
   file, a torn or foreign record --- makes the lookup report a miss, so a
-  damaged record is never served (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}). The
+  damaged record is never served (\reqref{FRE-COMPLIANCE.INCOMPLETE-02}). The
   reader does not remove the file: a later store of the same key replaces it,
   and the restart-time scan reclaims it (\reqref{FDS-STORAGE.RECLAIM-01}),
   so a lookup never unlinks a path whose content may have changed since it
@@ -469,7 +469,7 @@
     the computed body offset plus \texttt{body\_len} --- is indistinguishable
     from any other: the lookup reports a miss and leaves the file for a later
     store or the restart-time scan
-    (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}, verified by
+    (\reqref{FRE-COMPLIANCE.INCOMPLETE-02}, verified by
     \reqref{TC-LAYOUT.OBJECTFILE-01}). On a hit, the already-validated file
     stays open and every \texttt{read\_body} call simply advances through
     it; unlike Figure~\ref{fig:fds-publish-seq}'s concurrent
@@ -657,7 +657,7 @@
   \refine{ADR-STORAGE.OBJECTFILE-01}
   \refine{ADR-PERSISTENCE.DURABILITY-02}
   \satisfy{FRE-COMPAT.FORMATUPGRADE-01}
-  \satisfy{FRE-COMPLIANCE.INCOMPLETE-01}
+  \satisfy{FRE-COMPLIANCE.INCOMPLETE-02}
   \satisfy{FRE-COMPLIANCE.HEADERS-01}
   \satisfy{FRE-COMPLIANCE.FRESHNESS-01}
   \satisfy{FRE-COMPLIANCE.VALIDATORS-01}
@@ -678,7 +678,7 @@
 
   \localreqdiagram*{dsn3}{\reqid}{\reqdesc}
 
-  The key segment of a record (\reqref{SDS-LAYOUT.OBJECTFILE-01}) holds the
+  The key segment of a record (\reqref{SDS-LAYOUT.OBJECTFILE-02}) holds the
   object's
   \texttt{CompactCacheKey}\footnote{\pgsrc{pingora-cache/src/key.rs}{153}{\texttt{CompactCacheKey}}.}
   as these fields, in this order, with no padding between them:
@@ -721,7 +721,7 @@
   record whose key does not decode.}
   \reqcover{satisfy}{IMP}
 
-  \refine{SDS-LAYOUT.OBJECTFILE-01}
+  \refine{SDS-LAYOUT.OBJECTFILE-02}
   \trace{FDS-EVICTION.STARTUP-01}
   \trace{FDS-STORAGE.RECLAIM-01}
   \trace{FRE-COMPAT.FORMATUPGRADE-01}
@@ -743,7 +743,7 @@
   force every integrator to reimplement the same scan-and-reconcile
   sequencing below, and doing so from outside the crate would mean exposing
   the private on-disk object-record format this specification keeps
-  internal everywhere else (\reqref{SDS-LAYOUT.OBJECTFILE-01}); folding it
+  internal everywhere else (\reqref{SDS-LAYOUT.OBJECTFILE-02}); folding it
   into a custom \texttt{EvictionManager} was already ruled out by
   \reqref{ADR-COMPAT.EVICTION-01}, which adopted the stock manager
   specifically to avoid building one. The cost is a second public API

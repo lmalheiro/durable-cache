@@ -5,7 +5,7 @@
 //!
 //! Steps 1-2 (full-read fidelity at boundary sizes, including a restart)
 //! and step 3 (seeked reads, which a published record supports per
-//! SDS-LAYOUT.OBJECTFILE-01) are covered directly against
+//! SDS-LAYOUT.OBJECTFILE-02) are covered directly against
 //! `Storage::get_miss_handler`/`lookup` -- no HTTP needed.
 
 use bytes::Bytes;

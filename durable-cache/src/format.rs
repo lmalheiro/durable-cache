@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The on-disk record format (SDS-LAYOUT.OBJECTFILE-01): the record header,
+//! The on-disk record format (SDS-LAYOUT.OBJECTFILE-02): the record header,
 //! the offsets derived from it, how a valid header is built and sealed, and
 //! what the metadata checksum covers.
 //!
@@ -15,9 +15,9 @@ use std::mem::{offset_of, size_of};
 use zerocopy::little_endian::{U32, U64};
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
-// IMP-LAYOUT.OBJECTFILE-01: satisfy SDS-LAYOUT.OBJECTFILE-01
+// IMP-LAYOUT.OBJECTFILE-02: satisfy SDS-LAYOUT.OBJECTFILE-02
 /// The fixed record header, exactly as it lies on disk
-/// (SDS-LAYOUT.OBJECTFILE-01, "Record header: one aligned block").
+/// (SDS-LAYOUT.OBJECTFILE-02, "Record header: one aligned block").
 ///
 /// The backend works on it directly: a record's first [`HEADER_LEN`] bytes
 /// are read straight into it and written straight from it. The fields are
@@ -261,7 +261,7 @@ impl RecordHeader {
     }
 
     /// Offset of the metadata region: right after the key, unpadded
-    /// (SDS-LAYOUT.OBJECTFILE-01, "Segment placement"). Nothing reads the
+    /// (SDS-LAYOUT.OBJECTFILE-02, "Segment placement"). Nothing reads the
     /// region in place, so its segments need no alignment.
     pub fn meta_region_offset(&self) -> usize {
         KEY_OFFSET + self.key_len.get() as usize

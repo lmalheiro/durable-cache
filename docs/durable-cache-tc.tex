@@ -104,7 +104,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
       lines, a non-\texttt{200} status code, header sets of eight consecutive
       serialised sizes stored with no metadata headroom, so that each
       metadata region ends exactly where the body begins
-      (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and a header set many times the
+      (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and a header set many times the
       default headroom.
     \item Look the object up; then restart the process and look it up again.
   \end{enumerate}
@@ -138,7 +138,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
       receives header metadata only as a \texttt{CacheMeta} and body bytes
       only through \texttt{write\_body}, with no trailer parameter.
     \item Inspect the on-disk record format
-      (\reqref{SDS-LAYOUT.OBJECTFILE-01}) and its implementation: confirm
+      (\reqref{SDS-LAYOUT.OBJECTFILE-02}) and its implementation: confirm
       that the stored header segment is written only from the
       \texttt{CacheMeta} handed to the store or metadata update, and that no
       other section could supply fields to it.
@@ -481,7 +481,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqcover{satisfy}{IMP}
 
-  \verify{FRE-COMPLIANCE.INCOMPLETE-01}
+  \verify{FRE-COMPLIANCE.INCOMPLETE-02}
   \verify{FRE-COMPLIANCE.PARTIALABORT-01}
   \verify{FRE-COMPAT.STARTRECLAIM-01}
 \end{requirement}
@@ -575,8 +575,8 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqcover{satisfy}{IMP}
 
-  \verify{HLR-PERSISTENCE.CRASHSAFE-01}
-  \verify{FRE-COMPLIANCE.INCOMPLETE-01}
+  \verify{HLR-PERSISTENCE.CRASHSAFE-02}
+  \verify{FRE-COMPLIANCE.INCOMPLETE-02}
   \verify{FRE-COMPLIANCE.PURGEDURABLE-01}
   \verify{FRE-COMPLIANCE.METAPERSIST-01}
 \end{requirement}
@@ -1482,7 +1482,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
   interface by a test harness, with the record's file checked so a write in
   place can be told from a new file, and with the metadata headroom
-  configurable per instance (\reqref{SDS-LAYOUT.OBJECTFILE-01}).
+  configurable per instance (\reqref{SDS-LAYOUT.OBJECTFILE-02}).
 
   \textbf{Steps:}
   \begin{enumerate}
@@ -1513,7 +1513,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
       expire an existing object.
     \item Expire a stored key whose record has been damaged, truncated,
       rewritten under another format version, or withdrawn
-      (\reqref{SDS-LAYOUT.OBJECTFILE-01}), comparing the record's bytes
+      (\reqref{SDS-LAYOUT.OBJECTFILE-02}), comparing the record's bytes
       before and after; look the key up.
   \end{enumerate}
 
@@ -1923,7 +1923,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqcover{satisfy}{IMP}
 
-  \verify{SDS-LAYOUT.OBJECTFILE-01}
+  \verify{SDS-LAYOUT.OBJECTFILE-02}
 \end{requirement}
 
 \begin{requirement}{TC-LAYOUT.KEYSEGMENT-01}[draft][verify]{Key segment round trip}

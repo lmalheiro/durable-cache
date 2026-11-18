@@ -109,7 +109,7 @@
   made atomic under concurrent same-key writes and process crashes.}
   \reqexpect{refine}{FDS-STORAGE.METAUPDATE-01}{Specify how a metadata update
   that grows past its record's reserved capacity is handled.}
-  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-01}{Specify the concrete on-disk
+  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-02}{Specify the concrete on-disk
   record format --- header, key, metadata region, and body placement ---
   that realises the combined metadata-and-body file.}
 
@@ -125,10 +125,10 @@
   \textbf{Context:} After the host crashes or loses power, the cache may lose
   objects but must never serve content that differs from what was stored,
   nor an object whose purge it acknowledged
-  (\reqref{HLR-PERSISTENCE.CRASHSAFE-01}, whose one exception, for stores
+  (\reqref{HLR-PERSISTENCE.CRASHSAFE-02}, whose one exception, for stores
   that do not wait for the storage device, concerns the configuration
   \reqref{ADR-PERSISTENCE.UNSYNCED-01} adds); the same bar applies to
-  incomplete stores (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}), acknowledged
+  incomplete stores (\reqref{FRE-COMPLIANCE.INCOMPLETE-02}), acknowledged
   purges (\reqref{FRE-COMPLIANCE.PURGEDURABLE-01}), and applied metadata updates
   (\reqref{FRE-COMPLIANCE.METAPERSIST-01}). A plain file system
   (\reqref{ADR-PERSISTENCE.MECHANISM-01}) gives none of this for free. A
@@ -184,7 +184,7 @@
       has delivered the whole body, and still ends the read normally.
   \end{itemize}
   With synchronised publication, on a storage stack that honours flush
-  requests as \reqref{HLR-PERSISTENCE.CRASHSAFE-01} assumes, a host crash
+  requests as \reqref{HLR-PERSISTENCE.CRASHSAFE-02} assumes, a host crash
   cannot leave a published name over wrong bytes. Integrity at rest --- media
   corruption, or a device that acknowledges a flush it has not made --- is
   the storage layer's: a data-checksumming file system (ZFS, btrfs,
@@ -201,9 +201,9 @@
       first-time rename can commit ahead of its data, leaving a canonical name
       over a zero-filled or short body whose header still passes validation,
       and an unsynced purge \texttt{unlink} can be lost, bringing a purged
-      object back --- both forbidden by \reqref{HLR-PERSISTENCE.CRASHSAFE-01}.
+      object back --- both forbidden by \reqref{HLR-PERSISTENCE.CRASHSAFE-02}.
       \reqref{ADR-PERSISTENCE.UNSYNCED-01} offers it for stores, as an
-      option, within the exception \reqref{HLR-PERSISTENCE.CRASHSAFE-01}
+      option, within the exception \reqref{HLR-PERSISTENCE.CRASHSAFE-02}
       makes for it: on a file system that may record a file's length before
       its data, a zero-filled body can then be served unless the cache is
       discarded after a host restart.
@@ -217,7 +217,7 @@
       \texttt{pingora-cache} sends each chunk downstream as the backend
       returns it, so a client given a \texttt{Content-Length} has the whole
       corrupted body by then and the error can only cut the connection. On
-      the storage stack \reqref{HLR-PERSISTENCE.CRASHSAFE-01} assumes it never
+      the storage stack \reqref{HLR-PERSISTENCE.CRASHSAFE-02} assumes it never
       fires, yet it costs a CRC-32C pass per read, about as much CPU as the
       read itself when the body is in the page cache (13.3 against 12.3
       microseconds per 64~KiB chunk, measured on an 8-core host).
@@ -225,7 +225,7 @@
       after every rename and sync every in-place metadata update, so no
       completed store or update is ever lost. Rejected: it roughly doubles the
       synchronous cost of a store and adds one to every revalidation, to
-      prevent only losses \reqref{HLR-PERSISTENCE.CRASHSAFE-01} explicitly
+      prevent only losses \reqref{HLR-PERSISTENCE.CRASHSAFE-02} explicitly
       accepts --- the kind of cost \reqref{HLR-SCOPE.V1-02} asks not to pay
       without a requirement behind it.
   \end{itemize}
@@ -263,13 +263,13 @@
   to evict is not synchronised.}
   \reqexpect{refine}{FDS-STORAGE.METAUPDATE-01}{Specify that a metadata
   update, written in place or withdrawing the record, is not synced.}
-  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-01}{Add the body CRC-32C field
+  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-02}{Add the body CRC-32C field
   and how it is computed and recorded, and specify the optional read-time
   check that logs a mismatch at the end of a whole-body read.}
 
   \refine{ADR-PERSISTENCE.MECHANISM-01}
-  \satisfy{HLR-PERSISTENCE.CRASHSAFE-01}
-  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \satisfy{HLR-PERSISTENCE.CRASHSAFE-02}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-02}
   \trace{FRE-COMPLIANCE.PURGEDURABLE-01}
   \trace{FRE-COMPLIANCE.METAPERSIST-01}
 \end{requirement}
@@ -290,12 +290,12 @@
   46--49\,\%. \reqref{HLR-PERFORMANCE.STORERATE-01} asks for 40\,\% where the
   integrator accepts losing stored objects in a host crash;
   \reqref{HLR-PERSISTENCE.DURABLE-01} still holds there, and
-  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} with the exception it makes for that
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-02} with the exception it makes for that
   configuration.
 
   Without the sync, a host crash can leave a published name over a body that
   never reached the device. The read validation of
-  \reqref{SDS-LAYOUT.OBJECTFILE-01} catches the common case: it compares a
+  \reqref{SDS-LAYOUT.OBJECTFILE-02} catches the common case: it compares a
   record's file length with the record length its header gives, and a file
   system that records a file's length only once its data is written --- ext4
   in its default \texttt{data=ordered} mode, XFS, btrfs --- leaves such a
@@ -398,7 +398,7 @@
       keeps a host crash from making the cache serve content that differs
       from what was stored: elsewhere, a host crash can leave a body of
       zeros to be served, which the exception of
-      \reqref{HLR-PERSISTENCE.CRASHSAFE-01} accepts.
+      \reqref{HLR-PERSISTENCE.CRASHSAFE-02} accepts.
     \item[+] With the discard on, a host crash cannot make the cache serve
       content that differs from what was stored, on any file system.
     \item[--] With the discard on, a host crash, or any host restart the
@@ -420,7 +420,7 @@
 
   \refine{ADR-PERSISTENCE.DURABILITY-02}
   \satisfy{HLR-PERFORMANCE.STORERATE-01}
-  \satisfy{HLR-PERSISTENCE.CRASHSAFE-01}
+  \satisfy{HLR-PERSISTENCE.CRASHSAFE-02}
   \trace{HLR-PERSISTENCE.DURABLE-01}
   \trace{HLR-SCOPE.V1-02}
 \end{requirement}
@@ -444,7 +444,7 @@
   off by default, turns on the discard after a host restart. Off, the
   backend writes no marker, and after a host crash it keeps every record the
   file system recovered: the read validation of
-  \reqref{SDS-LAYOUT.OBJECTFILE-01}, which compares a published record's
+  \reqref{SDS-LAYOUT.OBJECTFILE-02}, which compares a published record's
   file length with the record length its header gives, reports each record
   left short or empty as a miss, and the restart scan reclaims it
   (\reqref{FDS-STORAGE.RECLAIM-01}). The switch,
@@ -506,7 +506,7 @@
   \reqcover{verify}{TC}
 
   \refine{ADR-PERSISTENCE.UNSYNCED-01}
-  \satisfy{HLR-PERSISTENCE.CRASHSAFE-01}
+  \satisfy{HLR-PERSISTENCE.CRASHSAFE-02}
   \trace{FDS-STORAGE.PUBLISH-02}
   \trace{FDS-COMPAT.READONLY-02}
   \trace{FDS-LAYOUT.STARTUP-01}
@@ -523,7 +523,7 @@
   (\reqref{ADR-STORAGE.OBJECTFILE-01}), yet every write must be durably
   published as a complete object or not at all, including when several
   same-key writers race (\reqref{FRE-COMPAT.CONCURRENT-01}), a store is
-  abandoned half-way (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}), or a new
+  abandoned half-way (\reqref{FRE-COMPLIANCE.INCOMPLETE-02}), or a new
   response replaces an old one that readers still hold
   (\reqref{FRE-COMPLIANCE.REPLACE-01},
   \reqref{FRE-COMPLIANCE.READERISOLATION-01}). The question is how a completed
@@ -602,7 +602,7 @@
 
   \refine{ADR-STORAGE.OBJECTFILE-01}
   \satisfy{FRE-COMPAT.CONCURRENT-01}
-  \satisfy{FRE-COMPLIANCE.INCOMPLETE-01}
+  \satisfy{FRE-COMPLIANCE.INCOMPLETE-02}
   \satisfy{FRE-COMPLIANCE.REPLACE-01}
   \satisfy{FRE-COMPLIANCE.READERISOLATION-01}
   \trace{ADR-STORAGE.RECLAIM-01}
@@ -746,7 +746,7 @@
   counter and retry.
 
   The backend shall then write the record header, key, and metadata region
-  (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and append each body chunk as
+  (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and append each body chunk as
   \texttt{write\_body} delivers it, folding it into a running CRC-32C unless
   the build leaves out the \texttt{body-crc} feature
   (\reqref{ADR-PERSISTENCE.DURABILITY-02}). While the temporary grows it is
@@ -779,7 +779,7 @@
   publication} --- the point at which it becomes visible by name to a scan, a
   restart, or a peer process --- not the first moment it can be read, and an
   incomplete store therefore never becomes visible under the canonical name
-  (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}). Once the backend is read-only
+  (\reqref{FRE-COMPLIANCE.INCOMPLETE-02}). Once the backend is read-only
   (\reqref{FDS-COMPAT.READONLY-02}), \texttt{finish} instead removes the
   temporary rather than renaming it, while still reporting success, so the
   draining process's request completes normally. WHEN an invalidating purge
@@ -883,7 +883,7 @@
   \refine{ADR-STORAGE.WRITERID-01}
   \refine{ADR-PERSISTENCE.DURABILITY-02}
   \satisfy{FRE-COMPAT.CONCURRENT-01}
-  \satisfy{FRE-COMPLIANCE.INCOMPLETE-01}
+  \satisfy{FRE-COMPLIANCE.INCOMPLETE-02}
   \satisfy{FRE-COMPLIANCE.REPLACE-01}
   \satisfy{FRE-COMPLIANCE.READERISOLATION-01}
   \satisfy{FRE-COMPAT.WRITEFAIL-01}
@@ -917,7 +917,7 @@
   first consult the registry. If one or more stores of the key that no
   invalidating purge has ended are in flight, it shall return a partial hit
   backed by the most recently opened of them; otherwise it shall look up the
-  published record as \reqref{SDS-LAYOUT.OBJECTFILE-01} specifies. The
+  published record as \reqref{SDS-LAYOUT.OBJECTFILE-02} specifies. The
   request writing a store reads its body back through a lookup that names
   the store by its streaming write
   tag;\footnote{\pgsrc{pingora-cache/src/storage.rs}{166}{\texttt{Storage::lookup\_streaming\_write}},
@@ -969,13 +969,13 @@
 
   Each object's metadata sits in a region of its record, right after the key
   and ahead of the body (\reqref{ADR-STORAGE.OBJECTFILE-01}), whose capacity
-  the record's header holds (\reqref{SDS-LAYOUT.OBJECTFILE-01}). Unlike the body, whose length is
+  the record's header holds (\reqref{SDS-LAYOUT.OBJECTFILE-02}). Unlike the body, whose length is
   unknown until the stream ends (\reqref{FRE-COMPAT.UNSIZED-01}), the
   metadata's exact size is already known when the record is created ---
   \texttt{CacheMeta} is fully serialised at that point --- so the region
   reserves exactly that size plus a \emph{configurable} amount of growth
   headroom beyond it --- 512 bytes by default
-  (\reqref{SDS-LAYOUT.OBJECTFILE-01}) --- to anticipate a later metadata
+  (\reqref{SDS-LAYOUT.OBJECTFILE-02}) --- to anticipate a later metadata
   update. How much
   headroom to reserve is deployment-tunable, trading reserved-but-possibly-unused
   space against how often a later update fits in place; a
@@ -1004,7 +1004,7 @@
   (\reqref{FRE-COMPLIANCE.METAABSENT-01}) rather than updating it. A
   \emph{reader} re-reads instead, and takes the lock only for a last read of
   a record whose checksums kept failing, which then finds it whole
-  (\reqref{SDS-LAYOUT.OBJECTFILE-01}).
+  (\reqref{SDS-LAYOUT.OBJECTFILE-02}).
 
   Before either path, still holding the lock, the backend shall check that
   the record holds the response the update freshens. \texttt{pingora-cache}
@@ -1026,7 +1026,7 @@
   whether because the growth is unusually large or because no headroom was
   configured --- the backend shall withdraw the record instead, so that the
   next request fetches the object again: it rewrites only the record's
-  header, marked withdrawn (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and reports
+  header, marked withdrawn (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and reports
   the update not applied. Every lookup then misses, and Pingora fetches the
   object from the origin and stores it, through a store whose region is
   sized for the new metadata and whose rename replaces the file
@@ -1113,7 +1113,7 @@
   The in-place path writes into the region a lookup may be reading, and a
   withdrawal into the header; a lookup that catches either mid-write is
   protected by the read-side validation and retry that
-  \reqref{SDS-LAYOUT.OBJECTFILE-01} specifies, so it observes the
+  \reqref{SDS-LAYOUT.OBJECTFILE-02} specifies, so it observes the
   pre-update metadata, the post-update metadata, or a miss once the record
   is withdrawn, never a mixture. The body is untouched on either path.
 
@@ -1834,7 +1834,7 @@
   its full length on
   disk.\footnote{\pgsrc{pingora-cache/src/lib.rs}{1901}{\texttt{purge\_impl}}
   makes no eviction call for an \texttt{Expired} outcome.} A record
-  that fails the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-01}
+  that fails the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-02}
   specifies --- damaged, truncated, of another format version, or withdrawn
   --- is reported \texttt{NotFound}, matching what a lookup of that same
   record would report, and is left as it is for
@@ -2029,7 +2029,7 @@
   pool, so an operation costs a single handoff rather than one per syscall:
   \begin{itemize}
     \item \texttt{lookup} --- opening the record, validating it, and
-      deserialising its metadata (\reqref{SDS-LAYOUT.OBJECTFILE-01}), for a
+      deserialising its metadata (\reqref{SDS-LAYOUT.OBJECTFILE-02}), for a
       published record and for a partial hit's temporary alike
       (\reqref{FDS-STORAGE.PARTIAL-01});
     \item \texttt{get\_miss\_handler} --- creating the per-writer temporary
@@ -2172,7 +2172,7 @@
   \reqref{ADR-STORAGE.EXECUTOR-02} decides --- a lookup whole, with the file
   the worker opened, and a body read from the bytes it already holds; so too when a lookup finds anything but a hit or a missing file ---
   a checksum mismatch, whose re-read takes the key's publication lock
-  (\reqref{SDS-LAYOUT.OBJECTFILE-01}), a record that fails validation, an
+  (\reqref{SDS-LAYOUT.OBJECTFILE-02}), a record that fails validation, an
   error --- so that the pool answers it as it always has. Open records and
   temporaries with \texttt{O\_NOATIME}, on the worker and on the pool.
   Every other operation stays on the pool: stores, purges, metadata updates,
@@ -2291,7 +2291,7 @@
   \texttt{openat2} and \texttt{RESOLVE\_CACHED}. It reads the file's first
   16~KiB with \texttt{preadv2} and \texttt{RWF\_NOWAIT}, keeping what the
   page cache holds of them when that covers the header, key and metadata
-  region (\reqref{SDS-LAYOUT.OBJECTFILE-01}). A body read reads its chunk the
+  region (\reqref{SDS-LAYOUT.OBJECTFILE-02}). A body read reads its chunk the
   same way, into memory not zeroed first. A read that returns less than it
   asked for is continued from where it stopped. A call \emph{fails rather
   than waits} when it returns \texttt{EAGAIN}. \texttt{fstat}, which reads
@@ -2301,7 +2301,7 @@
   does it again from the start with the file the worker opened, when a call
   fails rather than waits, and whenever the worker finds anything but a hit
   or a missing file: a record whose checksums do not match, whose re-read
-  under the key's publication lock (\reqref{SDS-LAYOUT.OBJECTFILE-01}) waits
+  under the key's publication lock (\reqref{SDS-LAYOUT.OBJECTFILE-02}) waits
   for an in-place update to end; a record that fails validation, which the
   pool reports as a miss; an error, which the pool reports with its context.
   A path that the kernel's lookup cache knows not to exist is a miss,
@@ -2349,7 +2349,7 @@
   \satisfy{HLR-PERFORMANCE.HITRATE-01}
   \trace{FDS-STORAGE.EXECUTOR-02}
   \trace{FDS-STORAGE.PARTIAL-01}
-  \trace{SDS-LAYOUT.OBJECTFILE-01}
+  \trace{SDS-LAYOUT.OBJECTFILE-02}
 \end{requirement}
 
 \begin{requirement}{ADR-STORAGE.RECLAIM-01}[draft][designConstraint]{Reclaim via the restart-time scan}
@@ -2383,7 +2383,7 @@
   restart-time scan, rather than by any separate mechanism --- together with
   two kinds of canonical record the scan meets anyway: one that fails
   validation, which lookups report as a miss but deliberately leave in place
-  (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and one a metadata update withdrew
+  (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and one a metadata update withdrew
   (\reqref{FDS-STORAGE.METAUPDATE-01}). While Eviction Recovery walks the tree
   to reconstruct the eviction manager, the same walk also classifies and
   removes them, at the cost of no second full-tree traversal and no new
@@ -2537,21 +2537,21 @@
   matter.
 
   \textbf{Damaged or foreign canonical records.} A canonical record that fails
-  the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-01} specifies ---
+  the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-02} specifies ---
   including one of another format version --- cannot be admitted, since its key or freshness
   deadline cannot be trusted or decoded. Lookups report such records as
   misses but leave them in place, so the procedure shall reclaim them. A
   record whose checksums mismatch on every read may instead be an in-place
   metadata update caught between its two writes: before treating it as
   damaged, the procedure reads it once more holding the key's publication
-  lock, as a lookup does (\reqref{SDS-LAYOUT.OBJECTFILE-01}), and admits it
+  lock, as a lookup does (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and admits it
   if that read finds it whole.
 
   \textbf{Misplaced records.} A canonical record found anywhere but at the
   path its stored key names (\reqref{SDS-LAYOUT.SHARDING-01}) --- put there by
   hand, or by a defect --- is never served: a lookup of its key reads the
   other path, and a lookup of the key this path belongs to finds a key
-  mismatch (\reqref{SDS-LAYOUT.OBJECTFILE-01}). The procedure shall reclaim
+  mismatch (\reqref{SDS-LAYOUT.OBJECTFILE-02}). The procedure shall reclaim
   it, counted as damaged.
 
   \textbf{Withdrawn records.} A canonical record that a metadata update
@@ -2562,7 +2562,7 @@
 
   \textbf{Variants.} A canonical record whose own stored key carries a
   variance (\texttt{Some(variance)} in its \texttt{CompactCacheKey}) is a
-  secondary slot (\reqref{SDS-LAYOUT.OBJECTFILE-01}). The procedure shall
+  secondary slot (\reqref{SDS-LAYOUT.OBJECTFILE-02}). The procedure shall
   admit it like any other valid record, whatever its sibling primary holds
   (\reqref{ADR-STORAGE.RECLAIM-01}). It never opens that primary: a lookup
   can reach a variant for which no primary was ever stored, and a variant no
@@ -2674,7 +2674,7 @@
   \trace{FDS-EVICTION.STARTUP-01}
   \trace{FDS-STORAGE.PUBLISH-02}
   \trace{FDS-STORAGE.PURGE-01}
-  \trace{SDS-LAYOUT.OBJECTFILE-01}
+  \trace{SDS-LAYOUT.OBJECTFILE-02}
   \trace{SDS-LAYOUT.SHARDING-01}
   \trace{FRE-COMPAT.HOTUPGRADE-01}
 \end{requirement}
@@ -3320,7 +3320,7 @@
 
   This requirement derives from two parents: \reqref{HLR-COMPLIANCE.RFC-01}
   for freshening semantics, which an update lost on an orderly restart would
-  undo, and \reqref{HLR-PERSISTENCE.CRASHSAFE-01} for what a host crash may
+  undo, and \reqref{HLR-PERSISTENCE.CRASHSAFE-02} for what a host crash may
   and may not do to an applied update.
 
   \textit{Basis: \rfcsec{9111}{4.3.4}[freshening stored responses upon
@@ -3332,7 +3332,7 @@
   \reqcover{satisfy}{FDS}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
-  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-01}
+  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-02}
   \trace{FRE-COMPLIANCE.REVALIDATION-01}
 \end{requirement}
 
@@ -3577,11 +3577,11 @@
   requirement. No one asked for the object's removal: the cache chose to
   drop it for space, and an evicted object back after a crash is still a
   valid response, which the cache may serve or evict again. It is not a
-  purge in \reqref{HLR-PERSISTENCE.CRASHSAFE-01}'s sense.
+  purge in \reqref{HLR-PERSISTENCE.CRASHSAFE-02}'s sense.
 
   This requirement derives from two parents: \reqref{HLR-COMPLIANCE.RFC-01}
   for invalidation semantics, which a purged object reappearing would undo,
-  and \reqref{HLR-PERSISTENCE.CRASHSAFE-01} for the durability of an
+  and \reqref{HLR-PERSISTENCE.CRASHSAFE-02} for the durability of an
   acknowledged purge across a host crash.
 
   \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses].}
@@ -3592,16 +3592,16 @@
   \reqcover{satisfy}{FDS}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
-  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-01}
+  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-02}
   \trace{FRE-COMPLIANCE.PURGE-01}
 \end{requirement}
 
-\begin{requirement}{FRE-COMPLIANCE.INCOMPLETE-01}[draft][functionalRequirement]{Never serve incomplete responses}
+\begin{requirement}{FRE-COMPLIANCE.INCOMPLETE-02}[draft][functionalRequirement]{Never serve incomplete responses}
 
   \localreqdiagram*{rfr09}{\reqid}{\reqdesc}
 
   IF a store does not complete --- it aborts, or its process or host crashes
-  first --- or, wherever \reqref{HLR-PERSISTENCE.CRASHSAFE-01} forbids
+  first --- or, wherever \reqref{HLR-PERSISTENCE.CRASHSAFE-02} forbids
   serving content that differs from what was stored, a host crash occurs
   before a completed store's content has reached stable storage, THEN the
   storage backend shall serve that store's object on no later lookup, in the
@@ -3624,7 +3624,7 @@
 
   This requirement derives from two parents: \reqref{HLR-COMPLIANCE.RFC-01}
   for the RFC~9111 rule on storing incomplete responses, and
-  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} for extending it to content a host
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-02} for extending it to content a host
   crash leaves incomplete. Where that parent accepts content that differs
   from what was stored, so does this requirement for a store that had
   completed: a host crash there can leave its object at its full length,
@@ -3640,7 +3640,7 @@
   \reqcover{satisfy}{FDS}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
-  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-01}
+  \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-02}
 \end{requirement}
 
 \begin{requirement}{FRE-COMPLIANCE.PARTIALABORT-01}[draft][functionalRequirement]{Aborted partial hits end in error}
@@ -3666,7 +3666,7 @@
   \reqcover{satisfy}{FDS}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
-  \trace{FRE-COMPLIANCE.INCOMPLETE-01}
+  \trace{FRE-COMPLIANCE.INCOMPLETE-02}
   \trace{FRE-COMPAT.STREAMING-01}
 \end{requirement}
 

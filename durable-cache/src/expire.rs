@@ -107,7 +107,7 @@ pub(crate) fn expire_key(cache: &'static FsCache, key: &CompactCacheKey) -> Resu
 /// Read the record, or `None` when nothing readable is stored under the
 /// key.
 ///
-/// A record that fails the read-time validation SDS-LAYOUT.OBJECTFILE-01
+/// A record that fails the read-time validation SDS-LAYOUT.OBJECTFILE-02
 /// specifies — damaged, truncated, written under another format version, or
 /// withdrawn — is reported absent, which is exactly what a lookup of the
 /// same record reports, and is left for the restart scan
