@@ -130,8 +130,8 @@ fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
     streaming_does_not_stall_the_worker(std::convert::identity);
 }
 
-/// The same with page-cache reads switched off: the partial hit opens and
-/// reads the store's temporary on the blocking pool.
+/// Step 8: the same with page-cache reads switched off, so the partial hit
+/// opens and reads the store's temporary on the blocking pool.
 #[cfg(target_os = "linux")]
 #[test]
 fn tc_storage_executor_01_streaming_through_the_pool_does_not_stall_the_worker() {

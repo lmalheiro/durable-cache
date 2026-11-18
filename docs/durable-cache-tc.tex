@@ -1312,8 +1312,8 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \textbf{Objective:} The per-writer temporary and rename publish atomically,
   keep concurrent writers isolated, never reuse another writer's file,
-  synchronise before publishing, report the record size, and publish nothing
-  once the backend is read-only.
+  synchronise before publishing unless stores are unsynchronised, report the
+  record size, and publish nothing once the backend is read-only.
 
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
   interface, with system calls traced (e.g.\ with \texttt{strace}).
@@ -1342,6 +1342,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
     \item Inspect the implementation and the tree layout: every temporary is
       created in the directory of its canonical name, and no code path
       publishes by copying.
+    \item With stores unsynchronised (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}),
+      make the synchronisation of a temporary fail, and let a store run to
+      completion.
   \end{enumerate}
 
   \textbf{Expected result:} Concurrent writers' bytes are never interleaved;
@@ -1353,7 +1356,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
   in-flight readers of the old object; the store completing once the backend
   is read-only
   reports success, publishes nothing, and leaves no temporary; the inspection
-  finds no cross-directory staging and no copy-based publication.
+  finds no cross-directory staging and no copy-based publication; and the
+  unsynchronised store publishes its whole record without reaching the
+  synchronisation made to fail.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
@@ -1576,10 +1581,14 @@ stock run is the reference: a test that fails on both runs is a limitation of
       notes each turn it gets, over records whose files are all removed
       between the walk and the ghost-entry check, and note each call the
       scan makes into the eviction manager.
+    \item On Linux, repeat the scenario of step 3 with page-cache reads
+      switched off (\reqref{FDS-STORAGE.PAGECACHE-01}): the partial hit then
+      opens and reads the store's temporary on the blocking pool, as it does
+      on other systems.
   \end{enumerate}
 
-  \textbf{Expected result:} In both scenarios the longest gap stays within a
-  bound far below what one operation's file I/O costs, showing the worker was
+  \textbf{Expected result:} In both scenarios, and in step 8, the longest gap
+  stays within a bound far below what one operation's file I/O costs, showing the worker was
   free throughout; the inline build exceeds it in both, so the measurement is
   shown to detect the condition it exists to rule out. While the restart
   scan frees a file it removed, the other task on its worker answers, and it

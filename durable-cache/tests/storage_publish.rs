@@ -193,9 +193,9 @@ async fn tc_storage_publish_01_synchronises_before_renaming() {
     );
 }
 
-/// With `Durability::NoStoreSync`, a store is renamed into place without
-/// being synchronised: a fault injected at the synchronisation is never
-/// reached, and the record is published whole.
+/// Step 8: with `Durability::NoStoreSync`, a store is renamed into place
+/// without being synchronised: a fault injected at the synchronisation is
+/// never reached, and the record is published whole.
 #[tokio::test]
 async fn tc_storage_publish_01_no_store_sync_publishes_without_synchronising() {
     let tmp = support::tempdir();
