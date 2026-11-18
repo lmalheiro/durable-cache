@@ -32,7 +32,7 @@ use crate::{format, key_codec, metrics, FsCache};
 
 /// What [`prepare`] hands to [`update_meta`]: owned, `Send` data, so the
 /// update's file work can run on the blocking pool
-/// (FDS-STORAGE.EXECUTOR-01).
+/// (FDS-STORAGE.EXECUTOR-02).
 pub(crate) struct PreparedUpdate {
     name: String,
     key_bytes: Vec<u8>,
@@ -228,7 +228,7 @@ fn shortfall(parsed: &ParsedRecord, new_internal: &[u8], new_header: &[u8]) -> R
 ///
 /// Nothing is synchronised: after a host crash the region holds the old
 /// metadata, the new, or a torn mixture, and the metadata checksum rejects
-/// the mixture (ADR-PERSISTENCE.DURABILITY-01).
+/// the mixture (ADR-PERSISTENCE.DURABILITY-02).
 pub(crate) fn write_in_place(
     file: &File,
     parsed: &ParsedRecord,
@@ -275,7 +275,7 @@ pub(crate) fn write_in_place(
 ///
 /// Nothing is synchronised, as for an update in place: a withdrawal that a
 /// host crash undoes leaves the record as it was, stale, and the next
-/// revalidation withdraws it again (ADR-PERSISTENCE.DURABILITY-01).
+/// revalidation withdraws it again (ADR-PERSISTENCE.DURABILITY-02).
 fn withdraw(file: &File, parsed: &ParsedRecord, #[cfg(test)] cache: &FsCache) -> Result<()> {
     let mut header = parsed.header;
     header.edit().withdraw();

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The hot-upgrade helper (FDS-COMPAT.READONLY-01): the two halves a hot
+//! The hot-upgrade helper (FDS-COMPAT.READONLY-02): the two halves a hot
 //! upgrade needs, installed on a Pingora server.
 //!
 //! - **Outgoing side.** The upgrade watcher subscribes to the server's
@@ -46,7 +46,7 @@ use tokio::sync::{broadcast, Mutex};
 
 use crate::{recovery, FsCache};
 
-// IMP-COMPAT.READONLY-01: satisfy FDS-COMPAT.READONLY-01
+// IMP-COMPAT.READONLY-02: satisfy FDS-COMPAT.READONLY-02
 
 /// How long the incoming process of a hot upgrade waits, once it holds the
 /// listening sockets, before its restart scan: until the outgoing process's

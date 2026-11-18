@@ -1,6 +1,6 @@
 ---
 name: reqman-context
-description: Use this skill to fetch a requirement's full text, relationships, and coverage status from this project's traceability data (reqman.sty/reqman-report.py) instead of parsing .tex files, and to trace a change to the requirements -- which ones changed since a revision, whether each took a new version, and what each change reaches. Trigger whenever a task references a requirement ID (e.g. DFR-COMPAT.UNSIZED-01, HLR-SCOPE.V1-01, ADR-EFFICIENCY.SINGLE-01), needs requirements discovered by keyword before reading or editing related specs/code, or changes a requirement.
+description: Use this skill to fetch a requirement's full text, relationships, and coverage status from this project's traceability data (reqman.sty/reqman-report.py) instead of parsing .tex files, and to trace a change to the requirements -- which ones changed since a revision, whether each took a new version, and what each change reaches. Trigger whenever a task references a requirement ID (e.g. DFR-COMPAT.UNSIZED-01, HLR-SCOPE.V1-02, ADR-EFFICIENCY.SINGLE-01), needs requirements discovered by keyword before reading or editing related specs/code, or changes a requirement.
 allowed-tools: Bash(python3 ./.claude/skills/reqman-context/scripts/reqman-context.py:*)
 ---
 
@@ -99,7 +99,7 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> --ri
 Example, from the repository root:
 
 ```bash
-python3 ./.claude/skills/reqman-context/scripts/reqman-context.py durable-cache HLR-SCOPE.V1-01
+python3 ./.claude/skills/reqman-context/scripts/reqman-context.py durable-cache HLR-SCOPE.V1-02
 ```
 
 ## Getting oriented

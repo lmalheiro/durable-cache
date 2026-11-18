@@ -151,7 +151,7 @@ fn cache_checking_bodies(check: bool) -> (&'static durable_cache::FsCache, tempf
 /// Step 6: a body corrupted without changing its length is served as it lies
 /// on disk, and its read ends normally: serving a hit does not check the
 /// body, whose integrity at rest is the storage layer's
-/// (ADR-PERSISTENCE.DURABILITY-01). With the read-time body check switched
+/// (ADR-PERSISTENCE.DURABILITY-02). With the read-time body check switched
 /// on (`body-crc-verify`), the whole read still ends normally and the
 /// mismatch is logged as an error naming the file.
 #[tokio::test]

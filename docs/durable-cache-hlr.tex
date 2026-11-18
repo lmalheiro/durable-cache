@@ -1,4 +1,4 @@
-\begin{requirement}{HLR-SCOPE.V1-01}[draft][stakeholderRequirement]{Fewest mechanisms, measured gains}
+\begin{requirement}{HLR-SCOPE.V1-02}[draft][stakeholderRequirement]{Fewest mechanisms, measured gains}
 
   \localreqdiagram*{hlr05}{\reqid}{\reqdesc}
 
@@ -88,7 +88,7 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{ADR-PERSISTENCE.DURABILITY-01}{Decide which writes are
+  \reqexpect{satisfy}{ADR-PERSISTENCE.DURABILITY-02}{Decide which writes are
   synchronised to stable storage, and what integrity check detects the rest,
   so that a host crash can lose objects but never make the cache serve
   corrupted or purged content.}
@@ -172,7 +172,7 @@
 
   The 60\,\% figure is proposed from measurements made on 22~October~2026
   with the benchmark of \reqref{TC-PERFORMANCE.HITRATE-01}: with every file
-  operation on the blocking pool (\reqref{ADR-STORAGE.EXECUTOR-01}), hits ran
+  operation on the blocking pool (\reqref{ADR-STORAGE.EXECUTOR-02}), hits ran
   at 48--62\,\% of \texttt{MemCache}; with the reads the page cache answers
   kept on the worker (\reqref{ADR-STORAGE.PAGECACHE-01}), at 69--113\,\%.
 

@@ -4,7 +4,7 @@
 //! TC-COMPLIANCE.REPLACE-01 — Stores replace atomically.
 //!
 //! `tc_compliance_replace_01_reader_of_old_object_undisturbed_during_replacement`
-//! below also closes TC-STORAGE.PUBLISH-01's step 5 (the identical
+//! below also closes TC-STORAGE.PUBLISH-02's step 5 (the identical
 //! scenario under a different TC ID); that TC's own IMP marker is in
 //! `storage_publish.rs`.
 

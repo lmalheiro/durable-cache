@@ -8,7 +8,7 @@
 //! fields (`fresh_until`, `created`, `updated`, the two stale-serving
 //! durations) before `pingora-cache` ever calls this backend --- that
 //! interpretation is `pingora_cache::filters::resp_cacheable`'s job, not
-//! this backend's (FDS-STORAGE.PUBLISH-01's own boundary: the backend
+//! this backend's (FDS-STORAGE.PUBLISH-02's own boundary: the backend
 //! stores whatever `CacheMeta`/`ResponseHeader` it is given, verbatim). So
 //! this TC's obligation on the backend is to round-trip those numeric
 //! fields exactly, and the raw header bytes they were derived from

@@ -72,7 +72,7 @@ pub struct RecordHeader {
     /// CRC-32C over the body's `body_len` bytes, folded chunk by chunk as the
     /// body streams in and patched in by `finish`; zero in a build without
     /// the `body-crc` feature. Serving a hit does not check it: integrity at
-    /// rest is the storage layer's (ADR-PERSISTENCE.DURABILITY-01). A build
+    /// rest is the storage layer's (ADR-PERSISTENCE.DURABILITY-02). A build
     /// with `body-crc-verify` can switch on a check that logs a mismatch once
     /// a read has delivered the whole body from its start. A stored zero is
     /// never checked.

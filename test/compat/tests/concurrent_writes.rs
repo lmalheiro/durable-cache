@@ -6,7 +6,7 @@
 //! Fully covered directly against `Storage`, same-process (step 4's own
 //! scenario), across
 //! `durable-cache/tests/storage_publish.rs`'s
-//! `tc_storage_publish_01_concurrent_same_key_writers_stay_isolated`
+//! `tc_storage_publish_02_concurrent_same_key_writers_stay_isolated`
 //! (steps 1, 3, 4) and `durable-cache/tests/compat_concurrent.rs`
 //! (step 2: lookups while both stores are in flight). This file is the
 //! end-to-end HTTP-level version through `fixture-proxy`, left unimplemented.

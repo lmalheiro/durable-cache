@@ -34,7 +34,7 @@ pub enum PausePoint {
     /// reclaimable, before the key's publication lock is taken to unlink
     /// it, or before a stopped writer's temporary is unlinked. Path: the
     /// record or the temporary (TC-STORAGE.RECLAIM-01,
-    /// TC-STORAGE.EXECUTOR-01).
+    /// TC-STORAGE.EXECUTOR-02).
     ReclaimBeforeUnlink,
     /// Restart scan: after a record is read, before it is checked again
     /// under the key's publication lock and admitted to the eviction
@@ -46,7 +46,7 @@ pub enum PausePoint {
     /// Restart scan: after every record has been read, before the pass that
     /// removes from the eviction manager the objects whose record has gone
     /// meanwhile. Path: the cache root (TC-EVICTION.RECONSTRUCT-01,
-    /// TC-STORAGE.EXECUTOR-01, TC-COMPAT.HOTUPGRADE-01).
+    /// TC-STORAGE.EXECUTOR-02, TC-COMPAT.HOTUPGRADE-01).
     RecoverBeforeGhostPass,
     /// Metadata update: before the key's publication lock is taken, and so
     /// before the record is opened. A test holds an update here to replace
@@ -73,18 +73,18 @@ pub enum PausePoint {
     /// released (for a purge, after the directory is also synchronised),
     /// before the record that the rename replaced, or the unlink removed, is
     /// closed. That close frees the record. Path: the canonical record
-    /// (TC-STORAGE.EXECUTOR-01).
+    /// (TC-STORAGE.EXECUTOR-02).
     BeforeFreeingOldRecord,
     /// Store and hit: just before a dropped handler's file is closed, when
     /// the file has no name left, so that the close frees it: on the
     /// blocking pool inside a runtime, or where the handler is dropped
     /// outside one. The file is an aborted or discarded store's temporary, a
     /// record replaced or purged while a hit read it, or a removed temporary
-    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-01).
+    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-02).
     BeforeClosingRemovedFile,
     /// Store: at the start of its miss handler's `Drop`. A test holds a store
     /// here to see on which thread its handler is dropped. Path: the
-    /// canonical record (FDS-STORAGE.EXECUTOR-01).
+    /// canonical record (FDS-STORAGE.EXECUTOR-02).
     StoreDropping,
 }
 
@@ -96,7 +96,7 @@ pub enum FaultPoint {
     /// or a body chunk (TC-COMPAT.WRITEFAIL-01, TC-COMPAT.ABORTSPACE-01).
     WriteTemp,
     /// Synchronising a store's temporary before it is renamed into place
-    /// (TC-COMPAT.WRITEFAIL-01, TC-STORAGE.PUBLISH-01).
+    /// (TC-COMPAT.WRITEFAIL-01, TC-STORAGE.PUBLISH-02).
     SyncTemp,
     /// Renaming a store's temporary over its canonical name
     /// (TC-COMPAT.WRITEFAIL-01).

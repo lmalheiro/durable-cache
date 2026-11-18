@@ -35,7 +35,7 @@ use crate::{key_codec, metaupdate, FsCache};
 /// Expire the record at `key`'s canonical path. The caller resolves the
 /// `PurgeTarget` (an `Identified` one names a generation this backend never
 /// issued, ADR-COMPAT.ENTRYID-01) and hands an owned key in, so this can run
-/// on the blocking pool (FDS-STORAGE.EXECUTOR-01).
+/// on the blocking pool (FDS-STORAGE.EXECUTOR-02).
 ///
 /// Synchronous throughout, as `update_meta` is: the read-only gate and the
 /// publication lock are held across the durable part, and neither may be

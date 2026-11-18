@@ -83,7 +83,7 @@ struct Cli {
     storage: StorageBackend,
 
     /// `FsCacheConfig::with_durability`: what a store does to make itself
-    /// durable before it is published (ADR-PERSISTENCE.DURABILITY-01).
+    /// durable before it is published (ADR-PERSISTENCE.DURABILITY-02).
     #[arg(long, value_enum, default_value_t = DurabilityMode::Strict)]
     durability: DurabilityMode,
 
@@ -113,7 +113,7 @@ struct Cli {
 
     /// `ServerConf::max_blocking_threads`: the most threads the proxy
     /// service's blocking pool may run, where the backend does its file
-    /// I/O (FDS-STORAGE.EXECUTOR-01). Unset keeps Tokio's 512; a benchmark
+    /// I/O (FDS-STORAGE.EXECUTOR-02). Unset keeps Tokio's 512; a benchmark
     /// varies it to see what the pool's size costs.
     #[arg(long)]
     max_blocking_threads: Option<usize>,
@@ -207,7 +207,7 @@ fn main() {
         RecoveryMode::Block => {
             // The outgoing half of the hot-upgrade helper alone: it makes
             // the backend read-only when this process receives the upgrade
-            // signal (FDS-COMPAT.READONLY-01), which TC-COMPAT.HOTUPGRADE-01
+            // signal (FDS-COMPAT.READONLY-02), which TC-COMPAT.HOTUPGRADE-01
             // exercises, while the recovery runs here.
             server.add_service(test_support::read_only_on_upgrade(&server, fs_cache));
             // A dedicated runtime for the recovery step: `main` itself is

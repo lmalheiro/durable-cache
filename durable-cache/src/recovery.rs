@@ -101,7 +101,7 @@ impl RecoveryReport {
 /// orphaned files as it goes. Safe to call on a first launch, a post-crash
 /// restart, or the incoming side of a hot upgrade; on the last, the
 /// integrator calls it only once its server holds the listening sockets and
-/// the upgrade's close timeout has elapsed (FDS-COMPAT.READONLY-01).
+/// the upgrade's close timeout has elapsed (FDS-COMPAT.READONLY-02).
 ///
 /// A directory or file the scan cannot list or read is skipped, named in a
 /// warning and counted: one bad entry must not stop the admission of the
@@ -120,7 +120,7 @@ pub async fn recover(
 /// [`recover`], stopping at its next entry once `shutting_down` returns
 /// true: the server the hot-upgrade helper runs it in has started shutting
 /// down, and the eviction manager it fills is about to be discarded
-/// (FDS-COMPAT.READONLY-01). Its summary line then says so.
+/// (FDS-COMPAT.READONLY-02). Its summary line then says so.
 pub(crate) async fn recover_until(
     cache: &'static FsCache,
     eviction: &dyn EvictionManager,
@@ -176,7 +176,7 @@ pub(crate) async fn recover_until(
                 // entry -- a header, a key, and a metadata region -- is the
                 // unit of work between yields, so a scan of a large tree
                 // never holds the worker for more than a single record's
-                // reads (FDS-STORAGE.EXECUTOR-01). Unlike the request path,
+                // reads (FDS-STORAGE.EXECUTOR-02). Unlike the request path,
                 // those reads stay on the worker rather than move to the
                 // blocking pool: `recover` borrows the eviction manager for
                 // the length of the call, so its admissions cannot be sent
@@ -184,7 +184,7 @@ pub(crate) async fn recover_until(
                 // since freeing a large file takes far longer.
                 tokio::task::yield_now().await;
                 // Once read-only, the scan neither reclaims nor admits
-                // (FDS-COMPAT.READONLY-01), so it stops rather than read the
+                // (FDS-COMPAT.READONLY-02), so it stops rather than read the
                 // rest of the tree for nothing. It stops as well once its
                 // server starts shutting down, for the eviction manager it
                 // fills is about to be discarded.
@@ -224,7 +224,7 @@ pub(crate) async fn recover_until(
     // by the live path.
     for entry in &admitted {
         // One record at a time, as in the walk: the pass visits every
-        // record the walk admitted (FDS-STORAGE.EXECUTOR-01).
+        // record the walk admitted (FDS-STORAGE.EXECUTOR-02).
         tokio::task::yield_now().await;
         // And, as in the walk, not once the server is shutting down.
         if shutting_down() {
@@ -237,7 +237,7 @@ pub(crate) async fn recover_until(
         };
         // Once read-only, the remaining checks are skipped: the eviction
         // manager they would update is discarded when the process exits
-        // (FDS-COMPAT.READONLY-01).
+        // (FDS-COMPAT.READONLY-02).
         let Some(_change) = cache.locks.begin(&name) else {
             break;
         };
@@ -476,7 +476,7 @@ fn skip(report: &mut RecoveryReport, path: &Path, e: &dyn std::fmt::Display) {
 /// Reclaim the canonical record at `path`, read from `file`, on the
 /// blocking pool: the unlink, under the key's lock, and then the close that
 /// frees the record, which for a large record would hold the worker far
-/// longer than reading it did (FDS-STORAGE.EXECUTOR-01). Returns the bytes
+/// longer than reading it did (FDS-STORAGE.EXECUTOR-02). Returns the bytes
 /// reclaimed, or `None` if the record was left in place.
 async fn reclaim_record(
     cache: &'static FsCache,

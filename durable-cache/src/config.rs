@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 /// What a store does to make itself durable before it is published
-/// (ADR-PERSISTENCE.DURABILITY-01, ADR-PERSISTENCE.UNSYNCED-01). Invalidating
+/// (ADR-PERSISTENCE.DURABILITY-02, ADR-PERSISTENCE.UNSYNCED-01). Invalidating
 /// purges are synchronised whichever is chosen. More modes may come, so a
 /// `match` outside this crate needs a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -102,7 +102,7 @@ impl FsCacheConfig {
     /// the pool. A lookup opens the record with `openat2` and
     /// `RESOLVE_CACHED` (Linux 5.12), and reads it with `preadv2` and
     /// `RWF_NOWAIT`, which fail rather than wait for the device; whatever
-    /// would wait goes to the pool (FDS-STORAGE.EXECUTOR-01).
+    /// would wait goes to the pool (FDS-STORAGE.EXECUTOR-02).
     ///
     /// The kernel and the cache's file system must support both calls:
     /// ext4, XFS and btrfs do; as of Linux 6.12, tmpfs and overlayfs, the
@@ -144,7 +144,7 @@ impl FsCacheConfig {
     /// on. When on, a read that delivers a whole body from its start
     /// compares it with the CRC-32C stored with it, and on a mismatch logs
     /// an error naming the file; the response still ends normally, since
-    /// every byte has already been delivered (ADR-PERSISTENCE.DURABILITY-01).
+    /// every byte has already been delivered (ADR-PERSISTENCE.DURABILITY-02).
     #[cfg(feature = "body-crc-verify")]
     pub fn with_body_crc_verification(mut self, enabled: bool) -> Self {
         self.body_crc_verification = enabled;

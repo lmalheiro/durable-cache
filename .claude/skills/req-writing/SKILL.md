@@ -169,9 +169,21 @@ Also apply while drafting, though it's a semantic (not linguistic) check:
 ID grammar (enforced by reqman.sty, build error on violation):
 `TYPE-SUBID-VERSION` with **exactly two hyphens**; SUBID may contain dots for
 hierarchy. Examples: `DFR-LEND-01`, `HLR-PERSISTENCE.DURABLE-00`,
-`REQ-ENCRYPT.ANONYMOUS-02`. Convention: VERSION starts at `00` or `01` and
-increments on breaking rewrites; pick the next free SUBID by searching existing
-IDs first (`reqman-context --search`).
+`REQ-ENCRYPT.ANONYMOUS-02`. Convention: VERSION starts at `00` or `01`, and
+an existing requirement whose text a pull request changes takes the next one
+(`HLR-PERSISTENCE.DURABLE-01` would become `HLR-PERSISTENCE.DURABLE-02`): any
+change to what it says, its title included, not only a rewrite. A change of
+status alone does not count, nor does an edit that only follows another
+requirement's new version. Within one pull request the VERSION goes up once,
+however many edits it makes. Every reference follows the new ID: the
+relationship macros, `\reqref` and `\reqexpect` in the specification, code
+comments, the `IMP` markers named after it, and, for a test case, its
+`IMP-TC.` marker and its `tc_<id>_…` test functions, which
+`cargo xtask trace-report` matches by ID. Then trace what the change reaches,
+`reqman-context --changed <base of the pull request>`, and review each
+artifact it lists (that skill's "Tracing a change"): one that no longer holds
+changes too, and takes a new version of its own. Pick the next free SUBID by
+searching existing IDs first (`reqman-context --search`).
 
 Status is one of `draft` (default), `proposed`, `accepted`, `deprecated`,
 `implemented`. New requirements are born `draft` unless the user says

@@ -244,7 +244,7 @@
   procedure so the incoming process's eviction view is rebuilt from durably
   published objects only, keeping the shared cache consistent across the
   hot-upgrade window.}
-  \reqexpect{satisfy}{FDS-COMPAT.READONLY-01}{Specify how the outgoing process's
+  \reqexpect{satisfy}{FDS-COMPAT.READONLY-02}{Specify how the outgoing process's
   backend learns that the upgrade signal arrived, what it suppresses from
   then on (publication, purge, metadata update) and how it reports refusals,
   and how the incoming process's reconstruction is ordered relative to the
@@ -490,7 +490,7 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-01}{Specify how a failed write or
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-02}{Specify how a failed write or
   sync during a store is detected and surfaced as an error from the call in
   progress, and that the store is then treated as aborted.}
   \reqcover{verify}{TC}
@@ -526,7 +526,7 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-01}{Specify that an unpublished
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-02}{Specify that an unpublished
   store's per-writer temporary is unlinked when the store ends, including on
   abort and on write failure, and how attached partial-hit readers are
   unaffected by that unlink.}
@@ -637,7 +637,7 @@
 
   \textbf{Context:} The cache must persist HTTP response headers and bodies
   durably (\reqref{HLR-PERSISTENCE.DURABLE-01}), this is a first version
-  that favours the simplest adequate design (\reqref{HLR-SCOPE.V1-01}),
+  that favours the simplest adequate design (\reqref{HLR-SCOPE.V1-02}),
   and a body arrives as a stream whose total length is unknown when
   writing begins (\reqref{FRE-COMPAT.UNSIZED-01}). The choice is
   twofold: which storage substrate to build on, and whether to adopt an
@@ -663,7 +663,7 @@
       and syncing a file does not persist the directory entry that names
       it, so a host crash can lose or reorder writes. Which writes the
       backend synchronises, and what it detects instead, is its own
-      decision (\reqref{ADR-PERSISTENCE.DURABILITY-01}). The eviction
+      decision (\reqref{ADR-PERSISTENCE.DURABILITY-02}). The eviction
       manager's state is not among them: it is rebuilt from the object
       records themselves at every start (\reqref{ADR-COMPAT.EVICTION-01}).
     \item \emph{Hot-upgrade coordination.} During a hot upgrade two
@@ -675,7 +675,7 @@
   Every alternative below leaves those same coordination duties open ---
   or solves them at the price of a poorer fit for streaming bodies and a
   larger integration surface --- which is why the simplest substrate wins
-  for a first version (\reqref{HLR-SCOPE.V1-01}). Appendix~\ref{app:alternatives}
+  for a first version (\reqref{HLR-SCOPE.V1-02}). Appendix~\ref{app:alternatives}
   examines each alternative in detail.
 
   \textbf{Alternatives considered:}
@@ -747,7 +747,7 @@
       management and an on-device directory from scratch. That
       combination is the largest bespoke surface of any alternative
       here, and the antithesis of a first version
-      (\reqref{HLR-SCOPE.V1-01}).
+      (\reqref{HLR-SCOPE.V1-02}).
   \end{itemize}
 
   \textbf{Consequences:}
@@ -787,7 +787,7 @@
 
   \satisfy{HLR-PERSISTENCE.DURABLE-01}
   \satisfy{HLR-PERSISTENCE.CAPACITY-01}
-  \satisfy{HLR-SCOPE.V1-01}
+  \satisfy{HLR-SCOPE.V1-02}
   \satisfy{FRE-COMPAT.UNSIZED-01}
   \trace{FRE-COMPAT.HOTUPGRADE-01}
   \trace{FRE-COMPAT.EVICTION-01}

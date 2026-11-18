@@ -104,7 +104,7 @@ identical path.
 
 **Threads.** Every storage operation is a blocking syscall, so the backend
 runs each one on tokio's blocking pool rather than on the worker Pingora
-polls it from (`ADR-STORAGE.EXECUTOR-01`). That matters because
+polls it from (`ADR-STORAGE.EXECUTOR-02`). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
 or a page-cache miss. On Linux, hits are the exception when what they read
@@ -170,7 +170,7 @@ A process crash or a restart still loses nothing, but a host crash may lose
 the stores the kernel had not written back yet. It may also leave a record
 whose body never reached the device: a short one is a miss, but one
 zero-filled under a valid header would be served
-(ADR-PERSISTENCE.DURABILITY-01). File systems that record a file's length
+(ADR-PERSISTENCE.DURABILITY-02). File systems that record a file's length
 only once its data is written, as ext4 in its default `data=ordered` mode,
 XFS and btrfs do, leave such a record short. For the others, which may
 record the length first, `FsCacheConfig::with_discard_after_host_restart(true)`
@@ -192,7 +192,7 @@ check available, switched on with
 `FsCacheConfig::with_body_crc_verification(true)`: a read that delivered a
 whole body whose checksum does not match logs an error naming the file, and
 the response still ends normally, since every byte has already gone to the
-client (ADR-PERSISTENCE.DURABILITY-01).
+client (ADR-PERSISTENCE.DURABILITY-02).
 
 `metrics` (off by default) registers the backend's counters
 in the `prometheus` default registry, where the Pingora exporter,
@@ -509,7 +509,7 @@ them are inspired by SysML® requirement diagrams, without following them
 strictly. Source files carry `IMP-<ID>` marker comments:
 
 ```rust
-// IMP-STORAGE.PUBLISH-01: satisfy FDS-STORAGE.PUBLISH-01
+// IMP-STORAGE.PUBLISH-02: satisfy FDS-STORAGE.PUBLISH-02
 ```
 
 `reqman-report.py` extracts those during the document build, so the
@@ -553,7 +553,7 @@ To query a requirement without reading LaTeX:
 
 ```bash
 python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
-    durable-cache FDS-STORAGE.PUBLISH-01
+    durable-cache FDS-STORAGE.PUBLISH-02
 ```
 
 ## Caveats
@@ -588,7 +588,7 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
   synchronised after a publication, so a very recently stored object may
   simply be gone after a power failure (a miss). An in-place metadata update
   is not synchronised either: after a crash it reads back as the old set, the
-  new set, or a miss, never a mixture (ADR-PERSISTENCE.DURABILITY-01).
+  new set, or a miss, never a mixture (ADR-PERSISTENCE.DURABILITY-02).
 - **Storage that honours flushes and keeps data intact.** Those guarantees
   assume the storage stack makes a flush it acknowledges durable, as a
   local disk does; a device or virtualisation layer that acknowledges
@@ -630,7 +630,7 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
   outgoing process's backend read-only and delays the incoming scan; without
   it both processes write the shared cache.
 - **The host-crash replay harness is not implemented.**
-  TC-PERSISTENCE.CRASHSAFE-01's setup replays a device-mapper `log-writes`
+  TC-PERSISTENCE.CRASHSAFE-02's setup replays a device-mapper `log-writes`
   device to every flush point, which needs root, a scratch block device, and
   the kernel's replay tool. `tests/persistence_crashsafe.rs` instead
   constructs the on-disk states such a replay produces (a torn in-place

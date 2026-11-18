@@ -21,7 +21,7 @@
 //! `EvictionManager` instance, which this crate has no opinion about. On a
 //! Pingora server, [`hotupgrade::install`] does that and makes the backend
 //! read-only on a hot upgrade, and is required for hot upgrades
-//! (FDS-COMPAT.READONLY-01).
+//! (FDS-COMPAT.READONLY-02).
 //!
 //! **Deployment constraint.** Every process sharing one cache directory
 //! must run on the same host, with the directory on a local file system:

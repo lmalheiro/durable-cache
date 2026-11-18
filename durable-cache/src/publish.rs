@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The steps that publish a record, and that clean up around it
-//! (FDS-STORAGE.PUBLISH-01, ADR-STORAGE.ATOMICPUBLISH-01,
-//! ADR-PERSISTENCE.DURABILITY-01).
+//! (FDS-STORAGE.PUBLISH-02, ADR-STORAGE.ATOMICPUBLISH-01,
+//! ADR-PERSISTENCE.DURABILITY-02).
 //!
 //! A store ([`crate::miss`]) writes a temporary in the canonical name's own
 //! directory, synchronises its data to stable storage ([`sync_temp`]), and
@@ -21,7 +21,7 @@ use std::path::Path;
 
 /// `fdatasync` the temporary: after this returns, its data is on stable
 /// storage, so the rename below can never publish a name over data that is
-/// not (ADR-PERSISTENCE.DURABILITY-01).
+/// not (ADR-PERSISTENCE.DURABILITY-02).
 pub fn sync_temp(file: &File) -> io::Result<()> {
     file.sync_data()
 }

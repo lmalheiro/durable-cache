@@ -220,7 +220,7 @@ impl FsCache {
     }
 
     /// Make the backend read-only: it keeps reading the shared cache but
-    /// makes no further durable change to it (FDS-COMPAT.READONLY-01). The
+    /// makes no further durable change to it (FDS-COMPAT.READONLY-02). The
     /// integrator calls this when its server announces
     /// `ExecutionPhase::GracefulUpgradeTransferringFds`, while the process
     /// drains its sessions. Callable from any thread and idempotent; when it
@@ -316,7 +316,7 @@ impl FsCache {
     }
 
     /// `fsync` a shard directory, so an `unlink` in it survives a host crash
-    /// (ADR-PERSISTENCE.DURABILITY-01). On Unix a directory opens like a file,
+    /// (ADR-PERSISTENCE.DURABILITY-02). On Unix a directory opens like a file,
     /// read-only, and `fsync` on its descriptor flushes its entries.
     pub(crate) fn sync_shard_dir(&self, dir: &Path) -> Result<()> {
         test_hook! { self.hooks.fault(crate::hooks::FaultPoint::SyncDir)?; }
@@ -359,7 +359,7 @@ impl Storage for FsCache {
     ) -> Result<MissHandler> {
         // Hash the key and serialise the metadata here (pure CPU), then let
         // the blocking pool create the temporary and write the record's
-        // fixed part (FDS-STORAGE.EXECUTOR-01).
+        // fixed part (FDS-STORAGE.EXECUTOR-02).
         let prepared = crate::miss::FsMissHandler::prepare(self, key, meta)?;
         crate::blocking::run(move || crate::miss::FsMissHandler::open(self, prepared))
             .await
@@ -382,7 +382,7 @@ impl Storage for FsCache {
         //
         // The target is resolved here because it borrows the caller's key;
         // the unlink and any `fsync` behind it go to the blocking pool
-        // (FDS-STORAGE.EXECUTOR-01).
+        // (FDS-STORAGE.EXECUTOR-02).
         let Some(key) = crate::purge::resolve(target) else {
             return Ok(PurgeOutcome::NotFound);
         };
@@ -414,7 +414,7 @@ impl Storage for FsCache {
     ) -> Result<bool> {
         // Serialising the new metadata is CPU work and stays here; reading
         // the record and writing it back does not
-        // (FDS-STORAGE.EXECUTOR-01).
+        // (FDS-STORAGE.EXECUTOR-02).
         let prepared = crate::metaupdate::prepare(self, key, meta)?;
         crate::blocking::run(move || crate::metaupdate::update_meta(self, prepared)).await
     }

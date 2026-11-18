@@ -198,7 +198,7 @@ async fn tc_compat_hotupgrade_01_cache_consistent_across_hot_upgrade() {
 
 /// The read-only half of the same TC: a store that completes in the outgoing
 /// process *after* it received the upgrade signal is not durably published
-/// (FDS-COMPAT.READONLY-01), so the incoming process never sees it and the
+/// (FDS-COMPAT.READONLY-02), so the incoming process never sees it and the
 /// object is fetched again on the next request.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "needs Linux (the pingora-core fd transfer is Linux-only) and two real processes -- see compliance.yml"]

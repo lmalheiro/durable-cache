@@ -401,7 +401,7 @@ The interactions follow the cache lifecycle:
   and streams the same way. The backend specified by this document is of that streaming kind (\reqref{FRE-COMPAT.STREAMFLAG-01}, \reqref{FRE-COMPAT.STREAMING-01}):
   it registers the leader's write when the miss handler opens and notifies partial readers of each chunk appended to the per-writer
   temporary; the atomic rename that publishes the canonical, durable name still happens only once the object is complete
-  (\reqref{FDS-STORAGE.PUBLISH-01}). (Only a non-streaming backend, having no partial read, would hold its followers for
+  (\reqref{FDS-STORAGE.PUBLISH-02}). (Only a non-streaming backend, having no partial read, would hold its followers for
   the complete object.) Either way the upstream fetch and the \texttt{Storage} write happen once, on the leader
   (Figure~\ref{fig:cache-miss-seq}).}\label{fig:cache-lock-seq}
 \end{figure}

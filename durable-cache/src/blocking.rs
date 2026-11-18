@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Running the backend's file I/O off the async executor
-//! (FDS-STORAGE.EXECUTOR-01).
+//! (FDS-STORAGE.EXECUTOR-02).
 //!
 //! Every operation this crate performs is an ordinary blocking syscall —
 //! `open`, `pread`, `pwrite`, `fdatasync`, `rename`, `unlink`. Pingora gives
@@ -35,7 +35,7 @@ use pingora_error::{Error, ErrorType, Result};
 #[cfg(test)]
 use crate::FsCache;
 
-// IMP-STORAGE.EXECUTOR-01: satisfy FDS-STORAGE.EXECUTOR-01
+// IMP-STORAGE.EXECUTOR-02: satisfy FDS-STORAGE.EXECUTOR-02
 
 /// Run one storage operation's blocking work on Tokio's blocking pool.
 ///
@@ -81,7 +81,7 @@ where
 }
 
 /// Close a file that may have no name left, without making the caller wait
-/// (FDS-STORAGE.EXECUTOR-01).
+/// (FDS-STORAGE.EXECUTOR-02).
 ///
 /// Closing such a file frees its storage, and for a large file that can
 /// take a long time. The callers cannot wait: `Drop` implementations, and

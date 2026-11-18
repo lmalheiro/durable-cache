@@ -50,7 +50,7 @@ use crate::{blocking, key_codec, FsCache};
 
 // IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-01 -- the read
 // protocol (validation order, retry, optional body check, seek); miss.rs's
-// IMP-STORAGE.PUBLISH-01 covers the writer half.
+// IMP-STORAGE.PUBLISH-02 covers the writer half.
 // IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
 
 /// The most body one read delivers. A larger chunk takes fewer reads and
@@ -92,7 +92,7 @@ enum ReadSource {
 
 pub struct FsHitHandler {
     /// Shared so a blocking read can own a handle without reopening the
-    /// file (FDS-STORAGE.EXECUTOR-01). `read_exact_at` takes `&self`, so a
+    /// file (FDS-STORAGE.EXECUTOR-02). `read_exact_at` takes `&self`, so a
     /// shared descriptor is all a reader ever needs. Taken only as the
     /// handler is dropped, to close it where its close cannot stall an async
     /// worker (see `Drop`).
@@ -107,12 +107,12 @@ pub struct FsHitHandler {
     cache: &'static FsCache,
     /// The read-time body check, while one runs: switched on in the
     /// configuration, for a published record that carries a checksum, until
-    /// the read seeks (ADR-PERSISTENCE.DURABILITY-01).
+    /// the read seeks (ADR-PERSISTENCE.DURABILITY-02).
     #[cfg(feature = "body-crc-verify")]
     check: Option<BodyCheck>,
 }
 
-/// A body check in progress (ADR-PERSISTENCE.DURABILITY-01).
+/// A body check in progress (ADR-PERSISTENCE.DURABILITY-02).
 #[cfg(feature = "body-crc-verify")]
 struct BodyCheck {
     /// CRC-32C over the bytes delivered so far.
@@ -228,7 +228,7 @@ pub(crate) async fn lookup(
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
-    // (FDS-STORAGE.EXECUTOR-01).
+    // (FDS-STORAGE.EXECUTOR-02).
     test_hook! { cache.hooks.count_handoff(); }
     blocking::run(move || open_published(cache, &name, canonical, key_bytes, opened)).await
 }
@@ -432,7 +432,7 @@ fn open_to_read(cache: &FsCache, path: &Path) -> std::io::Result<File> {
 /// Linux from the page cache on this worker first, when the configuration
 /// asks (`page_cache`); on the blocking pool otherwise, as a body read is a
 /// `pread` that may reach the device, which must not run on the worker
-/// driving other connections (FDS-STORAGE.EXECUTOR-01).
+/// driving other connections (FDS-STORAGE.EXECUTOR-02).
 async fn fill(
     cache: &FsCache,
     file: &Arc<File>,
@@ -701,7 +701,7 @@ impl HandleHit for FsHitHandler {
 
 impl Drop for FsHitHandler {
     /// Close the file this hit read, on the blocking pool when the close
-    /// would free it (FDS-STORAGE.EXECUTOR-01).
+    /// would free it (FDS-STORAGE.EXECUTOR-02).
     ///
     /// A file's storage is freed when its last name and its last descriptor
     /// are both gone, and freeing can take a long time for a large file. A

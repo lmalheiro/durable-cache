@@ -62,7 +62,7 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 [features]
 default = ["body-crc"]
 # Compute each body's CRC-32C while it is stored and record it in the header
-# (ADR-PERSISTENCE.DURABILITY-01). Serving a hit does not check it: integrity
+# (ADR-PERSISTENCE.DURABILITY-02). Serving a hit does not check it: integrity
 # at rest is the storage layer's. Without the feature (`default-features =
 # false`), a store skips the computation and its record carries zero.
 body-crc = []
