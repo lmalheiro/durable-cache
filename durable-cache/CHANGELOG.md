@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/lmalheiro/durable-cache/compare/v0.1.1...v0.2.0) - 2026-11-18
+
+### Performance
+
+- [**breaking**] serve page-cache hits on the worker, and add an option to store without fdatasync ([#33](https://github.com/lmalheiro/durable-cache/pull/33))
+
+### Documentation
+
+- bring the README up to date, and add Pingora references ([#38](https://github.com/lmalheiro/durable-cache/pull/38))
+- mark the SysML and OMG trademarks as the OMG trademark guidelines ask ([#35](https://github.com/lmalheiro/durable-cache/pull/35))
+- replace the suppressed requirements diagram with a domain overview ([#32](https://github.com/lmalheiro/durable-cache/pull/32))
+
 ## [0.1.1](https://github.com/lmalheiro/durable-cache/compare/v0.1.0...v0.1.1) - 2026-10-21
 
 ### Documentation
