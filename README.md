@@ -27,7 +27,8 @@ README too, resolves relative links against the crate's own directory,
 durable-cache/, not against the repository root. They name the tag of the
 version in durable-cache/Cargo.toml, so each version's README on crates.io
 links to that version's files; on main, those of the latest release. The
-release workflow moves them in each release pull request, and CI checks
+dependency line under "Using it" names that version the same way. The
+release workflow moves both in each release pull request, and CI checks
 them (`cargo xtask readme-links --check`). -->
 [spec-pdf]: https://github.com/lmalheiro/durable-cache/blob/v0.1.1/docs/durable-cache.pdf
 [changelog]: https://github.com/lmalheiro/durable-cache/blob/v0.1.1/durable-cache/CHANGELOG.md
@@ -66,15 +67,17 @@ durable-cache = "0.1"
 ```
 
 ```rust
+use durable_cache::{hotupgrade, FsCache, FsCacheConfig};
 use pingora_cache::eviction::simple_lru::Manager;
 use pingora_core::prelude::Server;
-use durable_cache::{hotupgrade, FsCache, FsCacheConfig};
 
 let mut server = Server::new(None)?;
 server.bootstrap();
 
 // `Storage`'s methods take `&'static self`, so the backend is held for the
-// process's whole lifetime.
+// process's whole lifetime. On Linux, by default, this process must own the
+// cache directory, on a file system with non-blocking reads (see Threads
+// and Access times, below).
 let config = FsCacheConfig::new("/var/cache/durable-cache", None);
 let cache: &'static FsCache = Box::leak(Box::new(FsCache::new(config)?));
 let eviction: &'static Manager = Box::leak(Box::new(Manager::new(usize::MAX)));
@@ -84,8 +87,9 @@ let eviction: &'static Manager = Box::leak(Box::new(Manager::new(usize::MAX)));
 // Eviction Recovery as a background service that rebuilds the eviction view
 // from disk once the sockets are taken over. Required for hot upgrades;
 // without it two processes write the cache at once. A server that
-// bootstraps as a service passes the handle `bootstrap_as_a_service`
-// returned instead of `None`, so that recovery waits for that service.
+// bootstraps as a service passes `Some(&handle)`, the handle
+// `bootstrap_as_a_service` returned, instead of `None`, so that recovery
+// waits for that service.
 hotupgrade::install(&mut server, cache, eviction, None);
 
 // Then, inside your `ProxyHttp::request_cache_filter`:
@@ -459,11 +463,11 @@ Two differences shape the results:
 
 | Workflow          | Runs on                                   | What it does |
 |-------------------|-------------------------------------------|--------------|
-| `ci.yml`          | pushes to `main`, pull requests           | rustfmt (the pinned nightly), SPDX headers, the README's links naming this version's tag, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, the library built with its minimum Rust (1.85), and `cargo publish --dry-run` |
+| `ci.yml`          | pushes to `main`, pull requests           | rustfmt (the pinned nightly), SPDX headers, the README's links and dependency line naming this version, clippy, the crate's tests in each of its four feature configurations, the compat tests, the example's smoke test, the library built with its minimum Rust (1.85), and `cargo publish --dry-run` |
 | `compliance.yml`  | pushes to `main`, nightly, manual         | the RFC 9111 suite, the hot-upgrade tests, and the measuring test cases at CI scale |
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 | `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
-| `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date, its README's links naming the new version's tag; when one is merged, tags the version, publishes it with the token in the `crates-io` environment and creates the GitHub release (see below) |
+| `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date, its README's links and dependency line naming the new version; when one is merged, tags the version, publishes it with the token in the `crates-io` environment and creates the GitHub release (see below) |
 
 ### Releasing
 
@@ -484,7 +488,8 @@ releases nothing. To release:
    version's tag, so its source links point at that release, and edit
    `durable-cache/CHANGELOG.md` if needed:
    `cd docs && REQMAN_SOURCE_REF=v<version> latexmk -g -pdf durable-cache`.
-   The workflow has already pointed the README's links at that tag. Commit
+   The workflow has already pointed the README's links and dependency line
+   at that version. Commit
    and push: your push runs CI on the pull request. The workflow's own pushes
    do not, so a release pull request you leave as it is needs closing and
    reopening for CI to run.

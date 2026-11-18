@@ -75,13 +75,14 @@ enum Cmd {
         check: bool,
     },
     /// Point the README's links to repository files at `v<version>`, the tag
-    /// of the durable-cache version in its Cargo.toml. crates.io shows the
-    /// README each version was published with, so its links name that
-    /// version's files; on main they name the latest release's. The release
-    /// workflow runs this on every release pull request.
+    /// of the durable-cache version in its Cargo.toml, and its dependency
+    /// line at that version. crates.io shows the README each version was
+    /// published with, so it names that version and links to its files; on
+    /// main it names the latest release. The release workflow runs this on
+    /// every release pull request.
     ReadmeLinks {
-        /// Report links that name another ref instead of rewriting them, as
-        /// CI does.
+        /// Report what names another version instead of rewriting it, as CI
+        /// does.
         #[arg(long)]
         check: bool,
     },
@@ -879,6 +880,63 @@ const REPO_FILE_LINKS: [&str; 2] = [
     "https://github.com/lmalheiro/durable-cache/tree/",
 ];
 
+/// The README's dependency line, as "Using it" shows it, up to the version
+/// requirement that follows in quotes.
+const DEPENDENCY_LINE: &str = "durable-cache = \"";
+
+/// The requirement the README's dependency line gives for `version`: its
+/// major and minor, which Cargo reads as that release and every later
+/// compatible one (`0.2` for 0.2.0); for a pre-release, the whole version,
+/// as only a requirement that names a pre-release admits one.
+fn dependency_requirement(version: &str) -> String {
+    let version = version
+        .split_once('+')
+        .map_or(version, |(release, _build)| release);
+    if version.contains('-') {
+        return version.to_owned();
+    }
+    let mut parts = version.split('.');
+    match (parts.next(), parts.next()) {
+        (Some(major), Some(minor)) => format!("{major}.{minor}"),
+        _ => version.to_owned(),
+    }
+}
+
+/// Rewrites what follows each of `prefixes` in `text`, up to the next `end`,
+/// to `value`. Returns the new text and every occurrence that named
+/// something else, prefix and `end` included, sorted, each once.
+fn rewrite_after(
+    text: &str,
+    prefixes: &[&str],
+    end: char,
+    value: &str,
+) -> Result<(String, Vec<String>)> {
+    let mut rewritten = String::with_capacity(text.len());
+    let mut stale = Vec::new();
+    let mut rest = text;
+    while let Some((at, prefix)) = prefixes
+        .iter()
+        .filter_map(|prefix| rest.find(prefix).map(|at| (at, *prefix)))
+        .min()
+    {
+        let start = at + prefix.len();
+        let len = rest[start..]
+            .find(end)
+            .with_context(|| format!("README.md has `{prefix}` with no `{end}` after it"))?;
+        let named = &rest[start..start + len];
+        if named != value {
+            stale.push(format!("{prefix}{named}{end}"));
+        }
+        rewritten.push_str(&rest[..start]);
+        rewritten.push_str(value);
+        rest = &rest[start + len..];
+    }
+    rewritten.push_str(rest);
+    stale.sort();
+    stale.dedup();
+    Ok((rewritten, stale))
+}
+
 fn readme_links(check: bool) -> Result<()> {
     let root = workspace_root()?;
     let metadata = Command::new("cargo")
@@ -896,50 +954,86 @@ fn readme_links(check: bool) -> Result<()> {
         .and_then(|package| package["version"].as_str())
         .context("cargo metadata lists no version of durable-cache")?;
     let tag = format!("v{version}");
+    let requirement = dependency_requirement(version);
 
     let path = root.join("README.md");
     let readme = std::fs::read_to_string(&path).context("failed to read README.md")?;
-    let mut rewritten = String::with_capacity(readme.len());
-    let mut stale = Vec::new();
-    let mut rest = readme.as_str();
-    while let Some((at, prefix)) = REPO_FILE_LINKS
-        .iter()
-        .filter_map(|prefix| rest.find(prefix).map(|at| (at, *prefix)))
-        .min()
-    {
-        let ref_start = at + prefix.len();
-        let ref_len = rest[ref_start..]
-            .find('/')
-            .with_context(|| format!("a README link at `{prefix}` names no path"))?;
-        let named = &rest[ref_start..ref_start + ref_len];
-        if named != tag {
-            stale.push(format!("{prefix}{named}/"));
-        }
-        rewritten.push_str(&rest[..ref_start]);
-        rewritten.push_str(&tag);
-        rest = &rest[ref_start + ref_len..];
-    }
-    rewritten.push_str(rest);
-    stale.sort();
-    stale.dedup();
+    let (linked, mut stale) = rewrite_after(&readme, &REPO_FILE_LINKS, '/', &tag)?;
+    let (rewritten, stale_dependency) =
+        rewrite_after(&linked, &[DEPENDENCY_LINE], '"', &requirement)?;
+    stale.extend(stale_dependency);
 
+    let names = format!("{tag} in its links and \"{requirement}\" in its dependency line");
     if check {
         if !stale.is_empty() {
             bail!(
-                "README.md links name another ref than {tag}, the version in \
+                "README.md names another version than {version}, the one in \
                  durable-cache/Cargo.toml: {}. Run `cargo xtask readme-links`.",
                 stale.join(", ")
             );
         }
-        println!("README.md links name {tag}");
+        println!("README.md names {names}");
     } else if stale.is_empty() {
-        println!("README.md links already name {tag}");
+        println!("README.md already names {names}");
     } else {
         std::fs::write(&path, rewritten).context("failed to write README.md")?;
         println!(
-            "README.md links now name {tag}, instead of: {}",
+            "README.md now names {names}, instead of: {}",
             stale.join(", ")
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_dependency_requirement_is_the_major_and_minor() {
+        assert_eq!(dependency_requirement("0.1.1"), "0.1");
+        assert_eq!(dependency_requirement("0.2.0"), "0.2");
+        assert_eq!(dependency_requirement("1.4.2"), "1.4");
+        assert_eq!(dependency_requirement("1.4.2+build.7"), "1.4");
+    }
+
+    #[test]
+    fn a_pre_release_is_required_whole() {
+        assert_eq!(dependency_requirement("0.3.0-rc.1"), "0.3.0-rc.1");
+        assert_eq!(dependency_requirement("0.3.0-rc.1+build.7"), "0.3.0-rc.1");
+    }
+
+    #[test]
+    fn links_and_the_dependency_line_move_to_the_version() {
+        let readme = "[pdf]: https://github.com/lmalheiro/durable-cache/blob/v0.1.1/docs/a.pdf\n\
+                      durable-cache = \"0.1\"\n";
+        let (linked, stale_links) = rewrite_after(readme, &REPO_FILE_LINKS, '/', "v0.2.0")
+            .expect("every link names a path");
+        let (rewritten, stale_dependency) = rewrite_after(&linked, &[DEPENDENCY_LINE], '"', "0.2")
+            .expect("the dependency line closes its quotes");
+        assert_eq!(
+            rewritten,
+            "[pdf]: https://github.com/lmalheiro/durable-cache/blob/v0.2.0/docs/a.pdf\n\
+             durable-cache = \"0.2\"\n"
+        );
+        assert_eq!(
+            stale_links,
+            ["https://github.com/lmalheiro/durable-cache/blob/v0.1.1/"]
+        );
+        assert_eq!(stale_dependency, ["durable-cache = \"0.1\""]);
+    }
+
+    #[test]
+    fn a_readme_naming_the_version_already_stays_as_it_is() {
+        let readme = "durable-cache = \"0.2\"\n";
+        let (rewritten, stale) = rewrite_after(readme, &[DEPENDENCY_LINE], '"', "0.2")
+            .expect("the dependency line closes its quotes");
+        assert_eq!(rewritten, readme);
+        assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn a_prefix_without_its_end_is_an_error() {
+        assert!(rewrite_after("durable-cache = \"0.1", &[DEPENDENCY_LINE], '"', "0.2").is_err());
+    }
 }
