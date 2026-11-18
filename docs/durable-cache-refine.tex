@@ -125,9 +125,11 @@
   \textbf{Context:} After the host crashes or loses power, the cache may lose
   objects but must never serve content that differs from what was stored,
   nor an object whose purge it acknowledged
-  (\reqref{HLR-PERSISTENCE.CRASHSAFE-01}); the same bar applies to incomplete
-  stores (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}), acknowledged purges
-  (\reqref{FRE-COMPLIANCE.PURGEDURABLE-01}), and applied metadata updates
+  (\reqref{HLR-PERSISTENCE.CRASHSAFE-01}, whose one exception, for stores
+  that do not wait for the storage device, concerns the configuration
+  \reqref{ADR-PERSISTENCE.UNSYNCED-01} adds); the same bar applies to
+  incomplete stores (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}), acknowledged
+  purges (\reqref{FRE-COMPLIANCE.PURGEDURABLE-01}), and applied metadata updates
   (\reqref{FRE-COMPLIANCE.METAPERSIST-01}). A plain file system
   (\reqref{ADR-PERSISTENCE.MECHANISM-01}) gives none of this for free. A
   \texttt{write} returns while the bytes are still only in the page cache;
@@ -160,8 +162,9 @@
       its previous record, or misses), but the name can never refer to
       data that is not on stable storage. This is the \emph{strict}
       configuration, the default: \reqref{ADR-PERSISTENCE.UNSYNCED-01}
-      adds one that skips the synchronisation and discards the cache
-      after a host restart instead.
+      adds one that skips the synchronisation, relying instead on a file
+      system that records a file's length only once its data is written,
+      or on discarding the cache after a host restart.
     \item \emph{Invalidating purge:} \texttt{fsync} the shard directory
       after the \texttt{unlink}, or after finding nothing to unlink, before
       reporting the outcome. A purge made to evict is not synchronised: a
@@ -199,8 +202,11 @@
       over a zero-filled or short body whose header still passes validation,
       and an unsynced purge \texttt{unlink} can be lost, bringing a purged
       object back --- both forbidden by \reqref{HLR-PERSISTENCE.CRASHSAFE-01}.
-      \reqref{ADR-PERSISTENCE.UNSYNCED-01} offers it as an option, made safe
-      by discarding the cache after a host restart.
+      \reqref{ADR-PERSISTENCE.UNSYNCED-01} offers it for stores, as an
+      option, within the exception \reqref{HLR-PERSISTENCE.CRASHSAFE-01}
+      makes for it: on a file system that may record a file's length before
+      its data, a zero-filled body can then be served unless the cache is
+      discarded after a host restart.
     \item \emph{Checksum only, without synchronisation}: detects a corrupted
       body, but only once a reader reaches its end, after the corrupted bytes
       have already gone to the client; and it does nothing for a lost purge.
@@ -284,7 +290,8 @@
   46--49\,\%. \reqref{HLR-PERFORMANCE.STORERATE-01} asks for 40\,\% where the
   integrator accepts losing stored objects in a host crash;
   \reqref{HLR-PERSISTENCE.DURABLE-01} still holds there, and
-  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} as far as this decision says.
+  \reqref{HLR-PERSISTENCE.CRASHSAFE-01} with the exception it makes for that
+  configuration.
 
   Without the sync, a host crash can leave a published name over a body that
   never reached the device. The read validation of
@@ -387,11 +394,13 @@
     \item[+] On a file system that records a file's length only once its
       data is written, a host crash costs only the stores whose data had
       not reached the device.
-    \item[--] Unsynchronised, \reqref{HLR-PERSISTENCE.CRASHSAFE-01} holds
-      only on such a file system unless the discard is on: elsewhere, a host
-      crash can leave a body of zeros to be served.
-    \item[+] With the discard on, \reqref{HLR-PERSISTENCE.CRASHSAFE-01}
-      holds on any file system.
+    \item[--] Unsynchronised, without the discard, only such a file system
+      keeps a host crash from making the cache serve content that differs
+      from what was stored: elsewhere, a host crash can leave a body of
+      zeros to be served, which the exception of
+      \reqref{HLR-PERSISTENCE.CRASHSAFE-01} accepts.
+    \item[+] With the discard on, a host crash cannot make the cache serve
+      content that differs from what was stored, on any file system.
     \item[--] With the discard on, a host crash, or any host restart the
       integrator did not prepare by flushing the backend, empties the cache,
       which refills from the origin.
@@ -3592,9 +3601,11 @@
   \localreqdiagram*{rfr09}{\reqid}{\reqdesc}
 
   IF a store does not complete --- it aborts, or its process or host crashes
-  first --- or a host crash occurs before a completed store's content has
-  reached stable storage, THEN the storage backend shall serve that store's
-  object on no later lookup, in the writing process or any later one.
+  first --- or, wherever \reqref{HLR-PERSISTENCE.CRASHSAFE-01} forbids
+  serving content that differs from what was stored, a host crash occurs
+  before a completed store's content has reached stable storage, THEN the
+  storage backend shall serve that store's object on no later lookup, in the
+  writing process or any later one.
 
   A lookup that would have returned the object reports a miss instead, or ---
   when the key already held an object --- returns that earlier object
@@ -3614,7 +3625,10 @@
   This requirement derives from two parents: \reqref{HLR-COMPLIANCE.RFC-01}
   for the RFC~9111 rule on storing incomplete responses, and
   \reqref{HLR-PERSISTENCE.CRASHSAFE-01} for extending it to content a host
-  crash leaves incomplete.
+  crash leaves incomplete. Where that parent accepts content that differs
+  from what was stored, so does this requirement for a store that had
+  completed: a host crash there can leave its object at its full length,
+  reading back as zeros, which no lookup can tell from the content stored.
 
   \textit{Basis: \rfcsec{9111}{3.3}[storing incomplete responses],
   \rfcsec{9111}{3.4}[combining partial content]; \rfcsec{9110}{14.2}[Range],

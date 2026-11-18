@@ -444,9 +444,10 @@ numbers.
 
 Two differences shape the results:
 
-- durable-cache makes every store durable with `fdatasync` before publishing
-  it, its crash safety; nginx never synchronises its cache files. The fill
-  scenarios show that cost.
+- By default, durable-cache makes every store durable with `fdatasync`
+  before publishing it, its crash safety; nginx never synchronises its cache
+  files. The fill scenarios show that cost, which
+  `--durability no-store-sync` leaves out.
 - nginx sends a hit's body from the file with `sendfile`, without copying it
   through user space; durable-cache reads it in 128 KiB chunks.
 
@@ -581,14 +582,18 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
   `--grace-period-seconds` / `--graceful-shutdown-timeout-seconds`, and the
   hot-upgrade harness shortens both; an integrator should size them for
   their own longest in-flight request.
-- **Host-crash safety, not durability.** A store is `fdatasync`ed before its
-  rename and an invalidating purge `fsync`s its shard directory, so a crash
-  can never serve wrong content or resurrect an invalidated object — but the
-  shard directory is not
-  synchronised after a publication, so a very recently stored object may
-  simply be gone after a power failure (a miss). An in-place metadata update
-  is not synchronised either: after a crash it reads back as the old set, the
-  new set, or a miss, never a mixture (ADR-PERSISTENCE.DURABILITY-02).
+- **Host-crash safety, not durability.** By default a store is `fdatasync`ed
+  before its rename, and in every mode an invalidating purge `fsync`s its
+  shard directory, so a crash can never serve wrong content or resurrect an
+  invalidated object — but the shard directory is not synchronised after a
+  publication, so a very recently stored object may simply be gone after a
+  power failure (a miss). An in-place metadata update is not synchronised
+  either: after a crash it reads back as the old set, the new set, or a
+  miss, never a mixture (ADR-PERSISTENCE.DURABILITY-02). With
+  `Durability::NoStoreSync`, a crash can also leave a zero-filled body to be
+  served, on a file system that may record a file's length before its data,
+  unless the discard after a host restart is on (see **Durability** above,
+  and HLR-PERSISTENCE.CRASHSAFE-01).
 - **Storage that honours flushes and keeps data intact.** Those guarantees
   assume the storage stack makes a flush it acknowledges durable, as a
   local disk does; a device or virtualisation layer that acknowledges

@@ -23,8 +23,11 @@ pub enum Durability {
     /// the stores the kernel had not written back yet, and may leave a
     /// published record whose body never reached the device: short, which
     /// a lookup reports as a miss, or zero-filled under a valid header,
-    /// which a hit would serve. HLR-PERSISTENCE.CRASHSAFE-01 does not hold,
-    /// unless the discard after a host restart is switched on (see
+    /// which a hit would serve. A file system that records a file's length
+    /// only once its data is written leaves only short ones; on one that
+    /// may record the length first, HLR-PERSISTENCE.CRASHSAFE-01 accepts the
+    /// zero-filled ones in this mode, unless the discard after a host
+    /// restart is switched on (see
     /// [`FsCacheConfig::with_discard_after_host_restart`], Linux only).
     NoStoreSync,
 }
@@ -122,11 +125,12 @@ impl FsCacheConfig {
     /// store is published, the backend writes a marker naming the current
     /// boot, and [`crate::FsCache::flush`] removes it once everything is on
     /// the device. A backend constructed under another boot that finds a
-    /// marker starts empty (FDS-PERSISTENCE.CRASHDISCARD-01). That makes
-    /// HLR-PERSISTENCE.CRASHSAFE-01 hold on any file system, at the cost of
-    /// the whole cache after a host crash, or after any host restart that
-    /// the integrator did not prepare by calling `flush` once its server
-    /// had stopped.
+    /// marker starts empty (FDS-PERSISTENCE.CRASHDISCARD-01). That keeps a
+    /// host crash from making the cache serve content that differs from
+    /// what was stored, on any file system (HLR-PERSISTENCE.CRASHSAFE-01),
+    /// at the cost of the whole cache after a host crash, or after any host
+    /// restart that the integrator did not prepare by calling `flush` once
+    /// its server had stopped.
     ///
     /// Without it, a host crash keeps every record the file system
     /// recovered, and the read validation reports one left short or empty

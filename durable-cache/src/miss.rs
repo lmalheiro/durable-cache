@@ -9,9 +9,10 @@
 //! opens (the `CacheMeta` is available then), then the body chunk by chunk,
 //! each folded into a running CRC-32C unless the build leaves out the
 //! `body-crc` feature. `finish` patches `body_len` and `body_crc`,
-//! synchronises the file, and renames it over the canonical name. A store
-//! that never finishes takes its temporary with it, and so does one that an
-//! invalidating purge of its key ended while it was in flight.
+//! synchronises the file unless stores are unsynchronised
+//! (`Durability::NoStoreSync`), and renames it over the canonical name. A
+//! store that never finishes takes its temporary with it, and so does one
+//! that an invalidating purge of its key ended while it was in flight.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
