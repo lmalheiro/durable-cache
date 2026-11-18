@@ -13,10 +13,10 @@ Cached HTTP objects live as ordinary files on an ordinary file system, so the
 cache survives process restarts and its total size is bounded by the disk
 rather than by RAM. Each object is one self-describing record — a fixed
 44-byte header, the serialised cache key, a metadata region with growth
-headroom, then the body — synchronised to stable storage and published by an
-atomic `rename(2)`. Every lookup validates the header and metadata by
-CRC-32C, so a torn, truncated, or foreign record is reported as a cache miss
-instead of being served.
+headroom, then the body — synchronised to stable storage by default, and
+published by an atomic `rename(2)`. Every lookup validates the header and
+metadata by CRC-32C, so a torn, truncated, or foreign record is reported as a
+cache miss instead of being served.
 
 [`pingora-cache`]: https://docs.rs/pingora-cache
 
@@ -30,13 +30,14 @@ links to that version's files; on main, those of the latest release. The
 release workflow moves them in each release pull request, and CI checks
 them (`cargo xtask readme-links --check`). -->
 [spec-pdf]: https://github.com/lmalheiro/durable-cache/blob/v0.1.1/docs/durable-cache.pdf
+[changelog]: https://github.com/lmalheiro/durable-cache/blob/v0.1.1/durable-cache/CHANGELOG.md
 
 ## Status
 
-**Work in progress.** 0.1.0 is the first release. The crate has not run in
-production yet, and its API may change before 1.0. Every artifact of the
-specification is still `draft`, pending the authors' review; the human review
-of the tests and tooling continues in
+**Work in progress.** The crate has not run in production yet, and its API
+may change before 1.0; the [changelog][changelog] lists what each release
+changed. Every artifact of the specification is still `draft`, pending the
+authors' review; the human review of the tests and tooling continues in
 [#14](https://github.com/lmalheiro/durable-cache/issues/14), and the known
 gaps are [open issues](https://github.com/lmalheiro/durable-cache/issues).
 
@@ -44,7 +45,7 @@ The crate implements the full `Storage` surface — `lookup`, `get_miss_handler`
 `purge`, `update_meta`, plus streaming partial hits and `expire`,
 which marks an object stale in place and keeps the body, so the revalidation
 that follows is answered by a `304` from the cache rather than a full refetch
-(`ADR-STORAGE.EXPIRE-01`). Beyond `Storage`, `recover()`
+(ADR-STORAGE.EXPIRE-01). Beyond `Storage`, `recover()`
 rebuilds the eviction manager's view from disk at startup, and
 `hotupgrade::install` wires that recovery, and the switch that makes the
 outgoing process's backend read-only, into a Pingora server.
@@ -52,8 +53,8 @@ outgoing process's backend read-only, into a Pingora server.
 Every artifact of the specification is traced, and every test case has a test
 function or an `IMP` marker, as `cargo xtask trace-report` and the
 specification's own traceability report check. That report's one open
-obligation is deliberate: `REQ-EFFICIENCY.FRAGMENTATION-01` has no satisfying
-decision, because `ADR-EFFICIENCY.COMPACTION-01` defers compaction and
+obligation is deliberate: REQ-EFFICIENCY.FRAGMENTATION-01 has no satisfying
+decision, because ADR-EFFICIENCY.COMPACTION-01 defers compaction and
 declares the conflict. See [Caveats](#caveats) for the test cases that need
 root, a scratch device, or a scale a laptop cannot reach.
 
@@ -104,7 +105,7 @@ identical path.
 
 **Threads.** Every storage operation is a blocking syscall, so the backend
 runs each one on tokio's blocking pool rather than on the worker Pingora
-polls it from (`ADR-STORAGE.EXECUTOR-02`). That matters because
+polls it from (ADR-STORAGE.EXECUTOR-02). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
 or a page-cache miss. On Linux, hits are the exception when what they read
@@ -117,9 +118,9 @@ exists only on Linux (`FsCacheConfig::with_page_cache_reads`). They need
 Linux 5.12 and a file system with non-blocking reads, as ext4, XFS and
 btrfs have and, as of Linux 6.12, tmpfs and overlayfs do not (overlayfs is
 the file system of a container without a volume): `FsCache::new` fails,
-and logs the error, where they are missing, and `with_page_cache_reads(false)` switches them
-off. The pool is sized by two `ServerConf` settings:
-`max_blocking_threads` (unset keeps tokio's 512) and
+and logs the error, where they are missing, and
+`with_page_cache_reads(false)` switches them off. The pool is sized by two
+`ServerConf` settings: `max_blocking_threads` (unset keeps tokio's 512) and
 `blocking_threads_ttl_seconds`, how long an idle thread lives (unset keeps
 10 s). The pool's threads mostly wait on the disk, so the maximum caps how
 many storage operations can wait on it at once. Beyond it they queue: misses
@@ -127,13 +128,14 @@ slow down, but nothing fails. Raise it when a slow device meets a heavy miss
 rate, with many stores waiting in `fdatasync` together. With `work_stealing`
 off, each worker thread has a pool of its own of that size.
 
-**Errors.** Every fallible call, `FsCache::new`, `recover` and each
-`Storage` method, fails with the Pingora error type, `pingora_error::Error`; the crate
-has no error type of its own. A file operation that fails has the matching
-`File*Error` type, a context saying what was being done to which file (an
-object's file is named by its key's hash), and the underlying error, an
-`io::Error` or the reason a record failed validation, as its cause. Two
-types are part of the contract: `update_meta` on a key with no stored object fails with
+**Errors.** Every fallible call, `FsCache::new`, `FsCache::flush`, `recover`
+and each `Storage` method, fails with the Pingora error type,
+`pingora_error::Error`; the crate has no error type of its own. A file
+operation that fails has the matching `File*Error` type, a context saying
+what was being done to which file (an object's file is named by its key's
+hash), and the underlying error, an `io::Error` or the reason a record
+failed validation, as its cause. Two types are part of the contract:
+`update_meta` on a key with no stored object fails with
 `Custom("key_not_found")`, and once the outgoing process of a hot upgrade has
 made its backend read-only, `purge`, `expire` and `update_meta` fail with
 `Custom("cache_read_only")`.
@@ -148,8 +150,8 @@ of each body so a revalidation can write its metadata in place. A
 revalidation that outgrows it withdraws the object, which the next request
 fetches again (see [Caveats](#caveats)). `None` selects the design's
 default, 512 bytes.
-Each body chunk is written to disk before its `write_body` call returns;
-the backend holds no body bytes in memory beyond the chunk in hand.
+Each body chunk is written to its record's file before its `write_body` call
+returns; the backend holds no body bytes in memory beyond the chunk in hand.
 
 **Access times.** Under the default `relatime`, the first read of a record
 after a store wrote it updates its access time, and on ext4 that starts a
@@ -203,7 +205,7 @@ that exporter. The counters are registered through the `prometheus` crate
 that `pingora-prometheus` re-exports, so they are in the registry it serves
 by construction. Without the feature, this crate links neither crate and
 registers nothing; the warning logs beside each counter are unconditional
-(`ADR-OBSERVABILITY.METRICS-01`).
+(ADR-OBSERVABILITY.METRICS-01).
 
 `test-support` exposes internals to this workspace's own test crates. It is
 not API and is exempt from semver: do not enable it.
@@ -252,8 +254,8 @@ test scaffolding, or tooling.
 │   │   ├── writerid.rs          the writer's lease, and the names of its temporaries
 │   │   ├── config.rs            FsCacheConfig
 │   │   ├── error.rs             the two error types callers can tell apart
-│   │   ├── blocking.rs          runs each operation's file I/O on tokio's
-│   │   │                        blocking pool, not on the service worker
+│   │   ├── blocking.rs          runs file I/O on tokio's blocking pool, not on
+│   │   │                        the service worker (Linux page-cache reads aside)
 │   │   ├── nowait.rs            Linux: page-cache reads on the worker, which
 │   │   │                        fail rather than wait for the device
 │   │   ├── hooks.rs             test-only pauses, faults and instrumentation
@@ -293,8 +295,9 @@ test scaffolding, or tooling.
 │                              release-plz.yml (see below)
 ├── .githooks/                 opt-in hooks: pre-commit checks formatting, pre-push
 │                              that the specification still builds
-├── .claude/skills/            AI-assistant skills for writing and querying the
-│                              specification (reqman-context is used below)
+├── .claude/skills/            AI-assistant skills for writing, checking and
+│                              querying the specification (reqman-context is
+│                              used below)
 ├── setup-debian.sh            installs the build and test dependencies on Debian 13
 ├── deny.toml                  cargo-deny policy: advisories, licences, sources
 ├── release-plz.toml           release settings (see Releasing, below)
@@ -311,9 +314,10 @@ test scaffolding, or tooling.
 
 The Nix flake provides the exact toolchain (`nix develop`). On Debian 13,
 `sudo ./setup-debian.sh` installs everything below and is safe to re-run.
-Otherwise you need the Rust toolchain pinned in `rust-toolchain.toml`, Node ≥ 14.8
-for the RFC suite, and OpenSSL. On macOS, which CI does not check (see
-[Caveats](#caveats)), set `export OPENSSL_DIR="$(brew --prefix openssl@3)"` and
+Otherwise you need the Rust toolchain pinned in `rust-toolchain.toml`, Node
+≥ 14.8 for the RFC suite, and OpenSSL. On macOS, which CI does not check
+(see [Caveats](#caveats)), set
+`export OPENSSL_DIR="$(brew --prefix openssl@3)"` and
 `PKG_CONFIG_PATH="$OPENSSL_DIR/lib/pkgconfig"` for a cold build.
 
 ```bash
@@ -380,23 +384,23 @@ cargo test -p durable-cache --release --lib -- --ignored --nocapture integration
 
 `cargo xtask cache-tests` is TC-COMPLIANCE.RFC-01: it starts the `cache-tests`
 origin and runs the whole suite twice against the same proxy — once on
-the stock `MemCache` of `pingora-cache`, once on this backend — and compares the two
-test by test, ranking outcomes pass, then suboptimal, then fail. It fails when
-a test ranks **lower** on this backend than on `MemCache`, which is the
-non-regression HLR-COMPLIANCE.RFC-01 asks for: the backend must add no
-deviation of its own, not fix those of `pingora-cache`. Each backend is run
-`--passes` times (2 by default), and a difference counts only when every pass
-agrees; the rest are reported as timing-dependent.
+the stock `MemCache` of `pingora-cache`, once on this backend — and compares
+the two test by test, ranking outcomes pass, then suboptimal, then fail. It
+fails when a test ranks **lower** on this backend than on `MemCache`, which
+is the non-regression HLR-COMPLIANCE.RFC-01 asks for: the backend must add
+no deviation of its own, not fix those of `pingora-cache`. Each backend is
+run `--passes` times (2 by default), and a difference counts only when every
+pass agrees; the rest are reported as timing-dependent.
 
 It also diffs this backend's own `required` failures against
 `test/cache-tests-baseline.json`, where every entry records why that failure
-belongs to `pingora-cache`, traced to its source, and fails on any `required` failure
-the baseline does not list. That check spans every pass too: a failure gates
-the command only when it failed in all of them, since a test that passed at
-least once did so against the same build and the same origin. One that failed
-some passes is reported as the suite's own flake floor — which is real, and
-includes transport errors and setup failures that never got far enough to
-judge the cache at all.
+belongs to `pingora-cache`, traced to its source, and fails on any `required`
+failure the baseline does not list. That check spans every pass too: a
+failure gates the command only when it failed in all of them, since a test
+that passed at least once did so against the same build and the same origin.
+One that failed some passes is reported as the suite's own flake floor —
+which is real, and includes transport errors and setup failures that never
+got far enough to judge the cache at all.
 
 Do **not** use `cargo test -- --include-ignored` to "run everything": most
 ignored tests in `test/compat/` are deliberate `unimplemented!()` stubs for
@@ -488,16 +492,16 @@ releases nothing. To release:
 
 Publishing reads a crates.io token from the repository's `crates-io`
 environment, which only runs on `main` may use, and only the release job reads
-it, only for that merge. Create the token on crates.io with the publish-new
-and publish-update scopes alone, for the crate `durable-cache`, with an expiry,
-and store it there:
+it, only for that merge. Create the token on crates.io with the
+publish-update scope alone, as the crate already exists, for the crate
+`durable-cache`, with an expiry, and store it there:
 
 ```bash
 gh secret set CARGO_REGISTRY_TOKEN --env crates-io
 ```
 
-Once the crate has its first version on crates.io, trusted publishing can
-replace the token: configure it on crates.io for this repository, the workflow
+Now that the crate is on crates.io, trusted publishing can replace the
+token: configure it on crates.io for this repository, the workflow
 `release-plz.yml` and the environment `crates-io`, give the release job
 `id-token: write`, and delete the secret.
 
@@ -532,7 +536,8 @@ file, rebuild and commit `docs/durable-cache.pdf` with the change.
 
 To have `git push` refuse commits that touch `docs/` when the specification no
 longer builds, enable the repository's hooks once per clone (they also check
-formatting before each commit; see [Building and testing](#building-and-testing)):
+formatting before each commit; see
+[Building and testing](#building-and-testing)):
 
 ```bash
 git config core.hooksPath .githooks
@@ -555,6 +560,17 @@ To query a requirement without reading LaTeX:
 ```bash
 python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
     durable-cache FDS-STORAGE.PUBLISH-02
+```
+
+A pull request that changes what an existing requirement says gives it its
+next version, `-01` becoming `-02`, and every reference follows: the
+specification, code comments, `IMP` markers and the test functions named
+after a test case. `--changed` checks this against a revision and shows what
+each change reaches:
+
+```bash
+python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
+    durable-cache --changed main
 ```
 
 ## Caveats
@@ -639,8 +655,9 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
   device to every flush point, which needs root, a scratch block device, and
   the kernel's replay tool. `tests/persistence_crashsafe.rs` instead
   constructs the on-disk states such a replay produces (a torn in-place
-  update or withdrawal, lost or corrupted body blocks, an unfinished store, an acknowledged
-  purge) and checks the same contract.
+  update or withdrawal, lost or corrupted body blocks, an unfinished store,
+  an acknowledged purge, and, with stores unsynchronised, a body that never
+  reached the device) and checks the same contract.
 - **Built for one Pingora release line at a time.** Any patch release of the
   line named at the top is accepted; moving to the next minor release is a
   deliberate revision, because the `Storage` and eviction surfaces this
@@ -649,7 +666,7 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
   carries a format version (`format::FORMAT_VERSION`), and a Pingora update
   that leaves the format alone keeps the cache warm. When the format does
   change, every existing record reads as a miss and the cache starts cold
-  (`FRE-COMPAT.FORMATUPGRADE-01`). Nothing is mis-decoded, and nothing needs
+  (FRE-COMPAT.FORMATUPGRADE-01). Nothing is mis-decoded, and nothing needs
   deleting by hand: the restart scan reclaims the old records as it walks
   the tree. A golden-bytes test fails if a `pingora-cache` release changes
   the metadata encoding records rely on, so that change always gets a
@@ -673,6 +690,22 @@ file carries an SPDX header naming the authors and the licence;
 ## Licence
 
 Apache-2.0; see [LICENSE](https://github.com/lmalheiro/durable-cache/blob/v0.1.1/LICENSE).
+
+## Pingora references
+
+- [How the Pingora proxy was built][pingora-blog-2022], on the Cloudflare
+  blog, 14 September 2022: a proxy written in Rust that replaced the
+  nginx-based one Cloudflare ran before.
+- [The Pingora framework released as open source][pingora-blog-2024], on the
+  Cloudflare blog, 28 February 2024: a Rust framework for building HTTP
+  proxies, clients and servers, under the Apache License 2.0.
+- [The Cloudflare cache on a Pingora-based proxy][pingora-changelog-2026],
+  in the Cloudflare changelog, 4 May 2026: the cache now runs on a new proxy
+  built on Pingora.
+
+[pingora-blog-2022]: https://blog.cloudflare.com/how-we-built-pingora-the-proxy-that-connects-cloudflare-to-the-internet/
+[pingora-blog-2024]: https://blog.cloudflare.com/pingora-open-source/
+[pingora-changelog-2026]: https://developers.cloudflare.com/changelog/post/2026-05-04-pingora-powers-cache/
 
 ## Trademarks
 
