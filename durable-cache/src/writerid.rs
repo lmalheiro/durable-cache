@@ -6,7 +6,7 @@
 //!
 //! **The problem.** A store writes its record to a temporary file, and
 //! renames it to the object's name once the record is complete
-//! (FDS-STORAGE.PUBLISH-01). A process that crashes leaves its temporaries
+//! (FDS-STORAGE.PUBLISH-02). A process that crashes leaves its temporaries
 //! behind, and the scan at the next start removes them
 //! (FDS-STORAGE.RECLAIM-01). But more than one process can use a cache
 //! directory at the same time: during a hot upgrade, the old process and the
@@ -67,7 +67,7 @@ use std::{fmt, io};
 
 /// The directory under the cache root that holds the leases.
 pub const LEASE_DIR: &str = "writers";
-/// Extension of a per-writer temporary (FDS-STORAGE.PUBLISH-01):
+/// Extension of a per-writer temporary (FDS-STORAGE.PUBLISH-02):
 /// `<hash>.<pid>-<nonce>.<counter>.tmp`.
 pub const TEMP_SUFFIX: &str = "tmp";
 /// A lease's extension.
@@ -95,17 +95,12 @@ impl fmt::Display for WriterId {
 }
 
 impl WriterId {
-    /// A fresh identity for this process. `RandomState` is seeded from the
-    /// operating system's randomness, and the time and a call counter make
-    /// each value differ; exclusive creation of the lease catches the
-    /// unlikely collision anyway.
+    /// A fresh identity for this process; exclusive creation of the lease
+    /// catches the unlikely collision of two nonces.
     fn fresh() -> Self {
-        static CALLS: AtomicU64 = AtomicU64::new(0);
-        let nonce =
-            RandomState::new().hash_one((SystemTime::now(), CALLS.fetch_add(1, Ordering::Relaxed)));
         WriterId {
             pid: std::process::id(),
-            nonce,
+            nonce: random_nonce(),
         }
     }
 
@@ -115,7 +110,7 @@ impl WriterId {
     /// zeros, an uppercase or a short nonce.
     ///
     /// [`Display`]: fmt::Display
-    fn parse(s: &str) -> Option<Self> {
+    pub(crate) fn parse(s: &str) -> Option<Self> {
         let (pid, nonce) = s.split_once('-')?;
         let id = WriterId {
             pid: pid.parse().ok()?,
@@ -123,6 +118,14 @@ impl WriterId {
         };
         (id.to_string() == s).then_some(id)
     }
+}
+
+/// A random 64-bit number. `RandomState` is seeded from the operating
+/// system's randomness, and the time and a call counter make each value
+/// differ.
+pub(crate) fn random_nonce() -> u64 {
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+    RandomState::new().hash_one((SystemTime::now(), CALLS.fetch_add(1, Ordering::Relaxed)))
 }
 
 /// A backend instance's lease, locked for as long as it is held.
@@ -195,7 +198,7 @@ impl WriterLease {
 }
 
 /// The path of writer `id`'s lease under `root`.
-fn lease_path(root: &Path, id: &WriterId) -> PathBuf {
+pub(crate) fn lease_path(root: &Path, id: &WriterId) -> PathBuf {
     root.join(LEASE_DIR).join(format!("{id}.{LEASE_SUFFIX}"))
 }
 
@@ -291,7 +294,7 @@ mod tests {
         nonce: 0x6fd5_a44b_0000_0001,
     };
 
-    /// A temporary's name, as FDS-STORAGE.PUBLISH-01 spells it, parses back
+    /// A temporary's name, as FDS-STORAGE.PUBLISH-02 spells it, parses back
     /// into the parts it was written from.
     #[test]
     fn name_round_trips() {

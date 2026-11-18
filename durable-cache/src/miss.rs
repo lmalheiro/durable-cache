@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `Storage::get_miss_handler` / `HandleMiss` — the write side
-//! (FDS-STORAGE.PUBLISH-01).
+//! (FDS-STORAGE.PUBLISH-02).
 //!
 //! A store writes its own per-writer temporary in the canonical name's own
 //! directory: the header, key, and metadata region when the miss handler
 //! opens (the `CacheMeta` is available then), then the body chunk by chunk,
 //! each folded into a running CRC-32C unless the build leaves out the
 //! `body-crc` feature. `finish` patches `body_len` and `body_crc`,
-//! synchronises the file, and renames it over the canonical name. A store
-//! that never finishes takes its temporary with it, and so does one that an
-//! invalidating purge of its key ended while it was in flight.
+//! synchronises the file unless stores are unsynchronised
+//! (`Durability::NoStoreSync`), and renames it over the canonical name. A
+//! store that never finishes takes its temporary with it, and so does one
+//! that an invalidating purge of its key ended while it was in flight.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -33,10 +34,10 @@ use crate::format::{self, RecordHeader};
 #[cfg(test)]
 use crate::hooks::FaultPoint;
 use crate::inflight::{InFlightWriter, WriteOutcome};
-use crate::{blocking, key_codec, publish, sharding, FsCache};
+use crate::{blocking, key_codec, publish, sharding, Durability, FsCache};
 
 /// How many counter values a store tries before giving up on finding a free
-/// temporary name (FDS-STORAGE.PUBLISH-01, "advance the counter and retry").
+/// temporary name (FDS-STORAGE.PUBLISH-02, "advance the counter and retry").
 /// A name carries this instance's own identity and counter, so no other
 /// store of this backend can hold it: only a file something else put there
 /// under such a name can, and each retry steps past one. Sixteen in a row
@@ -52,7 +53,7 @@ pub(crate) struct PreparedStore {
     header_bytes: Vec<u8>,
 }
 
-// IMP-STORAGE.PUBLISH-01: satisfy FDS-STORAGE.PUBLISH-01
+// IMP-STORAGE.PUBLISH-02: satisfy FDS-STORAGE.PUBLISH-02
 pub struct FsMissHandler {
     cache: &'static FsCache,
     /// The temporary. Shared so each body write can run on the blocking
@@ -64,7 +65,7 @@ pub struct FsMissHandler {
     name: String,
     header: RecordHeader,
     /// CRC-32C over the body bytes accepted so far
-    /// (ADR-PERSISTENCE.DURABILITY-01); stays zero in a build without the
+    /// (ADR-PERSISTENCE.DURABILITY-02); stays zero in a build without the
     /// `body-crc` feature.
     body_crc: u32,
     /// Body bytes written to the temporary so far. Every chunk is written
@@ -90,7 +91,7 @@ impl FsMissHandler {
     /// The CPU-only half of opening a store for `key`: hashing the key and
     /// serialising the metadata. Split out so the borrowed `CacheKey`/`CacheMeta` stay on
     /// the caller's side and only owned bytes reach the blocking pool
-    /// (FDS-STORAGE.EXECUTOR-01).
+    /// (FDS-STORAGE.EXECUTOR-02).
     pub(crate) fn prepare(
         cache: &'static FsCache,
         key: &CacheKey,
@@ -227,17 +228,52 @@ impl FsMissHandler {
                 .or_err_with(ErrorType::FileWriteError, || {
                     format!("writing the header of {}", h.temp_path.display())
                 })?;
-            test_hook! { h.cache.hooks.fault(FaultPoint::SyncTemp)?; }
-            publish::sync_temp(h.file()).or_err_with(ErrorType::FileWriteError, || {
-                format!("synchronising {}", h.temp_path.display())
-            })
+            // A match, so that a durability mode added later must say here
+            // whether its stores are synchronised.
+            let synchronised = match h.cache.config.durability() {
+                Durability::Strict => true,
+                Durability::NoStoreSync => false,
+            };
+            if synchronised {
+                test_hook! { h.cache.hooks.fault(FaultPoint::SyncTemp)?; }
+                publish::sync_temp(h.file()).or_err_with(ErrorType::FileWriteError, || {
+                    format!("synchronising {}", h.temp_path.display())
+                })?;
+            } else {
+                // Unsynchronised: with the discard after a host restart on,
+                // this instance's marker is in place before the rename
+                // (FDS-PERSISTENCE.CRASHDISCARD-01).
+                let wrote = h
+                    .cache
+                    .marker
+                    .ensure(
+                        h.cache.root(),
+                        &h.cache.lease.id(),
+                        #[cfg(test)]
+                        &h.cache.hooks,
+                    )
+                    .or_err_with(ErrorType::FileWriteError, || {
+                        format!(
+                            "writing the unsynchronised-store marker under {}",
+                            h.cache.root().display()
+                        )
+                    })?;
+                test_hook! {
+                    if wrote {
+                        h.cache.hooks.count_marker_write();
+                    }
+                }
+                #[cfg(not(test))]
+                let _ = wrote;
+            }
+            Ok(())
         };
         patch(self).inspect_err(|_| self.failed = true)?;
 
         let record_len = self.header.record_len();
         // A writable backend publishes inside a durable change, so a
         // `set_read_only` in progress cannot land between the check and the
-        // rename (FDS-COMPAT.READONLY-01). The record this store replaces is
+        // rename (FDS-COMPAT.READONLY-02). The record this store replaces is
         // held open across the rename, so the kernel frees it when
         // `replaced` is dropped, at the end, rather than inside the rename,
         // under the lock.
@@ -347,7 +383,7 @@ impl HandleMiss for FsMissHandler {
         }
         // Folding the chunk into the running checksum is pure CPU, so it
         // stays here; the write behind it is a syscall and does not
-        // (FDS-STORAGE.EXECUTOR-01).
+        // (FDS-STORAGE.EXECUTOR-02).
         #[cfg(feature = "body-crc")]
         {
             self.body_crc = crc32c::crc32c_append(self.body_crc, &data);
@@ -381,10 +417,11 @@ impl HandleMiss for FsMissHandler {
     }
 
     async fn finish(self: Box<Self>) -> Result<MissFinishType> {
-        // `finish` patches the header, `fdatasync`s, and renames: three
-        // syscalls, one of them a flush that can take milliseconds on a real
-        // device. So the whole handler moves to the blocking pool
-        // (FDS-STORAGE.EXECUTOR-01), and is dropped there as the closure
+        // `finish` patches the header, `fdatasync`s unless the configured
+        // durability skips it, and renames: up to three syscalls, one of them
+        // a flush that can take milliseconds on a real device. So the whole
+        // handler moves to the blocking pool
+        // (FDS-STORAGE.EXECUTOR-02), and is dropped there as the closure
         // ends, whether the store published or failed. A failed store's
         // `Drop` aborts it and removes its temporary
         // (FRE-COMPAT.ABORTSPACE-01). A published store's closes its handle
@@ -433,7 +470,7 @@ impl Drop for FsMissHandler {
         // behind for FDS-STORAGE.RECLAIM-01's restart-time scan instead.
         if !self.finished {
             // One of the two syscalls this backend still makes on the
-            // caller's thread (FDS-STORAGE.EXECUTOR-01). `Drop` cannot
+            // caller's thread (FDS-STORAGE.EXECUTOR-02). `Drop` cannot
             // await, and the temporary's name must be gone when the drop
             // returns (FRE-COMPAT.ABORTSPACE-01). The unlink is cheap: this
             // handler still has the file open, so it removes only the name.

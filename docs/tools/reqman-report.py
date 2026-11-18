@@ -1574,7 +1574,7 @@ def build_source_index(source_root, skip_dirs=()):
 # implementation source files carry their own marker comments:
 #
 #   // IMP-<SLUG>-<NN>: <relationship> <TARGET-ID> [optional note]
-#   // IMP-STORAGE.PUBLISH-01: satisfy FDS-STORAGE.PUBLISH-01
+#   // IMP-STORAGE.PUBLISH-02: satisfy FDS-STORAGE.PUBLISH-02
 #
 # The IMP id is a real, citable identifier (same PREFIX-SLUG-NN shape as
 # every other requirement ID in this project), authored deliberately at the
@@ -1601,7 +1601,7 @@ def source_url(path, relpath, lineno):
     return template.format(path=relpath.replace(os.sep, "/"), line=lineno)
 
 # Reused for both the IMP id itself and its target: PREFIX-SLUG[.SUB...]-NN,
-# e.g. "FDS-STORAGE.PUBLISH-01", "IMP-STORAGE.PUBLISH-01", "HLR-SCOPE.V1-01".
+# e.g. "FDS-STORAGE.PUBLISH-02", "IMP-STORAGE.PUBLISH-02", "HLR-SCOPE.V1-02".
 _REQ_ID_PATTERN = r"[A-Z]+-[A-Za-z0-9.]+-\d+"
 
 _IMP_MARKER_RE = re.compile(

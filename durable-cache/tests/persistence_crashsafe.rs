@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-PERSISTENCE.CRASHSAFE-01 — Host crash serves no bad content.
+//! TC-PERSISTENCE.CRASHSAFE-02 — Host crash serves no bad content.
 //!
 //! In every state a host crash or power loss could leave on disk, the
 //! restarted cache serves no object whose content differs from what was
 //! stored and no object whose purge it had acknowledged; objects that did
-//! not survive are misses (HLR-PERSISTENCE.CRASHSAFE-01).
+//! not survive are misses (HLR-PERSISTENCE.CRASHSAFE-02).
 //!
 //! The test case's setup replays a device-mapper `log-writes` device to
 //! every flush and FUA point. That needs root, a scratch block device, and
-//! the kernel's replay tool, so it lives as the privileged harness
-//! `test/compat/tests/crashsafe_device.rs`. This file covers the same
-//! contract by constructing the on-disk states such a replay produces —
+//! the kernel's replay tool, and this repository has no harness for it yet.
+//! This file covers the same contract by constructing the on-disk states
+//! such a replay produces —
 //! which is what the design's argument turns on:
 //!
 //! - a store's bytes not yet on stable storage when the name appeared
@@ -23,7 +23,12 @@
 //!   halfway,
 //! - an unfinished store's temporary,
 //! - a purge whose directory entry was written but whose object file's
-//!   blocks were not.
+//!   blocks were not;
+//! - with stores unsynchronised (ADR-PERSISTENCE.UNSYNCED-01), a published
+//!   record whose body never reached the device: zeros under a valid
+//!   header, as a file system that records a file's length first can leave
+//!   it, after a host restart the discard detects; or cut short, as one
+//!   that records the length only once the data is written leaves it.
 
 use durable_cache::recovery::recover;
 use pingora_cache::eviction::simple_lru::Manager;
@@ -32,14 +37,14 @@ use pingora_cache::storage::{PurgeOutcome, Storage};
 
 use super::support;
 
-// IMP-TC.PERSISTENCE.CRASHSAFE-01: satisfy TC-PERSISTENCE.CRASHSAFE-01
+// IMP-TC.PERSISTENCE.CRASHSAFE-02: satisfy TC-PERSISTENCE.CRASHSAFE-02
 
 /// A torn in-place metadata update: the metadata region holds the new
 /// bytes while the header still commits the old ones, or the other way
 /// round. Either way a reader sees one complete version or a miss, never a
 /// mixture of the two.
 #[tokio::test]
-async fn tc_persistence_crashsafe_01_a_torn_metadata_update_is_never_a_mixture() {
+async fn tc_persistence_crashsafe_02_a_torn_metadata_update_is_never_a_mixture() {
     let (cache, tmp) = support::leaked_cache();
     let key = support::key("/crashsafe-torn-meta");
     let first = support::meta_with_header_filler(16);
@@ -101,7 +106,7 @@ async fn tc_persistence_crashsafe_01_a_torn_metadata_update_is_never_a_mixture()
 /// the version without the checksum, or the checksum without the version.
 /// A reader then finds the record as it was, or a miss, never a mixture.
 #[tokio::test]
-async fn tc_persistence_crashsafe_01_a_torn_withdrawal_is_never_a_mixture() {
+async fn tc_persistence_crashsafe_02_a_torn_withdrawal_is_never_a_mixture() {
     use durable_cache::format;
 
     let (cache, tmp) = support::leaked_cache();
@@ -168,7 +173,7 @@ async fn tc_persistence_crashsafe_01_a_torn_withdrawal_is_never_a_mixture() {
 /// An unfinished store's temporary is never served or promoted, and the
 /// restart scan reclaims it once its writer is gone.
 #[tokio::test]
-async fn tc_persistence_crashsafe_01_an_unfinished_store_is_never_served() {
+async fn tc_persistence_crashsafe_02_an_unfinished_store_is_never_served() {
     let (cache, tmp) = support::leaked_cache();
     let key = support::key("/crashsafe-unfinished");
     let meta = support::meta();
@@ -204,7 +209,7 @@ async fn tc_persistence_crashsafe_01_an_unfinished_store_is_never_served() {
 /// which the object could return are exactly the ones in which the purge
 /// was never acknowledged.
 #[tokio::test]
-async fn tc_persistence_crashsafe_01_an_acknowledged_purge_never_returns() {
+async fn tc_persistence_crashsafe_02_an_acknowledged_purge_never_returns() {
     let (cache, tmp) = support::leaked_cache();
     let key = support::key("/crashsafe-purged");
     support::store(cache, &key, &support::meta(), b"purged body").await;
@@ -228,7 +233,7 @@ async fn tc_persistence_crashsafe_01_an_acknowledged_purge_never_returns() {
 /// Every object that did survive is served exactly as stored: the states
 /// above never damage a bystander.
 #[tokio::test]
-async fn tc_persistence_crashsafe_01_surviving_objects_are_served_as_stored() {
+async fn tc_persistence_crashsafe_02_surviving_objects_are_served_as_stored() {
     let (cache, tmp) = support::leaked_cache();
     let mut expected = Vec::new();
     for i in 0..8 {
@@ -254,4 +259,82 @@ async fn tc_persistence_crashsafe_01_surviving_objects_are_served_as_stored() {
             ),
         }
     }
+}
+
+/// Unsynchronised stores, step 4 of the test case. With the discard on, a
+/// record whose body a host crash left as zeros under a valid header is
+/// never served after the restart: the backend, constructed under another
+/// boot, finds the marker and discards the cache. With the discard off, a
+/// record a crash left short, as ext4 in its default `data=ordered` mode
+/// leaves one, is a miss, and the others are served as stored.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn tc_persistence_crashsafe_02_unsynchronised_stores_serve_no_lost_body() {
+    use std::os::unix::fs::FileExt;
+
+    use durable_cache::hooks::HookConfig;
+    use durable_cache::{Durability, FsCacheConfig};
+
+    let boots = support::tempdir();
+    let boot = |id: &str| {
+        let path = boots.path().join(id);
+        std::fs::write(&path, format!("{id}\n")).expect("the boot identity is written");
+        path
+    };
+    let unsynced = |root: &std::path::Path, discard: bool, boot_id: std::path::PathBuf| {
+        support::leaked_cache_configured(
+            FsCacheConfig::new(root, None)
+                .with_durability(Durability::NoStoreSync)
+                .with_discard_after_host_restart(discard),
+            HookConfig {
+                boot_id_path: Some(boot_id),
+                ..HookConfig::default()
+            },
+        )
+    };
+    let body = support::incompressible(20_000, 7).into_bytes();
+
+    // The discard on: a body of zeros under a valid header.
+    let tmp = support::tempdir();
+    let cache = unsynced(tmp.path(), true, boot("before-crash"));
+    let key = support::key("/crashsafe-unsynced-zeros");
+    support::store(cache, &key, &support::meta(), &body).await;
+    let path = support::canonical_path(cache, &key);
+    let header = support::read_header(&path);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .and_then(|f| {
+            f.write_all_at(
+                &vec![0u8; header.body_len() as usize],
+                header.body_offset() as u64,
+            )
+        })
+        .expect("the body is zeroed");
+    // The host crash stopped the instance: its lease is not held any more.
+    std::fs::remove_file(support::lease_path(cache.root(), &cache.lease.id()))
+        .expect("the instance's lease is there");
+    let restarted = unsynced(tmp.path(), true, boot("after-crash"));
+    assert!(
+        support::lookup_body(restarted, &key).await.is_none(),
+        "a body that never reached the device is never served"
+    );
+
+    // The discard off: a record cut short.
+    let tmp = support::tempdir();
+    let cache = unsynced(tmp.path(), false, boot("before-crash-2"));
+    let short = support::key("/crashsafe-unsynced-short");
+    let intact = support::key("/crashsafe-unsynced-intact");
+    support::store(cache, &short, &support::meta(), &body).await;
+    support::store(cache, &intact, &support::meta(), &body).await;
+    support::truncate_by(&support::canonical_path(cache, &short), 4096);
+    let restarted = unsynced(tmp.path(), false, boot("after-crash-2"));
+    assert!(
+        support::lookup_body(restarted, &short).await.is_none(),
+        "a record left short is a miss"
+    );
+    let (_meta, got) = support::lookup_body(restarted, &intact)
+        .await
+        .expect("an intact record is a hit");
+    assert_eq!(got, body, "served as stored");
 }

@@ -32,6 +32,13 @@
 #              options are nightly-only, and `cargo xtask fmt` runs it.
 #   * C deps — a C compiler and pkg-config + libssl-dev for openssl-sys
 #              (the pingora-core `openssl` feature), cmake for libz-ng-sys.
+#   * Cross checks (amd64 hosts only) — the rustup targets
+#              i686-unknown-linux-gnu and x86_64-unknown-linux-musl for the
+#              pinned toolchain, with gcc-multilib (32-bit glibc) and
+#              musl-tools (musl-gcc; musl 1.2.5 on Debian 13): even
+#              `cargo check --target` builds the C of zstd-sys and libz-ng-sys
+#              for its target. They check the 32-bit glibc and the musl code
+#              of durable-cache/src/nowait.rs, which no CI job builds.
 #   * nextest — cargo-nextest, which CI uses to run the test suites; not
 #              packaged by Debian, so the upstream prebuilt binary (GitHub
 #              release, SHA-256 verified) is installed
@@ -163,6 +170,20 @@ APT_PACKAGES=(
     npm                         # `npm install` / `npm run` in cache-tests
 )
 
+# The targets of the cross checks, and the C toolchains the build scripts of
+# the -sys crates need for them. On amd64 hosts only: Debian builds no
+# gcc-multilib for arm64.
+CROSS_TARGETS=()
+if [ "$(dpkg --print-architecture)" = "amd64" ]; then
+    CROSS_TARGETS=(i686-unknown-linux-gnu x86_64-unknown-linux-musl)
+    APT_PACKAGES+=(
+        gcc-multilib            # 32-bit glibc headers and libraries, for the
+                                #   C of -sys crates on i686-unknown-linux-gnu
+        musl-tools              # musl-gcc, for the C of -sys crates on
+                                #   x86_64-unknown-linux-musl
+    )
+fi
+
 # Print each package from "$@" that dpkg does not report as installed.
 missing_packages() {
     local pkg status
@@ -189,6 +210,16 @@ rust_toolchain_ready() {
 rustfmt_toolchain_ready() {
     as_target_user rustup component list --installed \
         --toolchain "$RUSTFMT_TOOLCHAIN" 2>/dev/null | grep -q "^rustfmt-"
+}
+
+# Succeeds when TARGET_USER's RUST_CHANNEL has every target in CROSS_TARGETS.
+cross_targets_ready() {
+    local installed target
+    installed="$(as_target_user rustup target list --installed \
+        --toolchain "$RUST_CHANNEL" 2>/dev/null)" || return 1
+    for target in "${CROSS_TARGETS[@]}"; do
+        grep -qx "$target" <<< "$installed" || return 1
+    done
 }
 
 # Print the version of the cargo-nextest at NEXTEST_BIN, or nothing.
@@ -249,6 +280,14 @@ if [ "$DO_INSTALL" -eq 1 ]; then
     else
         echo "==> rustfmt: installing $RUSTFMT_TOOLCHAIN (minimal, rustfmt) for $TARGET_USER"
         as_target_user rustup toolchain install "$RUSTFMT_TOOLCHAIN" --profile minimal --component rustfmt
+    fi
+    if [ "${#CROSS_TARGETS[@]}" -eq 0 ]; then
+        echo "==> cross targets: none on $(dpkg --print-architecture)"
+    elif cross_targets_ready; then
+        echo "==> cross targets: ${CROSS_TARGETS[*]} already installed for $TARGET_USER"
+    else
+        echo "==> cross targets: adding ${CROSS_TARGETS[*]} to $RUST_CHANNEL for $TARGET_USER"
+        as_target_user rustup target add --toolchain "$RUST_CHANNEL" "${CROSS_TARGETS[@]}"
     fi
 
     # --- cargo-nextest (system-wide) ---------------------------------------
@@ -327,6 +366,13 @@ check_cmd() {
     fi
 }
 
+# Succeeds when the compiler command "$@" builds and links a C program that
+# includes a libc header.
+c_toolchain_builds() {
+    printf '#include <stdio.h>\nint main(void) { return 0; }\n' \
+        | "$@" -x c - -o /dev/null >/dev/null 2>&1
+}
+
 check_sty() {
     local sty="$1"
     if kpsewhich "$sty.sty" >/dev/null 2>&1; then
@@ -402,6 +448,28 @@ if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists openssl; then
 else
     printf '  MISSING openssl development files (libssl-dev)\n'
     failures=$((failures + 1))
+fi
+if [ "${#CROSS_TARGETS[@]}" -gt 0 ]; then
+    if command -v rustup >/dev/null 2>&1 && cross_targets_ready; then
+        printf '  ok      targets %s of %s for %s\n' "${CROSS_TARGETS[*]}" \
+            "$RUST_CHANNEL" "$TARGET_USER"
+    else
+        printf '  MISSING targets %s of %s for %s\n' "${CROSS_TARGETS[*]}" \
+            "$RUST_CHANNEL" "$TARGET_USER"
+        failures=$((failures + 1))
+    fi
+    if c_toolchain_builds cc -m32; then
+        printf '  ok      cc -m32 builds 32-bit programs (gcc-multilib)\n'
+    else
+        printf '  MISSING a 32-bit C toolchain: cc -m32 cannot build a program (gcc-multilib)\n'
+        failures=$((failures + 1))
+    fi
+    if command -v musl-gcc >/dev/null 2>&1 && c_toolchain_builds musl-gcc; then
+        printf '  ok      musl-gcc builds musl programs (musl-tools)\n'
+    else
+        printf '  MISSING musl-gcc, or it cannot build a program (musl-tools)\n'
+        failures=$((failures + 1))
+    fi
 fi
 nextest_version="$(nextest_installed_version)"
 if [ "$nextest_version" = "$NEXTEST_VERSION" ]; then
@@ -486,3 +554,12 @@ Next steps (as your normal user, not root):
     cargo xtask cache-tests                      # RFC 9111 suite (Node)
 
 EOF
+if [ "${#CROSS_TARGETS[@]}" -gt 0 ]; then
+    cat <<EOF
+  The 32-bit glibc and musl code, which no CI job builds:
+
+    cargo check -p durable-cache --lib --target i686-unknown-linux-gnu
+    cargo check -p durable-cache --lib --target x86_64-unknown-linux-musl
+
+EOF
+fi

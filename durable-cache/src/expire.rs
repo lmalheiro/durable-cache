@@ -35,7 +35,7 @@ use crate::{key_codec, metaupdate, FsCache};
 /// Expire the record at `key`'s canonical path. The caller resolves the
 /// `PurgeTarget` (an `Identified` one names a generation this backend never
 /// issued, ADR-COMPAT.ENTRYID-01) and hands an owned key in, so this can run
-/// on the blocking pool (FDS-STORAGE.EXECUTOR-01).
+/// on the blocking pool (FDS-STORAGE.EXECUTOR-02).
 ///
 /// Synchronous throughout, as `update_meta` is: the read-only gate and the
 /// publication lock are held across the durable part, and neither may be
@@ -107,7 +107,7 @@ pub(crate) fn expire_key(cache: &'static FsCache, key: &CompactCacheKey) -> Resu
 /// Read the record, or `None` when nothing readable is stored under the
 /// key.
 ///
-/// A record that fails the read-time validation SDS-LAYOUT.OBJECTFILE-01
+/// A record that fails the read-time validation SDS-LAYOUT.OBJECTFILE-02
 /// specifies — damaged, truncated, written under another format version, or
 /// withdrawn — is reported absent, which is exactly what a lookup of the
 /// same record reports, and is left for the restart scan

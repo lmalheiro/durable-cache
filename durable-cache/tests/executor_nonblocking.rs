@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-STORAGE.EXECUTOR-01: no `Storage` call blocks the worker it is polled
-//! on (FDS-STORAGE.EXECUTOR-01).
+//! TC-STORAGE.EXECUTOR-02: no `Storage` call blocks the worker it is polled
+//! on (FDS-STORAGE.EXECUTOR-02).
 //!
 //! Pingora gives each service one worker thread by default, so a backend
 //! that runs its syscalls inline stalls every other connection that worker
@@ -20,11 +20,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use durable_cache::FsCacheConfig;
 use pingora_cache::storage::Storage;
 
 use super::support;
 
-// IMP-TC.STORAGE.EXECUTOR-01: satisfy TC-STORAGE.EXECUTOR-01
+// IMP-TC.STORAGE.EXECUTOR-02: satisfy TC-STORAGE.EXECUTOR-02
 
 /// The longest a single `Storage` call may keep the worker to itself.
 ///
@@ -78,7 +79,7 @@ fn single_worker_runtime() -> tokio::runtime::Runtime {
 }
 
 #[test]
-fn tc_storage_executor_01_storage_calls_do_not_stall_the_worker() {
+fn tc_storage_executor_02_storage_calls_do_not_stall_the_worker() {
     let rt = single_worker_runtime();
     rt.block_on(async {
         let (cache, _tmp) = support::leaked_cache();
@@ -116,7 +117,7 @@ fn tc_storage_executor_01_storage_calls_do_not_stall_the_worker() {
             worst < MAX_STALL,
             "a co-resident task was kept off the worker for {worst:?}, over the {MAX_STALL:?} \
              bound: a Storage call is running its file I/O inline instead of on the blocking \
-             pool (FDS-STORAGE.EXECUTOR-01)"
+             pool (FDS-STORAGE.EXECUTOR-02)"
         );
     });
 }
@@ -125,10 +126,23 @@ fn tc_storage_executor_01_storage_calls_do_not_stall_the_worker() {
 /// store: the write path and the read path are both active, which is when
 /// the backend has the most opportunity to hold the worker.
 #[test]
-fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
+fn tc_storage_executor_02_streaming_does_not_stall_the_worker() {
+    streaming_does_not_stall_the_worker(std::convert::identity);
+}
+
+/// Step 8: the same with page-cache reads switched off, so the partial hit
+/// opens and reads the store's temporary on the blocking pool.
+#[cfg(target_os = "linux")]
+#[test]
+fn tc_storage_executor_02_streaming_through_the_pool_does_not_stall_the_worker() {
+    streaming_does_not_stall_the_worker(|config| config.with_page_cache_reads(false));
+}
+
+fn streaming_does_not_stall_the_worker(configure: fn(FsCacheConfig) -> FsCacheConfig) {
     let rt = single_worker_runtime();
     rt.block_on(async {
-        let (cache, _tmp) = support::leaked_cache();
+        let tmp = support::tempdir();
+        let cache = support::leaked_cache_with(configure(FsCacheConfig::new(tmp.path(), None)));
         let key = support::key("/executor-streaming");
         let chunk = vec![7u8; 1024 * 1024];
         let trace = support::inactive_trace();
@@ -162,7 +176,7 @@ fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
         assert!(
             worst < MAX_STALL,
             "a co-resident task was kept off the worker for {worst:?} while a follower streamed \
-             an in-flight store, over the {MAX_STALL:?} bound (FDS-STORAGE.EXECUTOR-01)"
+             an in-flight store, over the {MAX_STALL:?} bound (FDS-STORAGE.EXECUTOR-02)"
         );
     });
 }
@@ -173,7 +187,7 @@ fn tc_storage_executor_01_streaming_does_not_stall_the_worker() {
 /// removal is held where it frees its file, and another task on the scan's
 /// single worker still runs meanwhile.
 #[test]
-fn tc_storage_executor_01_the_restart_scan_frees_files_off_the_worker() {
+fn tc_storage_executor_02_the_restart_scan_frees_files_off_the_worker() {
     use durable_cache::hooks::PausePoint;
     use durable_cache::recovery::recover;
     use pingora_cache::eviction::simple_lru::Manager;
@@ -239,7 +253,7 @@ fn tc_storage_executor_01_the_restart_scan_frees_files_off_the_worker() {
         assert!(
             free,
             "{case}: the scan's worker stayed blocked while the file was freed \
-             (FDS-STORAGE.EXECUTOR-01)"
+             (FDS-STORAGE.EXECUTOR-02)"
         );
     }
 }
@@ -250,7 +264,7 @@ fn tc_storage_executor_01_the_restart_scan_frees_files_off_the_worker() {
 /// manager hears an admission and a removal for each record, and another
 /// task on the scan's single worker runs between any two of those calls.
 #[test]
-fn tc_storage_executor_01_the_restart_scan_yields_between_records() {
+fn tc_storage_executor_02_the_restart_scan_yields_between_records() {
     use std::sync::Mutex;
     use std::time::SystemTime;
 
@@ -385,6 +399,6 @@ fn tc_storage_executor_01_the_restart_scan_yields_between_records() {
             .windows(2)
             .all(|w| w[0] == "other" || w[1] == "other"),
         "the scan called the eviction manager twice without letting another task run \
-         (FDS-STORAGE.EXECUTOR-01): {events:?}"
+         (FDS-STORAGE.EXECUTOR-02): {events:?}"
     );
 }

@@ -44,6 +44,12 @@ thiserror.workspace = true
 # rt: spawn_blocking and yield_now; sync: broadcast and Notify; time: sleep.
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
+# Lookups from the page cache on the worker (src/nowait.rs): `openat2` with
+# `RESOLVE_CACHED` and a lookup's reads, `preadv2` with `RWF_NOWAIT`, without
+# `unsafe`. A hit's body reads go through libc, into memory not zeroed first.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 pingora-http.workspace = true
@@ -56,7 +62,7 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 [features]
 default = ["body-crc"]
 # Compute each body's CRC-32C while it is stored and record it in the header
-# (ADR-PERSISTENCE.DURABILITY-01). Serving a hit does not check it: integrity
+# (ADR-PERSISTENCE.DURABILITY-02). Serving a hit does not check it: integrity
 # at rest is the storage layer's. Without the feature (`default-features =
 # false`), a store skips the computation and its record carries zero.
 body-crc = []

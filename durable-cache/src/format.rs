@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The on-disk record format (SDS-LAYOUT.OBJECTFILE-01): the record header,
+//! The on-disk record format (SDS-LAYOUT.OBJECTFILE-02): the record header,
 //! the offsets derived from it, how a valid header is built and sealed, and
 //! what the metadata checksum covers.
 //!
@@ -15,9 +15,9 @@ use std::mem::{offset_of, size_of};
 use zerocopy::little_endian::{U32, U64};
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
-// IMP-LAYOUT.OBJECTFILE-01: satisfy SDS-LAYOUT.OBJECTFILE-01
+// IMP-LAYOUT.OBJECTFILE-02: satisfy SDS-LAYOUT.OBJECTFILE-02
 /// The fixed record header, exactly as it lies on disk
-/// (SDS-LAYOUT.OBJECTFILE-01, "Record header: one aligned block").
+/// (SDS-LAYOUT.OBJECTFILE-02, "Record header: one aligned block").
 ///
 /// The backend works on it directly: a record's first [`HEADER_LEN`] bytes
 /// are read straight into it and written straight from it. The fields are
@@ -72,7 +72,7 @@ pub struct RecordHeader {
     /// CRC-32C over the body's `body_len` bytes, folded chunk by chunk as the
     /// body streams in and patched in by `finish`; zero in a build without
     /// the `body-crc` feature. Serving a hit does not check it: integrity at
-    /// rest is the storage layer's (ADR-PERSISTENCE.DURABILITY-01). A build
+    /// rest is the storage layer's (ADR-PERSISTENCE.DURABILITY-02). A build
     /// with `body-crc-verify` can switch on a check that logs a mismatch once
     /// a read has delivered the whole body from its start. A stored zero is
     /// never checked.
@@ -261,7 +261,7 @@ impl RecordHeader {
     }
 
     /// Offset of the metadata region: right after the key, unpadded
-    /// (SDS-LAYOUT.OBJECTFILE-01, "Segment placement"). Nothing reads the
+    /// (SDS-LAYOUT.OBJECTFILE-02, "Segment placement"). Nothing reads the
     /// region in place, so its segments need no alignment.
     pub fn meta_region_offset(&self) -> usize {
         KEY_OFFSET + self.key_len.get() as usize

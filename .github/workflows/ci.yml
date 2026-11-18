@@ -54,7 +54,7 @@ jobs:
       - name: clippy with the metrics feature
         run: nix develop -c cargo clippy -p durable-cache --features metrics --all-targets -- -D warnings
 
-      # The body CRC's two optional builds (ADR-PERSISTENCE.DURABILITY-01):
+      # The body CRC's two optional builds (ADR-PERSISTENCE.DURABILITY-02):
       # without it at all, and with the read-time check available.
       - name: Group C without default features (no body CRC)
         run: nix develop -c cargo nextest run --profile ci -p durable-cache --no-default-features

@@ -12,3 +12,19 @@ pub mod http_client;
 pub mod mock_origin;
 pub mod process;
 pub mod tamper;
+
+use std::path::{Path, PathBuf};
+
+/// A fresh temporary directory for a cache. It lies under the build's target
+/// directory, on disk, rather than in the system's temporary directory:
+/// page-cache reads, on by default on Linux, need a file system with
+/// non-blocking reads, which tmpfs lacks (`FsCacheConfig::with_page_cache_reads`).
+pub fn cache_dir() -> tempfile::TempDir {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+    let base = target.join("test-tmp");
+    std::fs::create_dir_all(&base).expect("a directory for temporary caches");
+    tempfile::tempdir_in(&base).expect("a temporary directory for a cache")
+}

@@ -14,7 +14,7 @@
 //! record whose checksums kept failing ([`ChangeLocks::lock_key`]), and
 //! never enters the gate.
 //!
-//! **The read-only gate** (FDS-COMPAT.READONLY-01) decides whether this
+//! **The read-only gate** (FDS-COMPAT.READONLY-02) decides whether this
 //! process may still make changes. Every change enters it and stays inside,
 //! alongside any other changes, until it is done.
 //! [`ChangeLocks::set_read_only`], called when a hot upgrade hands the
@@ -243,7 +243,7 @@ impl ChangeLocks {
     /// progress, and none can begin. A lookup takes it to read once more a
     /// record whose checksums kept failing: every in-place metadata update
     /// holds this lock from its first write to its last, so under it the
-    /// record is whole (SDS-LAYOUT.OBJECTFILE-01). A reader changes nothing,
+    /// record is whole (SDS-LAYOUT.OBJECTFILE-02). A reader changes nothing,
     /// so it does not enter the read-only gate, and this works once the
     /// backend is read-only too.
     ///
@@ -266,7 +266,7 @@ impl ChangeLocks {
         // the in-place metadata update: it writes the metadata region, then
         // the header, and a stop between the two leaves a record whose
         // metadata checksum fails, which reads as a miss
-        // (ADR-PERSISTENCE.DURABILITY-01, TC-PERSISTENCE.CRASHSAFE-01). The
+        // (ADR-PERSISTENCE.DURABILITY-02, TC-PERSISTENCE.CRASHSAFE-02). The
         // restart scan's admission checks change no file.
         //
         // The first taker after the panic logs it and clears the poison, so

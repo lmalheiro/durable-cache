@@ -59,7 +59,7 @@
 
   While a store is in flight, the object is written in that same
   second-level directory as a per-writer temporary, named per
-  \reqref{FDS-STORAGE.PUBLISH-01} (e.g.\
+  \reqref{FDS-STORAGE.PUBLISH-02} (e.g.\
   \texttt{a1/b2/a1b2c3d4e5f6\dots.4711-6fd5a44b00000001.17.tmp} for store~17
   of the backend instance holding the lease
   \texttt{writers/4711-6fd5a44b00000001.lock});
@@ -120,7 +120,7 @@
   \satisfy{REQ-EFFICIENCY.DIRSCALE-01}
   \satisfy{FRE-COMPLIANCE.VARY-01}
   \satisfy{FRE-COMPLIANCE.VARYISOLATION-01}
-  \trace{FDS-STORAGE.PUBLISH-01}
+  \trace{FDS-STORAGE.PUBLISH-02}
   \trace{ADR-EFFICIENCY.COMPACTION-01}
   \trace{FRE-COMPAT.STREAMING-01}
 
@@ -223,7 +223,7 @@
   \refine{SDS-LAYOUT.SHARDING-01}
 \end{requirement}
 
-\begin{requirement}{SDS-LAYOUT.OBJECTFILE-01}[draft][structuralRequirement]{Object-file record layout}
+\begin{requirement}{SDS-LAYOUT.OBJECTFILE-02}[draft][structuralRequirement]{Object-file record layout}
 
   \localreqdiagram*{dsn2}{\reqid}{\reqdesc}
 
@@ -304,7 +304,7 @@
       two metadata segments.
     \item \texttt{body\_crc} (u32, offset 36): CRC-32C over the body's
       \texttt{body\_len} bytes, recorded at store completion
-      (\reqref{ADR-PERSISTENCE.DURABILITY-01}); zero in a build without the
+      (\reqref{ADR-PERSISTENCE.DURABILITY-02}); zero in a build without the
       \texttt{body-crc} feature. A reader never checks a stored zero.
     \item \texttt{header\_crc} (u32, offset 40): CRC-32C over header bytes
       0--39.
@@ -395,9 +395,10 @@
   (\reqref{FDS-STORAGE.PARTIAL-01}); the on-disk header is \emph{not}
   the source of truth for readers of an in-flight write. At completion the
   backend patches \texttt{body\_len} and \texttt{body\_crc}, recomputes
-  \texttt{header\_crc}, synchronises the file's data to stable storage, and
+  \texttt{header\_crc}, synchronises the file's data to stable storage unless
+  stores are unsynchronised (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and
   renames the temporary to the canonical name
-  (\reqref{FDS-STORAGE.PUBLISH-01}, \reqref{ADR-PERSISTENCE.DURABILITY-01}).
+  (\reqref{FDS-STORAGE.PUBLISH-02}, \reqref{ADR-PERSISTENCE.DURABILITY-02}).
 
   A reader accepts a published record only if, in this order: the magic and
   \texttt{version} match this layout's; \texttt{header\_crc} verifies; the
@@ -409,13 +410,13 @@
   sizes any read by a length the header carries, so no header, however
   forged, makes it allocate or read beyond the file. Any failure --- a truncated
   file, a torn or foreign record --- makes the lookup report a miss, so a
-  damaged record is never served (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}). The
+  damaged record is never served (\reqref{FRE-COMPLIANCE.INCOMPLETE-02}). The
   reader does not remove the file: a later store of the same key replaces it,
   and the restart-time scan reclaims it (\reqref{FDS-STORAGE.RECLAIM-01}),
   so a lookup never unlinks a path whose content may have changed since it
   opened it. A reader does not check the body against \texttt{body\_crc}:
   integrity at rest is the storage layer's
-  (\reqref{ADR-PERSISTENCE.DURABILITY-01}). A build with the
+  (\reqref{ADR-PERSISTENCE.DURABILITY-02}). A build with the
   \texttt{body-crc-verify} feature can switch a check on in its
   configuration: a reader that streams the whole body from its start then
   computes CRC-32C over the bytes it delivers and, at the end, compares it
@@ -468,7 +469,7 @@
     the computed body offset plus \texttt{body\_len} --- is indistinguishable
     from any other: the lookup reports a miss and leaves the file for a later
     store or the restart-time scan
-    (\reqref{FRE-COMPLIANCE.INCOMPLETE-01}, verified by
+    (\reqref{FRE-COMPLIANCE.INCOMPLETE-02}, verified by
     \reqref{TC-LAYOUT.OBJECTFILE-01}). On a hit, the already-validated file
     stays open and every \texttt{read\_body} call simply advances through
     it; unlike Figure~\ref{fig:fds-publish-seq}'s concurrent
@@ -485,7 +486,7 @@
   are rewritten in the region, then \texttt{internal\_len},
   \texttt{header\_len}, and the CRCs are updated --- the body is never
   touched --- and nothing is synchronised to stable storage
-  (\reqref{ADR-PERSISTENCE.DURABILITY-01}). A reader that catches the update
+  (\reqref{ADR-PERSISTENCE.DURABILITY-02}). A reader that catches the update
   mid-write sees a CRC mismatch and re-reads the header and metadata region,
   up to three more times, yielding to other tasks between attempts. If all
   four reads mismatch --- the updater may have been stopped between its two
@@ -654,15 +655,15 @@
   \reqcover{satisfy}{IMP}
 
   \refine{ADR-STORAGE.OBJECTFILE-01}
-  \refine{ADR-PERSISTENCE.DURABILITY-01}
+  \refine{ADR-PERSISTENCE.DURABILITY-02}
   \satisfy{FRE-COMPAT.FORMATUPGRADE-01}
-  \satisfy{FRE-COMPLIANCE.INCOMPLETE-01}
+  \satisfy{FRE-COMPLIANCE.INCOMPLETE-02}
   \satisfy{FRE-COMPLIANCE.HEADERS-01}
   \satisfy{FRE-COMPLIANCE.FRESHNESS-01}
   \satisfy{FRE-COMPLIANCE.VALIDATORS-01}
   \satisfy{FRE-COMPLIANCE.BODY-01}
   \satisfy{FRE-COMPLIANCE.TRAILERS-01}
-  \trace{FDS-STORAGE.PUBLISH-01}
+  \trace{FDS-STORAGE.PUBLISH-02}
   \trace{FDS-STORAGE.METAUPDATE-01}
   \trace{ADR-EFFICIENCY.COMPACTION-01}
   \trace{FRE-COMPLIANCE.REVALIDATION-01}
@@ -677,7 +678,7 @@
 
   \localreqdiagram*{dsn3}{\reqid}{\reqdesc}
 
-  The key segment of a record (\reqref{SDS-LAYOUT.OBJECTFILE-01}) holds the
+  The key segment of a record (\reqref{SDS-LAYOUT.OBJECTFILE-02}) holds the
   object's
   \texttt{CompactCacheKey}\footnote{\pgsrc{pingora-cache/src/key.rs}{153}{\texttt{CompactCacheKey}}.}
   as these fields, in this order, with no padding between them:
@@ -720,7 +721,7 @@
   record whose key does not decode.}
   \reqcover{satisfy}{IMP}
 
-  \refine{SDS-LAYOUT.OBJECTFILE-01}
+  \refine{SDS-LAYOUT.OBJECTFILE-02}
   \trace{FDS-EVICTION.STARTUP-01}
   \trace{FDS-STORAGE.RECLAIM-01}
   \trace{FRE-COMPAT.FORMATUPGRADE-01}
@@ -742,7 +743,7 @@
   force every integrator to reimplement the same scan-and-reconcile
   sequencing below, and doing so from outside the crate would mean exposing
   the private on-disk object-record format this specification keeps
-  internal everywhere else (\reqref{SDS-LAYOUT.OBJECTFILE-01}); folding it
+  internal everywhere else (\reqref{SDS-LAYOUT.OBJECTFILE-02}); folding it
   into a custom \texttt{EvictionManager} was already ruled out by
   \reqref{ADR-COMPAT.EVICTION-01}, which adopted the stock manager
   specifically to avoid building one. The cost is a second public API
@@ -758,7 +759,7 @@
   records, per \reqref{ADR-COMPAT.EVICTION-01}. On the incoming side of a hot
   upgrade the integrator calls it only once its server holds the listening
   sockets and the upgrade's close timeout has elapsed
-  (\reqref{FDS-COMPAT.READONLY-01}). \texttt{recover()} enumerates the tree
+  (\reqref{FDS-COMPAT.READONLY-02}). \texttt{recover()} enumerates the tree
   (\reqref{ADR-PERSISTENCE.MECHANISM-01}), classifying each entry as
   \reqref{FDS-STORAGE.RECLAIM-01} specifies, and admits every record it keeps
   with \texttt{admit(entry key, size, fresh\_until)}, where the entry key is the
@@ -767,19 +768,19 @@
   \texttt{HttpCache} builds for a live admission, so the two paths address one
   entry rather than two --- and \texttt{size} is the
   record size --- the file's length --- the same size a completed store
-  reports (\reqref{FDS-STORAGE.PUBLISH-01}). Each \texttt{admit} may return
+  reports (\reqref{FDS-STORAGE.PUBLISH-02}). Each \texttt{admit} may return
   eviction victims --- the manager deducts their sizes immediately and
   expects the caller to remove them from storage --- so the procedure shall
   purge every returned victim from \texttt{Storage} as an eviction, naming it by
   the exact entry the manager returned (\texttt{PurgeTarget::Exact}), exactly
   as \texttt{HttpCache} does after a live admission; a store found over its
   budget at startup is thereby brought back under it. Once the backend is
-  read-only (\reqref{FDS-COMPAT.READONLY-01}), the procedure shall stop: it
+  read-only (\reqref{FDS-COMPAT.READONLY-02}), the procedure shall stop: it
   reads no further entry, and skips its remaining admissions and ghost-entry
   checks, since the eviction manager they would update is discarded when the
   process exits. It shall stop the same way, run by the hot-upgrade
   helper's recovery service, once the server starts shutting down
-  (\reqref{FDS-COMPAT.READONLY-01}). \texttt{recover()}
+  (\reqref{FDS-COMPAT.READONLY-02}). \texttt{recover()}
   returns once enumeration and the reconciliation below have completed; that
   return is the backend reporting its restart procedure complete
   (\reqref{FRE-COMPAT.EVICTION-01}).
@@ -853,13 +854,13 @@
 
   \refine{ADR-COMPAT.EVICTION-01}
   \trace{ADR-PERSISTENCE.MECHANISM-01}
-  \trace{FDS-COMPAT.READONLY-01}
+  \trace{FDS-COMPAT.READONLY-02}
   \trace{FDS-STORAGE.RECLAIM-01}
   \satisfy{FRE-COMPAT.EVICTION-01}
   \satisfy{FRE-COMPAT.HOTUPGRADE-01}
 \end{requirement}
 
-\begin{requirement}{FDS-COMPAT.READONLY-01}[draft][functionalRequirement]{Read-only on the upgrade signal}
+\begin{requirement}{FDS-COMPAT.READONLY-02}[draft][functionalRequirement]{Read-only on the upgrade signal}
 
   \localreqdiagram*{fdsreadonly01}{\reqid}{\reqdesc}
 
@@ -876,7 +877,7 @@
 
   \textbf{The read-only gate.} The backend shall keep a process-wide
   \emph{read-only} flag behind a read--write gate. Every durable change ---
-  a store's final rename (\reqref{FDS-STORAGE.PUBLISH-01}), a purge's unlink
+  a store's final rename (\reqref{FDS-STORAGE.PUBLISH-02}), a purge's unlink
   (\reqref{FDS-STORAGE.PURGE-01}), either path of a metadata update
   (\reqref{FDS-STORAGE.METAUPDATE-01}) or of an expiry
   (\reqref{FDS-STORAGE.EXPIRE-01}), and a reclaim unlink
@@ -887,7 +888,10 @@
   (\reqref{FDS-STORAGE.METAUPDATE-01}): every taker of that lock enters the
   gate first. \texttt{set\_read\_only} takes the gate exclusively to set the
   flag, so when it returns, nothing that entered the gate before it is still
-  running, and nothing can enter afterwards.
+  running, and nothing can enter afterwards. It does not flush the cache,
+  and so returns as soon as the changes in progress end: the hot-upgrade
+  helper flushes it afterwards, on the blocking pool
+  (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}).
 
   \textbf{Once read-only.} The process keeps draining its sessions; only its
   backend's changes to the shared cache stop. From then on the backend

@@ -49,7 +49,7 @@ async fn store_set(cache: &'static FsCache, keys: &[pingora_cache::CacheKey]) {
 /// exactly as stored.
 #[tokio::test]
 async fn tc_compat_formatupgrade_01_same_format_reads_every_object() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::tempdir();
     let keys = keys();
     store_set(cache_at(tmp.path()), &keys).await;
 
@@ -67,7 +67,7 @@ async fn tc_compat_formatupgrade_01_same_format_reads_every_object() {
 /// over.
 #[tokio::test]
 async fn tc_compat_formatupgrade_01_another_format_revision_is_a_miss_never_decoded() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::tempdir();
     let keys = keys();
     let writer = cache_at(tmp.path());
     store_set(writer, &keys).await;

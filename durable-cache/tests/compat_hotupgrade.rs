@@ -70,7 +70,7 @@ fn tc_compat_hotupgrade_01_the_scan_waits_for_the_takeover() {
     assert!(
         waited >= CLOSE_TIMEOUT,
         "the scan must start no sooner than the close timeout after the \
-         takeover (FDS-COMPAT.READONLY-01); it started {waited:?} after it"
+         takeover (FDS-COMPAT.READONLY-02); it started {waited:?} after it"
     );
     running.stop(ShutdownSignal::FastShutdown);
 }
@@ -109,7 +109,7 @@ fn tc_compat_hotupgrade_01_an_upgrade_makes_the_backend_read_only() {
     run_until(cache, ShutdownSignal::GracefulUpgrade);
     assert!(
         cache.is_read_only(),
-        "the upgrade signal makes the backend read-only (FDS-COMPAT.READONLY-01)"
+        "the upgrade signal makes the backend read-only (FDS-COMPAT.READONLY-02)"
     );
 }
 
@@ -121,7 +121,7 @@ fn tc_compat_hotupgrade_01_a_terminate_leaves_the_backend_writable() {
     run_until(cache, ShutdownSignal::GracefulTerminate);
     assert!(
         !cache.is_read_only(),
-        "a terminate leaves the backend writable (FDS-COMPAT.READONLY-01)"
+        "a terminate leaves the backend writable (FDS-COMPAT.READONLY-02)"
     );
 }
 

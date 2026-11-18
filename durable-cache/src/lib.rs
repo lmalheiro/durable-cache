@@ -21,7 +21,7 @@
 //! `EvictionManager` instance, which this crate has no opinion about. On a
 //! Pingora server, [`hotupgrade::install`] does that and makes the backend
 //! read-only on a hot upgrade, and is required for hot upgrades
-//! (FDS-COMPAT.READONLY-01).
+//! (FDS-COMPAT.READONLY-02).
 //!
 //! **Deployment constraint.** Every process sharing one cache directory
 //! must run on the same host, with the directory on a local file system:
@@ -57,6 +57,7 @@ macro_rules! test_hook {
 
 mod blocking;
 mod config;
+pub(crate) mod crashdiscard;
 pub(crate) mod dircache;
 mod error;
 pub(crate) mod expire;
@@ -71,6 +72,8 @@ pub(crate) mod lookup;
 pub(crate) mod metaupdate;
 pub(crate) mod metrics;
 pub(crate) mod miss;
+#[cfg(target_os = "linux")]
+pub(crate) mod nowait;
 pub(crate) mod publish;
 pub(crate) mod purge;
 pub(crate) mod reclaim;
@@ -80,7 +83,7 @@ pub(crate) mod sharding;
 mod storage_impl;
 pub(crate) mod writerid;
 
-pub use config::FsCacheConfig;
+pub use config::{Durability, FsCacheConfig};
 pub use recovery::{recover, RecoveryReport};
 pub use storage_impl::FsCache;
 
@@ -117,7 +120,8 @@ extern crate self as durable_cache;
 #[cfg(test)]
 #[path = "../tests"]
 mod integration_tests {
-    mod support;
+    // Reachable from the crate's unit tests too, for `support::tempdir()`.
+    pub(super) mod support;
 
     mod compat_abortspace;
     mod compat_body;
@@ -145,8 +149,12 @@ mod integration_tests {
     mod layout_objectfile;
     mod layout_sharding;
     mod measurements;
+    #[cfg(target_os = "linux")]
+    mod persistence_crashdiscard;
     mod persistence_crashsafe;
     mod storage_expire;
+    #[cfg(target_os = "linux")]
+    mod storage_pagecache;
     mod storage_publish;
     mod storage_purge;
     mod storage_reclaim;

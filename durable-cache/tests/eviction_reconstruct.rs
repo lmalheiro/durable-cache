@@ -226,7 +226,7 @@ async fn tc_eviction_reconstruct_01_uses_no_snapshot_or_log() {
 
 /// Step 5: once the backend is read-only, the restart scan stops at once.
 /// It reads no record, admits nothing and changes nothing
-/// (FDS-COMPAT.READONLY-01): the eviction manager it would update is
+/// (FDS-COMPAT.READONLY-02): the eviction manager it would update is
 /// discarded when the process exits, and the records stay on disk for the
 /// process that takes over. Were a record read, the scan would stop at the
 /// pause armed after the read, and the timeout would fail the test.

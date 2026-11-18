@@ -91,7 +91,7 @@ async fn tc_compliance_incomplete_01_aborted_store_is_never_served() {
 /// A damaged record is a miss, and the lookup leaves it where it is: a
 /// later store of the same key replaces it, and the restart-time scan
 /// reclaims it, so a lookup never unlinks a path whose content may have
-/// changed since it opened it (SDS-LAYOUT.OBJECTFILE-01).
+/// changed since it opened it (SDS-LAYOUT.OBJECTFILE-02).
 #[tokio::test]
 async fn tc_compliance_incomplete_01_damaged_record_is_a_miss_and_left_for_the_scan() {
     let (cache, tmp) = support::leaked_cache();
@@ -177,7 +177,7 @@ async fn tc_compliance_incomplete_01_follower_of_an_aborted_store_gets_an_error(
 
     // Give the follower a moment to catch up and start waiting on the next
     // chunk before aborting -- not required for correctness (the wakeup
-    // can't be missed either way, see lookup.rs), but it makes this test
+    // can't be missed either way, see lookup/mod.rs), but it makes this test
     // actually exercise the wakeup-on-abort path instead of a pre-abort read.
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     drop(handler); // abort: no finish() ever called

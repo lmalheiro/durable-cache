@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-STORAGE.PUBLISH-01 — Atomic same-directory publication.
+//! TC-STORAGE.PUBLISH-02 — Atomic same-directory publication.
 //!
 //! The per-writer temporary and its rename publish atomically, keep
 //! concurrent writers isolated, never reuse another writer's file,
@@ -15,19 +15,19 @@
 
 use bytes::Bytes;
 use durable_cache::hooks::FaultPoint;
-use durable_cache::writerid;
+use durable_cache::{writerid, Durability, FsCacheConfig};
 use pingora_cache::key::CacheHashKey;
 use pingora_cache::storage::Storage;
 
 use super::support;
 
-// IMP-TC.STORAGE.PUBLISH-02: satisfy TC-STORAGE.PUBLISH-01
+// IMP-TC.STORAGE.PUBLISH-02: satisfy TC-STORAGE.PUBLISH-02
 
 /// Step 1: each writer writes its own temporary, named with this process's
 /// writer identity and a distinct counter, and neither's bytes appear in
 /// the other's file.
 #[tokio::test]
-async fn tc_storage_publish_01_concurrent_writers_use_their_own_temporaries() {
+async fn tc_storage_publish_02_concurrent_writers_use_their_own_temporaries() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-concurrent");
     let meta = support::meta();
@@ -84,7 +84,7 @@ async fn tc_storage_publish_01_concurrent_writers_use_their_own_temporaries() {
 /// Step 2: a file already at the name the next counter would produce is
 /// left untouched, and the store takes the following counter value.
 #[tokio::test]
-async fn tc_storage_publish_01_name_collision_advances_the_counter() {
+async fn tc_storage_publish_02_name_collision_advances_the_counter() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-collision");
     let combined = key.combined();
@@ -120,7 +120,7 @@ async fn tc_storage_publish_01_name_collision_advances_the_counter() {
 /// Step 3: the object becomes visible under its canonical name only at the
 /// rename, and `finish` reports the published file's full length.
 #[tokio::test]
-async fn tc_storage_publish_01_visible_only_at_the_rename_and_reports_record_size() {
+async fn tc_storage_publish_02_visible_only_at_the_rename_and_reports_record_size() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-visibility");
     let meta = support::meta();
@@ -162,7 +162,7 @@ async fn tc_storage_publish_01_visible_only_at_the_rename_and_reports_record_siz
 /// Step 3, continued: the temporary is synchronised *before* the rename, so
 /// a failing synchronisation means nothing is ever published.
 #[tokio::test]
-async fn tc_storage_publish_01_synchronises_before_renaming() {
+async fn tc_storage_publish_02_synchronises_before_renaming() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-sync-order");
     let meta = support::meta();
@@ -193,11 +193,42 @@ async fn tc_storage_publish_01_synchronises_before_renaming() {
     );
 }
 
+/// Step 8: with `Durability::NoStoreSync`, a store is renamed into place
+/// without being synchronised: a fault injected at the synchronisation is
+/// never reached, and the record is published whole.
+#[tokio::test]
+async fn tc_storage_publish_02_no_store_sync_publishes_without_synchronising() {
+    let tmp = support::tempdir();
+    let cache = support::leaked_cache_with(
+        FsCacheConfig::new(tmp.path(), None).with_durability(Durability::NoStoreSync),
+    );
+    let key = support::key("/publish-no-store-sync");
+    let meta = support::meta();
+    let trace = support::inactive_trace();
+
+    cache.hooks().inject_fault(FaultPoint::SyncTemp, 1);
+    let mut handler = cache
+        .get_miss_handler(&key, &meta, &trace)
+        .await
+        .expect("the store opens");
+    handler
+        .write_body(Bytes::from_static(b"body"), true)
+        .await
+        .expect("the body is written");
+    handler
+        .finish()
+        .await
+        .expect("a store that skips the synchronisation never meets its fault");
+
+    let (_, body) = support::read_and_validate_record(&support::canonical_path(cache, &key));
+    assert_eq!(body, b"body", "the record is published whole");
+}
+
 /// Step 6: a store completing once the backend is read-only reports
 /// success, publishes nothing, and leaves no temporary behind
-/// (FDS-COMPAT.READONLY-01).
+/// (FDS-COMPAT.READONLY-02).
 #[tokio::test]
-async fn tc_storage_publish_01_store_completing_once_read_only_publishes_nothing() {
+async fn tc_storage_publish_02_store_completing_once_read_only_publishes_nothing() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-read-only");
     let meta = support::meta();
@@ -239,7 +270,7 @@ async fn tc_storage_publish_01_store_completing_once_read_only_publishes_nothing
 /// rename is atomic by construction. That no path publishes by copying is
 /// left to inspection.
 #[tokio::test]
-async fn tc_storage_publish_01_temporary_shares_the_canonical_directory() {
+async fn tc_storage_publish_02_temporary_shares_the_canonical_directory() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-same-dir");
     let meta = support::meta();
@@ -447,4 +478,67 @@ fn holding_a_record_open_warns_only_when_it_cannot_be_opened() {
     let reports = logs.matching(&unopenable.display().to_string());
     assert_eq!(reports.len(), 1, "reported once: {reports:?}");
     assert!(reports[0].starts_with("WARN"), "as a warning: {reports:?}");
+}
+
+/// Whether the file system holding `dir` has the calls page-cache reads
+/// make: `openat2` with `RESOLVE_CACHED` and `preadv2` with `RWF_NOWAIT`,
+/// tried here with rustix rather than through the backend.
+#[cfg(target_os = "linux")]
+fn non_blocking_reads(dir: &std::path::Path) -> bool {
+    use rustix::fs::{openat2, Mode, OFlags, ResolveFlags, CWD};
+    use rustix::io::{preadv2, Errno, ReadWriteFlags};
+    // As nowait.rs reads them: `EINVAL` is a missing flag only from openat2.
+    let open_lacks = |e: Errno| e == Errno::NOSYS || e == Errno::INVAL || e == Errno::OPNOTSUPP;
+    let read_lacks = |e: Errno| e == Errno::NOSYS || e == Errno::OPNOTSUPP;
+    let probe = dir.join("probe");
+    std::fs::write(&probe, b"probe").expect("the probe is written");
+    let file = std::fs::File::open(&probe).expect("the probe opens");
+    let read = preadv2(
+        &file,
+        &mut [std::io::IoSliceMut::new(&mut [0u8; 1])],
+        0,
+        ReadWriteFlags::NOWAIT,
+    );
+    let open = openat2(
+        CWD,
+        dir,
+        OFlags::RDONLY,
+        Mode::empty(),
+        ResolveFlags::CACHED,
+    );
+    std::fs::remove_file(&probe).expect("the probe is removed");
+    !matches!(read, Err(e) if read_lacks(e)) && !matches!(open, Err(e) if open_lacks(e))
+}
+
+/// With page-cache reads on, the default on Linux, a cache whose file
+/// system lacks non-blocking reads fails to start, naming the option that
+/// switches them off, rather than serve every hit from the blocking pool
+/// unnoticed; with the option off, it starts. `/dev/shm` is a tmpfs, which
+/// lacks them as of Linux 6.12; probed first, it tells the test which
+/// outcome to expect.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_cache_on_a_file_system_without_non_blocking_reads_fails_to_start() {
+    let Ok(tmp) = tempfile::tempdir_in("/dev/shm") else {
+        eprintln!("no /dev/shm: nothing to check");
+        return;
+    };
+    // Probed directly, not through the backend: the check the backend makes
+    // at construction must agree with the file system.
+    let supported = non_blocking_reads(tmp.path());
+    match durable_cache::FsCache::new(FsCacheConfig::new(tmp.path(), None)) {
+        Ok(_) => assert!(
+            supported,
+            "a file system without non-blocking reads must fail construction"
+        ),
+        Err(e) => {
+            assert!(!supported, "construction failed where the calls work: {e}");
+            assert!(
+                format!("{e}").contains("with_page_cache_reads"),
+                "the error names the option: {e}"
+            );
+        }
+    }
+    let off = FsCacheConfig::new(tmp.path().join("off"), None).with_page_cache_reads(false);
+    durable_cache::FsCache::new(off).expect("without page-cache reads, the cache starts");
 }
