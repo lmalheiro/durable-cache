@@ -334,6 +334,17 @@ committed: build the specification first (see
 [The specification](#the-specification)), and rebuild it after editing a
 `.tex` file, or the report checks a stale list of test cases.
 
+**Other targets.** CI builds for 64-bit glibc only. The 32-bit glibc and
+the musl code (`durable-cache/src/nowait.rs`) can be checked on an amd64
+host that has the two targets and the C toolchains the dependencies' build
+scripts need for them (`gcc-multilib`, `musl-tools`). On Debian 13,
+`setup-debian.sh` installs them; the Nix shell does not.
+
+```bash
+cargo check -p durable-cache --lib --target i686-unknown-linux-gnu
+cargo check -p durable-cache --lib --target x86_64-unknown-linux-musl
+```
+
 **Formatting.** `rustfmt.toml` sorts imports into std, external and crate
 groups and merges them per module, with options only nightly rustfmt has.
 `cargo xtask fmt` formats the workspace with the nightly pinned in
