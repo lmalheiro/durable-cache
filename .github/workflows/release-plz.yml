@@ -94,14 +94,15 @@ jobs:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # The README on main links to the files of the latest release; the
-      # release PR's README must link to those of the version it releases,
-      # which crates.io will show with it. `cargo xtask readme-links` makes
-      # that change on the PR's branch, committed there through the API as
-      # this workflow: a signed commit, with no credentials on disk. The PR
-      # still holds bot commits only, so release-plz keeps updating it, and
-      # this step runs again after each update.
-      - name: Point the release PR's README links at its version
+      # The README on main names the latest release, in its links to the
+      # repository's files and in its dependency line; the release PR's
+      # README must name the version it releases, which crates.io will show
+      # with it. `cargo xtask readme-links` makes that change on the PR's
+      # branch, committed there through the API as this workflow: a signed
+      # commit, with no credentials on disk. The PR still holds bot commits
+      # only, so release-plz keeps updating it, and this step runs again
+      # after each update.
+      - name: Point the release PR's README at its version
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -125,6 +126,6 @@ jobs:
           gh api --method PUT "repos/$REPO/contents/README.md" \
             -f branch="$branch" \
             -f sha="$(git rev-parse FETCH_HEAD:README.md)" \
-            -f message="docs: point the README's links at the version this PR releases" \
+            -f message="docs: point the README at the version this PR releases" \
             -f content="$(base64 -w0 README.md)" \
             --silent
