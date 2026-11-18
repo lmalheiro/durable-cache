@@ -1,6 +1,6 @@
 ---
 name: reqman-context
-description: Use this skill to fetch a requirement's full text, relationships, and coverage status from this project's traceability data (reqman.sty/reqman-report.py) instead of parsing .tex files. Trigger whenever a task references a requirement ID (e.g. DFR-COMPAT.UNSIZED-01, HLR-SCOPE.V1-01, ADR-EFFICIENCY.SINGLE-01) or needs requirements discovered by keyword before reading or editing related specs/code.
+description: Use this skill to fetch a requirement's full text, relationships, and coverage status from this project's traceability data (reqman.sty/reqman-report.py) instead of parsing .tex files, and to trace a change to the requirements -- which ones changed since a revision, whether each took a new version, and what each change reaches. Trigger whenever a task references a requirement ID (e.g. DFR-COMPAT.UNSIZED-01, HLR-SCOPE.V1-01, ADR-EFFICIENCY.SINGLE-01), needs requirements discovered by keyword before reading or editing related specs/code, or changes a requirement.
 allowed-tools: Bash(python3 ./.claude/skills/reqman-context/scripts/reqman-context.py:*)
 ---
 
@@ -87,6 +87,13 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> --se
 # The map: every domain, how many artifacts of each type it holds, and the
 # relationships between domains (trace left out)
 python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> --overview
+
+# The requirements changed since a git revision, and what each change
+# reaches (see "Tracing a change" below)
+python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> --changed main
+
+# What a change to given IDs reaches, without a revision to compare with
+python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> --ripple <ID> [--depth 2]
 ```
 
 Example, from the repository root:
@@ -104,8 +111,9 @@ Markdown tables: each domain with its artifact counts by type, and the
 relationships from one domain's artifacts to another's, counted by kind.
 Run it first when a task spans several requirements or you don't yet know
 where a concern lives; then fetch the IDs you need. For the impact of a
-change, follow the relationships instead: `--direction down --depth N` lists
-everything that refines, satisfies or verifies an artifact, N hops deep.
+change, follow the relationships instead: `--ripple` (see "Tracing a
+change") lists what a change to an artifact reaches, and `--direction down
+--depth N` everything that refines, satisfies or verifies it, N hops deep.
 
 ## Choosing depth
 
@@ -144,3 +152,50 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> <new
 Any note surfaced this way should be treated as binding scope for the draft
 (see `req-writing`), and re-checked against the finished text afterward
 (`req-checking`'s S9 rule).
+
+## Tracing a change
+
+An existing requirement whose text a pull request changes takes a new
+version: the last part of its ID goes up by one (`HLR-PERSISTENCE.DURABLE-01`
+would become `HLR-PERSISTENCE.DURABLE-02`; see `req-writing`, step 5), and
+every reference to it
+follows. New requirements start at `-01`. `--changed` checks that rule and
+shows what each change reaches:
+
+```bash
+python3 ./.claude/skills/reqman-context/scripts/reqman-context.py <jobname> --changed <base of the pull request>
+```
+
+It compares the requirement environments of the `.tex` files the export
+names, at that git revision and in the working tree, whitespace aside, and
+lists:
+
+- **New versions**: an ID that left as `TYPE-SUBID-NN` and is back with a
+  higher `NN`. One whose text did not change is flagged: nothing calls for it.
+- **Changed without a new version**, each with the ID it should take. A
+  change of status alone does not count, nor does an edit that only follows
+  another requirement's new version.
+- **Added** and **removed** IDs.
+
+Then, for every changed requirement, the ripple:
+
+- *Built on it*: what refines, derives from, satisfies, verifies, copies or
+  traces it. Review each against the new text. Where it no longer holds,
+  change it too, and it takes a new version of its own; where it holds,
+  only its reference changes.
+- *Further down*, with `--depth N`: what is built on those in turn.
+- *It builds on*: what it refines, satisfies, verifies or traces. Check that
+  it still serves each, as their texts ask.
+- *Named in the text of, without a link*: requirements whose prose names it.
+  Check what they say of it.
+- *Cited outside the specification*: tracked files that name it, from
+  `git grep`: code comments, `IMP` markers, tests, the README, CI.
+- *STILL CITING* the old ID: files the rename has not reached. A test case's
+  test functions (`tc_<id>_…`) and its `IMP-TC.` marker carry its ID, which
+  `cargo xtask trace-report` matches them by, so they follow its new version.
+
+The ripple reads the relationships from the export: rebuild the
+specification after renaming, so that it knows the new IDs. The work is done
+when `--changed` against the base reports no change without a new version
+and no file still citing an old ID. `--ripple <ID>…` gives the same report
+for chosen IDs, without a revision to compare with.
