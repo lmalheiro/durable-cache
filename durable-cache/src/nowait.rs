@@ -362,8 +362,12 @@ mod tests {
 
     /// Drop `file`'s pages from `offset` on out of the page cache: written,
     /// synchronised and so clean, they go, and a read of them with
-    /// `RWF_NOWAIT` fails with `EAGAIN`. A read that misses starts the
-    /// device's work, so a test drops the pages again before each read.
+    /// `RWF_NOWAIT` usually fails with `EAGAIN`. Not always: a read that
+    /// misses starts the device's work, and a device that answers within
+    /// the call, as a virtual machine's disk can, lets the read go on; so
+    /// does a page cache that keeps the file in units larger than a page.
+    /// The tests that use it hold to what is true either way, and drop the
+    /// pages again before each read.
     fn uncache_from(file: &File, offset: u64) {
         file.sync_data().expect("the file is synchronised");
         rustix::fs::fadvise(file, offset, None, rustix::fs::Advice::DontNeed)
@@ -383,11 +387,12 @@ mod tests {
         }
     }
 
-    /// On the worker, `fill` stops with `WouldBlock` at the first page the
-    /// page cache does not hold, keeping exactly the bytes before it, and
-    /// the pool's `fill` carries on from them.
+    /// On the worker, `fill` reads what the page cache holds, at least the
+    /// pages before [`CACHED`], and stops with `WouldBlock` where it would
+    /// wait (see [`uncache_from`] for where it goes further), keeping what
+    /// it read; the pool's `fill` carries on from there.
     #[test]
-    fn fill_on_the_worker_stops_at_the_first_page_not_cached() {
+    fn fill_on_the_worker_keeps_what_it_read_for_the_pool() {
         let dir = crate::integration_tests::support::tempdir();
         let (file, bytes) = file_of(dir.path(), 200_000);
         if !non_blocking_reads(&file) {
@@ -395,19 +400,26 @@ mod tests {
         }
         uncache_from(&file, CACHED);
         let mut buf = Vec::new();
-        let e = fill(&file, &mut buf, bytes.len(), 0, Wait::Never)
-            .expect_err("the end of the file is not cached");
-        assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}");
-        assert_eq!(buf, &bytes[..CACHED as usize], "the cached bytes, exactly");
+        if let Err(e) = fill(&file, &mut buf, bytes.len(), 0, Wait::Never) {
+            assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}");
+        }
+        assert!(
+            buf.len() >= CACHED as usize,
+            "the cached bytes at least; read {}",
+            buf.len()
+        );
+        assert_eq!(buf, &bytes[..buf.len()], "the file's bytes, from its start");
         fill(&file, &mut buf, bytes.len(), 0, Wait::Allowed).expect("the pool reads the rest");
         assert_eq!(buf, bytes);
     }
 
-    /// The reads of a record on the worker stop where the page cache does:
-    /// `read_at_most` returns the cached prefix's length, and `WouldBlock`
-    /// when nothing is cached; `read_exact_at` reports `WouldBlock`.
+    /// The reads of a record on the worker read what the page cache holds:
+    /// `read_at_most` at least the cached prefix; with nothing cached,
+    /// `read_at_most` and `read_exact_at` fail with `WouldBlock`, unless the
+    /// device answers within the call (see [`uncache_from`]). What they
+    /// read is the file's bytes.
     #[test]
-    fn record_reads_on_the_worker_stop_where_the_page_cache_does() {
+    fn record_reads_on_the_worker_read_what_the_page_cache_holds() {
         let dir = crate::integration_tests::support::tempdir();
         let (file, bytes) = file_of(dir.path(), 200_000);
         if !non_blocking_reads(&file) {
@@ -416,16 +428,23 @@ mod tests {
         let mut buf = vec![0u8; 100_000];
         uncache_from(&file, CACHED);
         let read = read_at_most(&file, &mut buf, 0).expect("the start is cached");
-        assert_eq!(read, CACHED as usize, "the cached prefix's length");
+        assert!(
+            read >= CACHED as usize,
+            "the cached prefix at least; read {read}"
+        );
         assert_eq!(&buf[..read], &bytes[..read]);
 
         uncache_from(&file, 0);
-        let e = read_at_most(&file, &mut buf, 0).expect_err("nothing is cached");
-        assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}");
+        match read_at_most(&file, &mut buf, 0) {
+            Ok(read) => assert_eq!(&buf[..read], &bytes[..read], "answered within the call"),
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}"),
+        }
 
         uncache_from(&file, 0);
-        let e = read_exact_at(&file, &mut buf, 0).expect_err("nothing is cached");
-        assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}");
+        match read_exact_at(&file, &mut buf, 0) {
+            Ok(()) => assert_eq!(buf, &bytes[..buf.len()], "answered within the call"),
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}"),
+        }
     }
 
     /// The reads of a record on the worker return the file's bytes at the
