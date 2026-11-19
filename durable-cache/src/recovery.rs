@@ -29,10 +29,11 @@ use crate::{blocking, key_codec, metrics, purge, sharding, writerid, FsCache};
 
 // IMP-EVICTION.STARTUP-01: satisfy FDS-EVICTION.STARTUP-01
 
-/// What one recovery pass did, for logging and tests. Fields may be added
-/// in later versions; so that this breaks no integrator, code outside this
-/// crate can read the report but not build it with a struct literal or
-/// match all of its fields.
+/// What one recovery pass did, for logging and tests.
+///
+/// Fields may be added in later versions. So that this breaks no
+/// integrator, code outside this crate can read the report but not build it
+/// with a struct literal or match all of its fields.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RecoveryReport {
@@ -98,18 +99,22 @@ impl RecoveryReport {
 }
 
 /// Rebuild `eviction`'s view of the cache from what is on disk, reclaiming
-/// orphaned files as it goes. Safe to call on a first launch, a post-crash
-/// restart, or the incoming side of a hot upgrade; on the last, the
-/// integrator calls it only once its server holds the listening sockets and
-/// the upgrade's close timeout has elapsed (FDS-COMPAT.READONLY-02).
+/// orphaned files as it goes.
 ///
-/// A directory or file the scan cannot list or read is skipped, named in a
-/// warning and counted: one bad entry must not stop the admission of the
-/// rest. The pass itself does not fail today; the `Result` keeps room for a
-/// failure that would stop it.
+/// Safe to call on a first launch, a post-crash restart, or the incoming
+/// side of a hot upgrade; on the last, the integrator calls it only once
+/// its server holds the listening sockets and the upgrade's close timeout
+/// has elapsed (FDS-COMPAT.READONLY-02).
 ///
 /// `cache` is `'static`, as it already is to serve as a `Storage`: what the
 /// scan removes, it removes on the blocking pool.
+///
+/// # Errors
+///
+/// None today. A directory or file the scan cannot list or read is
+/// skipped, named in a warning and counted: one bad entry must not stop the
+/// admission of the rest. The `Result` keeps room for a failure that would
+/// stop the pass.
 pub async fn recover(
     cache: &'static FsCache,
     eviction: &dyn EvictionManager,

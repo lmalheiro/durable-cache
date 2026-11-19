@@ -27,6 +27,14 @@ use crate::platform::Opener;
 use crate::writerid::WriterLease;
 use crate::{metrics, sharding};
 
+/// The cache: a `pingora-cache` `Storage` that keeps each object in a file
+/// of its own under the cache root, where it outlives the process.
+///
+/// Build one with [`FsCache::new`] and keep it for the life of the process,
+/// as a `&'static` reference, as a `Storage` must be. At start, run
+/// [`crate::recover`] to fill the eviction manager from what the root holds;
+/// on a Pingora server, [`crate::hotupgrade::install`] does that, and makes
+/// the cache read-only on a hot upgrade.
 pub struct FsCache {
     pub(crate) config: FsCacheConfig,
     pub(crate) dir_cache: ShardDirCache,
@@ -61,11 +69,13 @@ fn logged(root: &Path, built: Result<FsCache>) -> Result<FsCache> {
 }
 
 impl FsCache {
-    /// Build a cache rooted at `config.root()`. Runs FDS-LAYOUT.STARTUP-01's
-    /// construction-time shard scan; does *not* run Eviction Recovery
-    /// (see [`crate::recover`]) — that's a separate call the
-    /// integrator makes explicitly, since it needs the `EvictionManager`
-    /// instance too, which this constructor has no opinion about.
+    /// Build a cache rooted at `config.root()`.
+    ///
+    /// It runs the construction-time shard scan of FDS-LAYOUT.STARTUP-01, but
+    /// *not* Eviction Recovery (see [`crate::recover`]): that is a separate
+    /// call the integrator makes explicitly, since it needs the
+    /// `EvictionManager` instance too, which this constructor has no opinion
+    /// about.
     ///
     /// With the `metrics` feature, it also registers the backend's counters,
     /// at zero (ADR-OBSERVABILITY.METRICS-01).
@@ -77,22 +87,26 @@ impl FsCache {
     /// (FDS-PERSISTENCE.CRASHDISCARD-01). The discarded files are removed in
     /// the background.
     ///
-    /// Fails with a `FileCreateError` if the shard tree cannot be created or
-    /// listed under the root, or this instance's lease cannot be created and
-    /// locked (ADR-STORAGE.WRITERID-01); with a `FileReadError` if the
-    /// markers cannot be listed, or, with
-    /// [`FsCacheConfig::with_discard_after_host_restart`], if the boot
-    /// identity cannot be read; and with a `FileWriteError` if a discard
-    /// fails. On Linux, with the default
-    /// configuration, it also fails with a `FileOpenError` if the kernel
-    /// refuses to open the root without updating its access time, as it does
-    /// when this process does not own it (see
-    /// [`FsCacheConfig::with_noatime`]); and with an `InternalError` if the
-    /// kernel or the file system under the root does not support the calls
-    /// that page-cache reads make (see
-    /// [`FsCacheConfig::with_page_cache_reads`]). Every failure is also
-    /// logged as an error, so that a cache that cannot start says why even
-    /// where the caller only exits.
+    /// # Errors
+    ///
+    /// - A `FileCreateError` if the shard tree cannot be created or listed
+    ///   under the root, or this instance's lease cannot be created and
+    ///   locked (ADR-STORAGE.WRITERID-01).
+    /// - A `FileReadError` if the markers cannot be listed, or, with
+    ///   [`FsCacheConfig::with_discard_after_host_restart`], if the boot
+    ///   identity cannot be read.
+    /// - A `FileWriteError` if a discard fails.
+    /// - On Linux, with the default configuration, a `FileOpenError` if the
+    ///   kernel refuses to open the root without updating its access time,
+    ///   as it does when this process does not own it (see
+    ///   [`FsCacheConfig::with_noatime`]).
+    /// - On Linux, with the default configuration, an `InternalError` if the
+    ///   kernel or the file system under the root does not support the calls
+    ///   that page-cache reads make (see
+    ///   [`FsCacheConfig::with_page_cache_reads`]).
+    ///
+    /// Every failure is also logged as an error, so that a cache that cannot
+    /// start says why even where the caller only exits.
     pub fn new(config: FsCacheConfig) -> Result<Self> {
         let root = config.root().to_path_buf();
         logged(&root, Self::build(config, Hooks::default()))
@@ -144,12 +158,17 @@ impl FsCache {
     }
 
     /// [`Self::new`] with test hooks (see [`crate::hooks`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::new`].
     #[cfg(test)]
     pub fn with_test_hooks(config: FsCacheConfig, hooks: crate::hooks::HookConfig) -> Result<Self> {
         let root = config.root().to_path_buf();
         logged(&root, Self::build(config, Hooks::new(hooks)))
     }
 
+    /// The root of the cache directory ([`FsCacheConfig::root`]).
     pub fn root(&self) -> &Path {
         self.config.root()
     }
@@ -180,7 +199,9 @@ impl FsCache {
 
     /// Make everything the cache holds durable, then remove this instance's
     /// unsynchronised-store marker, and those of instances that have
-    /// stopped (FDS-PERSISTENCE.CRASHDISCARD-01). It flushes the file system
+    /// stopped (FDS-PERSISTENCE.CRASHDISCARD-01).
+    ///
+    /// It flushes the file system
     /// that holds the cache with `syncfs` on Linux, and elsewhere with
     /// `sync`, which flushes every file system. It waits for the device:
     /// call it where blocking is allowed. On systems other than Linux,
@@ -197,8 +218,10 @@ impl FsCache {
     /// `Server::run` allows and `run_forever` does not. A store published
     /// without synchronisation afterwards writes the marker again.
     ///
-    /// Fails with a `FileWriteError` if the flush or a marker's removal
-    /// fails; the marker then stays.
+    /// # Errors
+    ///
+    /// A `FileWriteError` if the flush or a marker's removal fails; the
+    /// marker then stays.
     pub fn flush(&self) -> Result<()> {
         self.marker
             .flush(self.root(), &self.lease.id(), &self.hooks)

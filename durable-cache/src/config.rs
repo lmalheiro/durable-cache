@@ -3,10 +3,12 @@
 
 use std::path::{Path, PathBuf};
 
-/// What a store does to make itself durable before it is published
-/// (ADR-PERSISTENCE.DURABILITY-02, ADR-PERSISTENCE.UNSYNCED-01). Invalidating
-/// purges are synchronised whichever is chosen. More modes may come, so a
-/// `match` outside this crate needs a wildcard arm.
+/// What a store does to make itself durable before it is published.
+///
+/// The modes are those of ADR-PERSISTENCE.DURABILITY-02 and
+/// ADR-PERSISTENCE.UNSYNCED-01. Invalidating purges are synchronised
+/// whichever is chosen. More modes may come, so a `match` outside this crate
+/// needs a wildcard arm.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Durability {
