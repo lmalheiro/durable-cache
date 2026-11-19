@@ -39,7 +39,7 @@ use pingora_error::{Error, ErrorType, OrErr, Result};
 use crate::hooks::FaultPoint;
 use crate::hooks::Hooks;
 use crate::writerid::{self, WriterId, LEASE_DIR};
-use crate::{sharding, FsCacheConfig};
+use crate::{platform, sharding, FsCacheConfig};
 
 // IMP-PERSISTENCE.CRASHDISCARD-01: satisfy FDS-PERSISTENCE.CRASHDISCARD-01
 
@@ -117,7 +117,11 @@ impl Marker {
     /// longer held: the flush made what they published durable too.
     pub(crate) fn flush(&self, root: &Path, id: &WriterId, hooks: &Hooks) -> io::Result<()> {
         let mut written = self.written();
-        sync_file_system(root, hooks)?;
+        test_hook! { injected(hooks, FaultPoint::SyncFileSystem)?; }
+        // Elsewhere than on Linux, the flush may return before the writes
+        // complete. No marker depends on that: the discard exists only on
+        // Linux.
+        platform::sync_file_system(root)?;
         // Before the marker goes, so that a removal that fails halfway, or
         // whose directory sync fails, never leaves this instance believing
         // in a marker that is gone: the next unsynchronised store writes it
@@ -385,28 +389,6 @@ fn injected(hooks: &Hooks, point: FaultPoint) -> io::Result<()> {
     hooks
         .fault(point)
         .map_err(|e| io::Error::other(e.to_string()))
-}
-
-/// Flush the file system that holds `root`: with `syncfs` on Linux, and
-/// elsewhere with `sync`, which flushes every file system, and on some
-/// systems returns before the writes complete. No marker depends on the
-/// latter: the discard exists only on Linux.
-fn sync_file_system(root: &Path, hooks: &Hooks) -> io::Result<()> {
-    test_hook! { injected(hooks, FaultPoint::SyncFileSystem)?; }
-    #[cfg(not(test))]
-    let _ = hooks;
-    #[cfg(target_os = "linux")]
-    {
-        rustix::fs::syncfs(File::open(root)?).map_err(io::Error::from)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = root;
-        // SAFETY: `sync` takes no arguments and touches no memory of this
-        // process.
-        unsafe { libc::sync() };
-        Ok(())
-    }
 }
 
 #[cfg(test)]

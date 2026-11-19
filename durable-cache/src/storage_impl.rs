@@ -23,6 +23,7 @@ use crate::dircache::ShardDirCache;
 use crate::hooks::Hooks;
 use crate::inflight::InFlightRegistry;
 use crate::locks::ChangeLocks;
+use crate::platform::Opener;
 use crate::writerid::WriterLease;
 use crate::{metrics, sharding};
 
@@ -39,10 +40,10 @@ pub struct FsCache {
     /// This instance's unsynchronised-store marker, written only with the
     /// discard after a host restart on (FDS-PERSISTENCE.CRASHDISCARD-01).
     pub(crate) marker: Marker,
-    /// How records and temporaries are opened to read, with `O_NOATIME`
-    /// if the configuration asks and the check at construction passed.
-    #[cfg(target_os = "linux")]
-    pub(crate) opener: crate::nowait::Opener,
+    /// How records and temporaries are opened to read: on Linux, with
+    /// `O_NOATIME` if the configuration asks and the check at construction
+    /// passed.
+    pub(crate) opener: Opener,
     /// The page-cache reads the configuration asks for, which the check at
     /// construction found the kernel and the file system support; `None`
     /// with them switched off.
@@ -51,46 +52,6 @@ pub struct FsCache {
     /// The test hooks of this instance: an empty stand-in outside the
     /// crate's own test build (see `crate::hooks`).
     pub(crate) hooks: Hooks,
-}
-
-/// With `FsCacheConfig::with_noatime`, check that the kernel lets this
-/// process open the cache's files with `opener`, which does not update their
-/// access time: it allows `O_NOATIME` only to a file's owner, and the owner
-/// of the root stands for the owner of the files under it.
-#[cfg(target_os = "linux")]
-fn check_noatime(root: &Path, opener: crate::nowait::Opener) -> Result<()> {
-    opener
-        .open_blocking(root)
-        .map(drop)
-        .or_err_with(ErrorType::FileOpenError, || {
-            format!(
-                "opening {} without updating its access time, as FsCacheConfig::with_noatime \
-                 asks; switch it off where this process does not own the cache's files",
-                root.display()
-            )
-        })
-}
-
-/// With `FsCacheConfig::with_page_cache_reads`, check that the kernel and
-/// the cache's file system support the calls those reads make: on the root,
-/// and on this instance's lease, the one file the cache is sure to hold. The
-/// reads it returns open with `opener`.
-#[cfg(target_os = "linux")]
-fn check_page_cache_reads(
-    root: &Path,
-    lease: &WriterLease,
-    opener: crate::nowait::Opener,
-) -> Result<crate::nowait::PageCacheReads> {
-    let lease_file = crate::writerid::lease_path(root, &lease.id());
-    let checked = crate::nowait::check_support(opener, root, &lease_file);
-    checked.or_err_with(ErrorType::InternalError, || {
-        format!(
-            "checking the page-cache reads that FsCacheConfig::with_page_cache_reads asks for \
-             under {}; switch them off where the kernel or the file system lacks them, as \
-             tmpfs and overlayfs do",
-            root.display()
-        )
-    })
 }
 
 /// `built`, a construction of the cache at `root`, with its failure logged
@@ -157,22 +118,13 @@ impl FsCache {
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating the shard tree under {}", config.root().display())
             })?;
-        #[cfg(target_os = "linux")]
-        let opener = crate::nowait::Opener::new(config.noatime());
-        #[cfg(target_os = "linux")]
-        if config.noatime() {
-            check_noatime(config.root(), opener)?;
-        }
+        let opener = Opener::new(&config)?;
         let lease = WriterLease::acquire(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating a writer lease under {}", config.root().display())
             })?;
         #[cfg(target_os = "linux")]
-        let page_cache_reads = if config.page_cache_reads() {
-            Some(check_page_cache_reads(config.root(), &lease, opener)?)
-        } else {
-            None
-        };
+        let page_cache_reads = crate::nowait::PageCacheReads::new(&config, &lease, opener)?;
         crashdiscard::remove_discarded(config.root());
         // With the `metrics` feature, the counters are served from here on,
         // at zero, rather than from their first event.
@@ -184,7 +136,6 @@ impl FsCache {
             locks: ChangeLocks::default(),
             lease,
             marker: Marker::new(boot_id),
-            #[cfg(target_os = "linux")]
             opener,
             #[cfg(target_os = "linux")]
             page_cache_reads,
@@ -408,26 +359,5 @@ impl Storage for FsCache {
 
     fn as_any(&self) -> &(dyn Any + Send + Sync + 'static) {
         self
-    }
-}
-
-#[cfg(test)]
-#[cfg(target_os = "linux")]
-mod tests {
-    use super::*;
-
-    /// The kernel refuses `O_NOATIME` on a file of another owner, and the
-    /// check at construction says so, naming the option: `/` belongs to
-    /// root.
-    #[test]
-    fn the_noatime_check_fails_on_a_directory_of_another_owner() {
-        // SAFETY: `geteuid` takes no arguments and cannot fail.
-        if unsafe { libc::geteuid() } == 0 {
-            eprintln!("root opens any file without updating its access time: nothing to check");
-            return;
-        }
-        let e = check_noatime(Path::new("/"), crate::nowait::Opener::new(true))
-            .expect_err("/ belongs to root");
-        assert!(e.to_string().contains("with_noatime"), "{e}");
     }
 }

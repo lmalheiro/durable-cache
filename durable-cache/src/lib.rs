@@ -85,6 +85,7 @@ pub(crate) mod metrics;
 pub(crate) mod miss;
 #[cfg(target_os = "linux")]
 pub(crate) mod nowait;
+mod platform;
 pub(crate) mod publish;
 pub(crate) mod purge;
 pub(crate) mod reclaim;

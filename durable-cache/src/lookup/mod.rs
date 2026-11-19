@@ -43,10 +43,8 @@ use pingora_error::{Error, ErrorType, OrErr, Result};
 #[cfg(target_os = "linux")]
 use self::page_cache::OnWorker;
 use crate::inflight::{InFlightWriter, WriteOutcome};
-#[cfg(target_os = "linux")]
-use crate::nowait;
 use crate::record::{self, ReadError, RecordError, RecordKind};
-use crate::{blocking, key_codec, FsCache};
+use crate::{blocking, key_codec, platform, FsCache};
 
 // IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-02 -- the read
 // protocol (validation order, retry, optional body check, seek); miss.rs's
@@ -244,7 +242,7 @@ fn open_published(
     key_bytes: Vec<u8>,
     opened: Option<File>,
 ) -> Result<Option<(CacheMeta, FsHitHandler)>> {
-    let file = match opened.map_or_else(|| open_to_read(cache, &canonical), Ok) {
+    let file = match opened.map_or_else(|| cache.opener.open_blocking(&canonical), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
@@ -353,7 +351,7 @@ fn open_partial_hit(
     key_bytes: &[u8],
     opened: Option<File>,
 ) -> Result<InFlightTemp> {
-    let file = match opened.map_or_else(|| open_to_read(cache, &writer.temp_path), Ok) {
+    let file = match opened.map_or_else(|| cache.opener.open_blocking(&writer.temp_path), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(InFlightTemp::Gone),
         Err(e) => {
@@ -412,21 +410,6 @@ fn partial_hit(
     )
 }
 
-/// Open a record, or a store's temporary, to read it on the blocking pool:
-/// on Linux without updating its access time if the configuration asks
-/// (`crate::nowait::Opener`).
-fn open_to_read(cache: &FsCache, path: &Path) -> std::io::Result<File> {
-    #[cfg(target_os = "linux")]
-    {
-        cache.opener.open_blocking(path)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = cache;
-        File::open(path)
-    }
-}
-
 /// Read `file` into `buf`, past the bytes it holds, until it holds `end`,
 /// the byte at index `i` of `buf` being the file's byte at `base + i`: on
 /// Linux from the page cache on this worker first, when the configuration
@@ -449,26 +432,11 @@ async fn fill(
     let _ = cache;
     test_hook! { cache.hooks.count_handoff(); }
     let file = Arc::clone(file);
-    blocking::run(move || Ok(fill_waiting(&file, &mut buf, end, base).map(|()| buf)))
+    blocking::run(move || Ok(platform::fill_blocking(&file, &mut buf, end, base).map(|()| buf)))
         .await?
         .or_err_with(ErrorType::FileReadError, || {
             format!("reading {}", path.display())
         })
-}
-
-/// The read of [`fill`] on the pool: on Linux into bytes not zeroed first
-/// (`crate::nowait`), elsewhere into zeroed bytes.
-fn fill_waiting(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> std::io::Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        nowait::fill_blocking(file, buf, end, base)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let start = buf.len();
-        buf.resize(end, 0);
-        std::os::unix::fs::FileExt::read_exact_at(file, &mut buf[start..], base + start as u64)
-    }
 }
 
 impl FsHitHandler {
