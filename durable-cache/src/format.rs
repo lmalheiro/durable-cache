@@ -250,7 +250,8 @@ impl RecordHeader {
         self.meta_crc.get()
     }
 
-    /// The body's CRC-32C, zero if it was not computed.
+    /// The body's CRC-32C: zero for an empty body, and for one stored by a
+    /// build without the `body-crc` feature.
     pub fn body_crc(&self) -> u32 {
         self.body_crc.get()
     }
