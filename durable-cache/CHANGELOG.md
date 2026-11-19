@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/lmalheiro/durable-cache/compare/v0.2.0...v0.2.1) - 2026-11-19
+
+### Performance
+
+- write a store's last body chunk in finish's handoff ([#42](https://github.com/lmalheiro/durable-cache/pull/42))
+
+### Changed
+
+- take the cfg gates out of durable-cache's code paths, and tidy its style ([#39](https://github.com/lmalheiro/durable-cache/pull/39))
+
 ## [0.2.0](https://github.com/lmalheiro/durable-cache/compare/v0.1.1...v0.2.0) - 2026-11-18
 
 ### Performance
