@@ -422,8 +422,8 @@ impl HandleMiss for FsMissHandler {
         })
         .await?;
         // This backend always writes a brand-new per-writer temporary, even
-        // when replacing an existing object (FRE-COMPLIANCE.REPLACE-01) --
-        // never incrementally reopens an old file across handler calls -- so
+        // when replacing an existing object (FRE-COMPLIANCE.REPLACE-01) —
+        // never incrementally reopens an old file across handler calls — so
         // every completed write is a fresh `Created`, never `Appended`.
         Ok(MissFinishType::Created(record_len as usize))
     }

@@ -9,7 +9,7 @@
 //!
 //! Covers every leg of this TC's spec except a genuine `kill -9` mid-write
 //! plus process restart (an in-process `drop` can simulate an orderly
-//! abort's Drop impl running, but not the complete absence of one) -- that
+//! abort's Drop impl running, but not the complete absence of one) — that
 //! leg is `test/compat/tests/incomplete.rs`'s, which is why the IMP marker
 //! for this TC lives there rather than here: neither file alone is a
 //! comprehensive closure, but the two together are.
