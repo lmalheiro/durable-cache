@@ -71,8 +71,10 @@ pub(crate) mod hooks;
 #[cfg(not(test))]
 pub(crate) mod hooks {
     /// The test hooks of an instance: none, and zero bytes, in this build.
-    /// Braced, so that `Hooks::default()` builds it in every build.
-    #[derive(Debug, Default)]
+    /// It derives what the real `Hooks` has, `Default`, and nothing more.
+    /// It is braced rather than a unit struct, so that clippy accepts the
+    /// `Hooks::default()` that `FsCache::new` calls in every build.
+    #[derive(Default)]
     pub(crate) struct Hooks {}
 }
 pub mod hotupgrade;
