@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
+//! The backend's configuration: [`FsCacheConfig`], which
+//! [`crate::FsCache::new`] takes, and the [`Durability`] of the stores it
+//! makes.
+
 use std::path::{Path, PathBuf};
 
 /// What a store does to make itself durable before it is published.
