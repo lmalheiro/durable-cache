@@ -454,7 +454,7 @@ time per request and the most threads it ran, for these scenarios:
   then the same objects cached (the servers with a cache on disk only);
 - `census`: the system calls durable-cache makes per request, hits and
   fills, which strace counts; a store's pool handoffs are its `pwrite`
-  calls plus one.
+  calls.
 
 `--only` runs some of them, as in `--only burst,cold`; the test-case
 verdicts need `hits` and `fills`.
