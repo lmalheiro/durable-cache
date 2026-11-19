@@ -1535,9 +1535,12 @@ fn write_census(out: &mut String, results: &Results, options: &Options) -> Resul
         "## System calls per request, durable-cache\n\n\
          Counted by strace over all the server's threads, with stores \
          {}, over {CENSUS_CONNECTIONS} connections; a fill is a miss and a \
-         store. A store writes once per handoff to the blocking pool: its \
-         fixed part as it opens, each body chunk, and its header as it \
-         finishes, so its pool handoffs are its `pwrite` calls.\n",
+         store. A store hands work to the blocking pool once as it opens, \
+         writing its fixed part with a `write`; once per body chunk, each a \
+         `pwrite`; and once as it finishes, patching its header with a \
+         `pwrite`: its pool handoffs are its `pwrite` calls plus one. The \
+         body bytes that arrive with the response's headers, in the 4 KiB \
+         buffer Pingora reads them into, make a chunk of their own.\n",
         options.durability
     )?;
     write!(out, "| case | requests |")?;
