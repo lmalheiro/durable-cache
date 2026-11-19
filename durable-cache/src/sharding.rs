@@ -76,7 +76,7 @@ pub fn object_name(hash: HashBinary, user_tag: &str) -> String {
 /// drifting -- surfaces as an ordinary error the backend reports as a cache
 /// miss, rather than as a panic that would take the hosting proxy down with
 /// it.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ShardKeyError {
     #[error("name must be at least {} hex characters, got {:?}", PREFIX_LEN, .0)]
     TooShort(String),

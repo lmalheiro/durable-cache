@@ -21,7 +21,7 @@ use crate::FsCacheConfig;
 /// which [`Opener::new`] has checked the kernel allows; the worker's open
 /// (`crate::nowait`) and the pool's take their flags from the same value,
 /// so they cannot drift apart. Elsewhere, as `File::open` opens them.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Opener {
     #[cfg(target_os = "linux")]
     flags: rustix::fs::OFlags,

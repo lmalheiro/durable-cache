@@ -96,7 +96,7 @@ pub(crate) fn check_support(
 /// page-cache reads, as [`check_support`] found: nothing else can make one.
 /// Each page-cache read starts with one of its two calls, a lookup's open or
 /// a body read's fill, so none can be made unless the check passed.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct PageCacheReads {
     opener: Opener,
 }

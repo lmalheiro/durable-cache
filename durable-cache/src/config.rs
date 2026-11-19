@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 /// (ADR-PERSISTENCE.DURABILITY-02, ADR-PERSISTENCE.UNSYNCED-01). Invalidating
 /// purges are synchronised whichever is chosen. More modes may come, so a
 /// `match` outside this crate needs a wildcard arm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Durability {
     /// Each store's temporary is synchronised to stable storage before it

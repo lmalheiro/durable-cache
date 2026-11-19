@@ -33,7 +33,7 @@ use crate::{blocking, key_codec, metrics, purge, sharding, writerid, FsCache};
 /// in later versions; so that this breaks no integrator, code outside this
 /// crate can read the report but not build it with a struct literal or
 /// match all of its fields.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RecoveryReport {
     /// Records the scan admitted to the eviction manager, less those whose
