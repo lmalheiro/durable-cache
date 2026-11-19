@@ -181,7 +181,7 @@ pub(crate) async fn recover_until(
                 // entry — a header, a key, and a metadata region — is the
                 // unit of work between yields, so a scan of a large tree
                 // never holds the worker for more than a single record's
-                // reads (FDS-STORAGE.EXECUTOR-03). Unlike the request path,
+                // reads (FDS-STORAGE.EXECUTOR-04). Unlike the request path,
                 // those reads stay on the worker rather than move to the
                 // blocking pool: `recover` borrows the eviction manager for
                 // the length of the call, so its admissions cannot be sent
@@ -230,7 +230,7 @@ pub(crate) async fn recover_until(
     // by the live path.
     for entry in &admitted {
         // One record at a time, as in the walk: the pass visits every record
-        // the walk admitted (FDS-STORAGE.EXECUTOR-03).
+        // the walk admitted (FDS-STORAGE.EXECUTOR-04).
         tokio::task::yield_now().await;
         // And, as in the walk, not once the server is shutting down.
         if shutting_down() {
@@ -481,7 +481,7 @@ fn skip(report: &mut RecoveryReport, path: &Path, e: &dyn std::fmt::Display) {
 /// Reclaim the canonical record at `path`, read from `file`, on the blocking
 /// pool: the unlink, under the key's lock, and then the close that frees the
 /// record, which for a large record would hold the worker far longer than
-/// reading it did (FDS-STORAGE.EXECUTOR-03). Returns the bytes reclaimed, or
+/// reading it did (FDS-STORAGE.EXECUTOR-04). Returns the bytes reclaimed, or
 /// `None` if the record was left in place.
 async fn reclaim_record(
     cache: &'static FsCache,

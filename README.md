@@ -109,7 +109,7 @@ identical path.
 
 **Threads.** Every storage operation is a blocking syscall, so the backend
 runs each one on tokio's blocking pool rather than on the worker Pingora
-polls it from (ADR-STORAGE.EXECUTOR-03). That matters because
+polls it from (ADR-STORAGE.EXECUTOR-04). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
 or a page-cache miss. On Linux, hits are the exception when what they read
@@ -403,7 +403,7 @@ to run on an unoptimised build, hence `--release`:
 cargo test -p durable-cache --release --lib -- --ignored --nocapture integration_tests::measurements
 ```
 
-`cargo xtask cache-tests` is TC-COMPLIANCE.RFC-01: it starts the `cache-tests`
+`cargo xtask cache-tests` is TC-COMPLIANCE.RFC-02: it starts the `cache-tests`
 origin and runs the whole suite twice against the same proxy — once on
 the stock `MemCache` of `pingora-cache`, once on this backend — and compares
 the two test by test, ranking outcomes pass, then suboptimal, then fail. It

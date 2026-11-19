@@ -35,7 +35,7 @@ jobs:
           path: third_party/cache-tests/node_modules
           key: cache-tests-node-modules-${{ github.event.pull_request.base.sha || github.sha }}
 
-      - name: TC-COMPLIANCE.RFC-01 — cache-tests CLI against fixture-proxy
+      - name: TC-COMPLIANCE.RFC-02 — cache-tests CLI against fixture-proxy
         run: nix develop -c cargo xtask cache-tests --verbose --results-out cache-tests-results.json
         # A differential run: the suite runs against the MemCache backend of
         # pingora-cache and against this backend, and the step fails when a

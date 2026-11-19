@@ -111,7 +111,7 @@ impl FsCacheConfig {
     /// pool. A lookup opens the record with `openat2` and `RESOLVE_CACHED`
     /// (Linux 5.12), and reads it with `preadv2` and `RWF_NOWAIT`, which
     /// fail rather than wait for the device; whatever would wait goes to the
-    /// pool (FDS-STORAGE.EXECUTOR-03).
+    /// pool (FDS-STORAGE.EXECUTOR-04).
     ///
     /// The kernel and the cache's file system must support both calls:
     /// ext4, XFS and btrfs do; as of Linux 6.12, tmpfs and overlayfs, the

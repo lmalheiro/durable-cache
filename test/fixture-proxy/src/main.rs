@@ -77,7 +77,7 @@ struct Cli {
     #[arg(long)]
     cache_dir: PathBuf,
 
-    /// Which storage backend to host (TC-COMPLIANCE.RFC-01 runs the suite
+    /// Which storage backend to host (TC-COMPLIANCE.RFC-02 runs the suite
     /// against each in turn).
     #[arg(long, value_enum, default_value_t = StorageBackend::Fs)]
     storage: StorageBackend,
@@ -113,7 +113,7 @@ struct Cli {
 
     /// `ServerConf::max_blocking_threads`: the most threads the proxy
     /// service's blocking pool may run, where the backend does its file
-    /// I/O (FDS-STORAGE.EXECUTOR-03). Unset keeps Tokio's 512; a benchmark
+    /// I/O (FDS-STORAGE.EXECUTOR-04). Unset keeps Tokio's 512; a benchmark
     /// varies it to see what the pool's size costs.
     #[arg(long)]
     max_blocking_threads: Option<usize>,
@@ -171,7 +171,7 @@ fn main() {
         // `MemCache`, the in-memory backend of `pingora-cache`: no cache
         // directory, no recovery, no read-only switch — it holds nothing
         // across a process, which is exactly the behaviour
-        // TC-COMPLIANCE.RFC-01 compares against within one run.
+        // TC-COMPLIANCE.RFC-02 compares against within one run.
         let mem_cache: &'static MemCache = Box::leak(Box::new(MemCache::new()));
         let eviction: &'static EvictionManager =
             Box::leak(Box::new(EvictionManager::new(usize::MAX)));

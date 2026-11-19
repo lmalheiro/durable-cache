@@ -32,7 +32,7 @@ use crate::{format, key_codec, metrics, FsCache};
 
 /// What [`prepare`] hands to [`update_meta`]: owned, `Send` data, so the
 /// update's file work can run on the blocking pool
-/// (FDS-STORAGE.EXECUTOR-03).
+/// (FDS-STORAGE.EXECUTOR-04).
 pub(crate) struct PreparedUpdate {
     name: String,
     key_bytes: Vec<u8>,

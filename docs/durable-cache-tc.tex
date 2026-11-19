@@ -27,7 +27,7 @@ implementation. This proxy is a disposable test fixture, not a project
 deliverable --- it exists solely to host the storage backend under test for
 the duration of a compliance run and ships nothing.\footnote{Running it also
 introduces a Node.js/npm dependency into the test or CI environment, since the
-cache-tests CLI client is JavaScript-based.} \reqref{TC-COMPLIANCE.RFC-01}
+cache-tests CLI client is JavaScript-based.} \reqref{TC-COMPLIANCE.RFC-02}
 runs the cache-tests CLI against that proxy twice --- once with the stock
 \texttt{MemCache} as its \texttt{Storage} and once with the file-system
 backend --- and compares the two result sets test by test. Because
@@ -40,7 +40,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
 % ---------------------------------------------------------------------
 % Standards compliance.
 % ---------------------------------------------------------------------
-\begin{requirement}{TC-COMPLIANCE.RFC-01}[draft][verify]{No regression against MemCache}
+\begin{requirement}{TC-COMPLIANCE.RFC-02}[draft][verify]{No regression against MemCache}
 
   \localreqdiagram*{tc01}{\reqid}{\reqdesc}
 
@@ -1618,7 +1618,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqcover{satisfy}{IMP}
 
-  \verify{FDS-STORAGE.EXECUTOR-03}
+  \verify{FDS-STORAGE.EXECUTOR-04}
 \end{requirement}
 
 \begin{requirement}{TC-STORAGE.PAGECACHE-01}[draft][verify]{Page-cache reads on the worker}
@@ -1669,7 +1669,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   knows its path to be missing, and the damaged record's is reached through
   the pool's locked re-read. In step 5 every lookup is handed
   over once, and so is every chunk the lookup's first read did not already
-  hold, as \reqref{FDS-STORAGE.EXECUTOR-03} specifies. In step 6 neither the
+  hold, as \reqref{FDS-STORAGE.EXECUTOR-04} specifies. In step 6 neither the
   partial hit's lookup nor its read is handed over. In step 7 each operation
   fails with an error naming the file and the option that asked for the
   call, none is handed to the pool, and a file opened before the failing

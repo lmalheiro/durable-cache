@@ -98,7 +98,7 @@ impl FsMissHandler {
     /// The CPU-only half of opening a store for `key`: hashing the key and
     /// serialising the metadata. Split out so the borrowed
     /// `CacheKey`/`CacheMeta` stay on the caller's side and only owned bytes
-    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-03).
+    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-04).
     pub(crate) fn prepare(
         cache: &'static FsCache,
         key: &CacheKey,
@@ -418,7 +418,7 @@ impl HandleMiss for FsMissHandler {
         }
         // Folding the chunk into the running checksum is pure CPU, so it
         // stays here; the write behind it is a syscall and does not
-        // (FDS-STORAGE.EXECUTOR-03).
+        // (FDS-STORAGE.EXECUTOR-04).
         #[cfg(feature = "body-crc")]
         {
             self.body_crc = crc32c::crc32c_append(self.body_crc, &data);
@@ -463,7 +463,7 @@ impl HandleMiss for FsMissHandler {
         // the header, `fdatasync`s unless the configured durability skips
         // it, and renames: up to four syscalls, one of them a flush that can
         // take milliseconds on a real device. So the whole handler moves to
-        // the blocking pool (FDS-STORAGE.EXECUTOR-03), and is dropped there
+        // the blocking pool (FDS-STORAGE.EXECUTOR-04), and is dropped there
         // as the closure ends, whether the store published or failed. A
         // failed store's `Drop` aborts it and removes its temporary
         // (FRE-COMPAT.ABORTSPACE-01). A published store's closes its handle
@@ -512,7 +512,7 @@ impl Drop for FsMissHandler {
         // for FDS-STORAGE.RECLAIM-01's restart-time scan instead.
         if !self.finished {
             // One of the two syscalls this backend still makes on the
-            // caller's thread (FDS-STORAGE.EXECUTOR-03). `Drop` cannot
+            // caller's thread (FDS-STORAGE.EXECUTOR-04). `Drop` cannot
             // await, and the temporary's name must be gone when the drop
             // returns (FRE-COMPAT.ABORTSPACE-01). The unlink is cheap: this
             // handler still has the file open, so it removes only the name.

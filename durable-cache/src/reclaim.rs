@@ -55,7 +55,7 @@ pub fn temp_writer_may_be_running(root: &Path, temp: &writerid::TempName<'_>) ->
 /// The caller still has the record open, from reading it, and closes it only
 /// after this returns: the kernel then frees the record at that close, after
 /// the lock, rather than inside the unlink, under the lock. The scan does
-/// both on the blocking pool (FDS-STORAGE.EXECUTOR-03).
+/// both on the blocking pool (FDS-STORAGE.EXECUTOR-04).
 pub(crate) fn reclaim_canonical(
     cache: &FsCache,
     name: &str,
@@ -134,7 +134,7 @@ pub(crate) fn reclaim_leases(cache: &FsCache) -> u64 {
 /// Unlink a crash-orphaned temporary. No identity check is needed: nothing
 /// is ever renamed onto a temporary's name. Nothing holds the temporary of a
 /// stopped writer open either, so the unlink frees it, and the scan calls
-/// this on the blocking pool (FDS-STORAGE.EXECUTOR-03).
+/// this on the blocking pool (FDS-STORAGE.EXECUTOR-04).
 pub(crate) fn reclaim_temp(cache: &FsCache, path: &Path, size: u64) -> Option<u64> {
     test_hook! { cache.hooks.pause(PausePoint::ReclaimBeforeUnlink, path); }
     // Held across the unlink; a read-only backend skips it.

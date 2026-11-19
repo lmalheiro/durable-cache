@@ -98,11 +98,11 @@ pub enum PausePoint {
     /// blocking pool inside a runtime, or where the handler is dropped
     /// outside one. The file is an aborted or discarded store's temporary, a
     /// record replaced or purged while a hit read it, or a removed temporary
-    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-03).
+    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-04).
     BeforeClosingRemovedFile,
     /// Store: at the start of its miss handler's `Drop`. A test holds a
     /// store here to see on which thread its handler is dropped. Path: the
-    /// canonical record (FDS-STORAGE.EXECUTOR-03).
+    /// canonical record (FDS-STORAGE.EXECUTOR-04).
     StoreDropping,
 }
 

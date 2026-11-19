@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! TC-STORAGE.EXECUTOR-02: no `Storage` call blocks the worker it is polled
-//! on (FDS-STORAGE.EXECUTOR-03).
+//! on (FDS-STORAGE.EXECUTOR-04).
 //!
 //! Pingora gives each service one worker thread by default, so a backend
 //! that runs its syscalls inline stalls every other connection that worker
@@ -118,7 +118,7 @@ fn tc_storage_executor_02_storage_calls_do_not_stall_the_worker() {
             worst < MAX_STALL,
             "a co-resident task was kept off the worker for {worst:?}, over the {MAX_STALL:?} \
              bound: a Storage call is running its file I/O inline instead of on the blocking \
-             pool (FDS-STORAGE.EXECUTOR-03)"
+             pool (FDS-STORAGE.EXECUTOR-04)"
         );
     });
 }
@@ -177,7 +177,7 @@ fn streaming_does_not_stall_the_worker(configure: fn(FsCacheConfig) -> FsCacheCo
         assert!(
             worst < MAX_STALL,
             "a co-resident task was kept off the worker for {worst:?} while a follower streamed \
-             an in-flight store, over the {MAX_STALL:?} bound (FDS-STORAGE.EXECUTOR-03)"
+             an in-flight store, over the {MAX_STALL:?} bound (FDS-STORAGE.EXECUTOR-04)"
         );
     });
 }
@@ -254,7 +254,7 @@ fn tc_storage_executor_02_the_restart_scan_frees_files_off_the_worker() {
         assert!(
             free,
             "{case}: the scan's worker stayed blocked while the file was freed \
-             (FDS-STORAGE.EXECUTOR-03)"
+             (FDS-STORAGE.EXECUTOR-04)"
         );
     }
 }
@@ -401,6 +401,6 @@ fn tc_storage_executor_02_the_restart_scan_yields_between_records() {
             .windows(2)
             .all(|w| w[0] == "other" || w[1] == "other"),
         "the scan called the eviction manager twice without letting another task run \
-         (FDS-STORAGE.EXECUTOR-03): {events:?}"
+         (FDS-STORAGE.EXECUTOR-04): {events:?}"
     );
 }

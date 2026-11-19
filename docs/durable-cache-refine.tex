@@ -814,7 +814,7 @@
   miss handler is dropped (\reqref{FRE-COMPAT.ABORTSPACE-01}). Its own handle
   on the temporary stays open across the unlink, so the unlink removes only
   the name, and it closes that handle on the blocking pool
-  (\reqref{FDS-STORAGE.EXECUTOR-03}): the close frees the storage, which
+  (\reqref{FDS-STORAGE.EXECUTOR-04}): the close frees the storage, which
   can take a long time for a large temporary. A partial-hit
   reader still holding the temporary open is unaffected by the unlink; how its
   stream ends is specified by \reqref{FDS-STORAGE.PARTIAL-02}.
@@ -1937,7 +1937,7 @@
   \trace{FRE-COMPLIANCE.READERISOLATION-01}
 \end{requirement}
 
-\begin{requirement}{ADR-STORAGE.EXECUTOR-03}[draft][designConstraint]{File I/O on the blocking pool}
+\begin{requirement}{ADR-STORAGE.EXECUTOR-04}[draft][designConstraint]{File I/O on the blocking pool}
 
   \localreqdiagram*{adrexecutor01}{\reqid}{\reqdesc}
 
@@ -2029,7 +2029,7 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.EXECUTOR-03}{Specify which work moves to the
+  \reqexpect{refine}{FDS-STORAGE.EXECUTOR-04}{Specify which work moves to the
   blocking pool, what stays on the worker, and how the restart scan bounds
   the stall it cannot move.}
 
@@ -2039,14 +2039,14 @@
   \trace{FRE-COMPAT.STREAMDELIVERY-02}
 \end{requirement}
 
-\begin{requirement}{FDS-STORAGE.EXECUTOR-03}[draft][functionalRequirement]{Storage calls never block the worker}
+\begin{requirement}{FDS-STORAGE.EXECUTOR-04}[draft][functionalRequirement]{Storage calls never block the worker}
 
   \localreqdiagram*{fdsexecutor01}{\reqid}{\reqdesc}
 
   WHILE a \texttt{Storage} call, a \texttt{HandleHit} read, or a
   \texttt{HandleMiss} write is in progress, the backend shall leave the
   executor thread that polled it free to drive other tasks
-  (\reqref{ADR-STORAGE.EXECUTOR-03}), except while an operation of an
+  (\reqref{ADR-STORAGE.EXECUTOR-04}), except while an operation of an
   unsynchronised store runs in an inline slot
   (\reqref{FDS-STORAGE.INLINEWRITES-01}), which holds its thread: never
   every thread of the runtime at once.
@@ -2141,7 +2141,7 @@
   co-resident on a single-worker runtime observes while cache traffic runs.}
   \reqcover{satisfy}{IMP}
 
-  \refine{ADR-STORAGE.EXECUTOR-03}
+  \refine{ADR-STORAGE.EXECUTOR-04}
   \satisfy{HLR-COMPLIANCE.RFC-01}
   \trace{FDS-STORAGE.PUBLISH-03}
   \trace{FDS-STORAGE.PARTIAL-02}
@@ -2154,7 +2154,7 @@
 
   \localreqdiagram*{adrpagecache01}{\reqid}{\reqdesc}
 
-  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-03} runs every storage
+  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-04} runs every storage
   operation on Tokio's blocking pool, and counts the cost among its
   consequences: one thread handoff per operation, whether or not the data
   was in the page cache. Measured on 22~October~2026 with the benchmark of
@@ -2166,7 +2166,7 @@
   and 62\,\% of \texttt{MemCache} for 1~KiB, 64~KiB and 1~MiB bodies, short
   of \reqref{HLR-PERFORMANCE.HITRATE-01} for the first two.
 
-  What \reqref{ADR-STORAGE.EXECUTOR-03} rules out is a worker waiting for the
+  What \reqref{ADR-STORAGE.EXECUTOR-04} rules out is a worker waiting for the
   device. A call the page cache answers does not wait, and Linux can report
   in advance that a call would: \texttt{openat2} with
   \texttt{RESOLVE\_CACHED} fails with \texttt{EAGAIN} unless every component
@@ -2200,7 +2200,7 @@
   file with \texttt{openat2} and \texttt{RESOLVE\_CACHED}, and read it with
   \texttt{preadv2} and \texttt{RWF\_NOWAIT}. When one of these calls reports
   that it would wait, run the operation on the blocking pool, as
-  \reqref{ADR-STORAGE.EXECUTOR-03} decides --- a lookup whole, with the file
+  \reqref{ADR-STORAGE.EXECUTOR-04} decides --- a lookup whole, with the file
   the worker opened, and a body read from the bytes it already holds; so too when a lookup finds anything but a hit or a missing file ---
   a checksum mismatch, whose re-read takes the key's publication lock
   (\reqref{SDS-LAYOUT.OBJECTFILE-03}), a record that fails validation, an
@@ -2240,7 +2240,7 @@
       \texttt{MemCache}, short of \reqref{HLR-PERFORMANCE.HITRATE-01}, for
       one more component to build.
     \item \emph{\texttt{io\_uring}}: no pool and no handoff for any
-      operation. Rejected for the reasons \reqref{ADR-STORAGE.EXECUTOR-03}
+      operation. Rejected for the reasons \reqref{ADR-STORAGE.EXECUTOR-04}
       gives; it would also replace the pool for every operation, where this
       decision moves only the reads that need not wait.
     \item \emph{Map records into memory}, and check with \texttt{mincore}
@@ -2267,9 +2267,9 @@
     \item[+] A hit on a record the page cache holds makes no handoff, and the
       pool stays at a few threads beside the workers.
     \item[+] The worker still never waits for the device, so
-      \reqref{FDS-STORAGE.EXECUTOR-03} holds: a call that would wait says so
+      \reqref{FDS-STORAGE.EXECUTOR-04} holds: a call that would wait says so
       instead. The RFC 9111 differential on a single worker
-      (\reqref{TC-COMPLIANCE.RFC-01}) found no new deviation in October 2026,
+      (\reqref{TC-COMPLIANCE.RFC-02}) found no new deviation in October 2026,
       when the reads of published records first ran on the worker; partial
       hits and \texttt{O\_NOATIME} came later, and the nightly run on the
       main branch checks them once merged.
@@ -2298,7 +2298,7 @@
   worker, through which calls, when an operation goes to the blocking pool,
   the options, and what construction checks.}
 
-  \refine{ADR-STORAGE.EXECUTOR-03}
+  \refine{ADR-STORAGE.EXECUTOR-04}
   \satisfy{HLR-PERFORMANCE.HITRATE-01}
   \trace{HLR-SCOPE.V1-02}
   \trace{HLR-COMPLIANCE.RFC-01}
@@ -2313,7 +2313,7 @@
   body, the backend shall perform that operation on the worker that polls it
   through file calls that fail rather than wait for the storage device; an
   operation one of whose calls fails so runs on the blocking pool, as
-  \reqref{FDS-STORAGE.EXECUTOR-03} specifies
+  \reqref{FDS-STORAGE.EXECUTOR-04} specifies
   (\reqref{ADR-STORAGE.PAGECACHE-01}).
 
   \textbf{The calls.} The lookup opens the canonical path
@@ -2339,7 +2339,7 @@
   answered on the worker, and so is a partial hit's temporary that is gone.
   The worker never closes a file it hands over, as that close could free a
   file that a store or a purge has just removed
-  (\reqref{FDS-STORAGE.EXECUTOR-03}). A body read that fails rather than
+  (\reqref{FDS-STORAGE.EXECUTOR-04}). A body read that fails rather than
   waits carries on on the pool from the bytes it already holds; one that
   fails with another error is done again on the pool, which reports it.
   Stores, purges, metadata updates, expiries and the restart scan always run
@@ -2360,7 +2360,7 @@
   exist only on Linux and are on by default: page-cache reads
   (\texttt{with\_page\_cache\_reads}) and \texttt{O\_NOATIME}
   (\texttt{with\_noatime}). With page-cache reads off, every lookup and body
-  read runs on the pool as \reqref{FDS-STORAGE.EXECUTOR-03} specifies; with
+  read runs on the pool as \reqref{FDS-STORAGE.EXECUTOR-04} specifies; with
   \texttt{O\_NOATIME} off, files are opened as usual. At construction, with
   page-cache reads on, the backend opens the cache root with
   \texttt{openat2} and \texttt{RESOLVE\_CACHED}, and reads its writer lease
@@ -2378,7 +2378,7 @@
 
   \refine{ADR-STORAGE.PAGECACHE-01}
   \satisfy{HLR-PERFORMANCE.HITRATE-01}
-  \trace{FDS-STORAGE.EXECUTOR-03}
+  \trace{FDS-STORAGE.EXECUTOR-04}
   \trace{FDS-STORAGE.PARTIAL-02}
   \trace{SDS-LAYOUT.OBJECTFILE-03}
 \end{requirement}
@@ -2387,7 +2387,7 @@
 
   \localreqdiagram*{adrlastchunk01}{\reqid}{\reqdesc}
 
-  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-03} runs a store's file
+  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-04} runs a store's file
   work on the blocking pool, one handoff per operation: one to open the
   store, one per body chunk, and one for \texttt{finish}. A handoff costs
   about 20~microseconds of processor time under load
@@ -2488,7 +2488,7 @@
   \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify which chunk the store
   keeps, when finish writes it, and what a chunk sent after it does.}
 
-  \refine{ADR-STORAGE.EXECUTOR-03}
+  \refine{ADR-STORAGE.EXECUTOR-04}
   \trace{FRE-COMPAT.UNSIZED-02}
   \trace{FRE-COMPAT.STREAMDELIVERY-02}
   \trace{HLR-PERFORMANCE.STORERATE-01}
@@ -2499,7 +2499,7 @@
 
   \localreqdiagram*{adrinlinewrites01}{\reqid}{\reqdesc}
 
-  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-03} runs every file
+  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-04} runs every file
   operation on the blocking pool, so that no worker ever waits for the
   device. An unsynchronised store (\reqref{ADR-PERSISTENCE.UNSYNCED-01})
   waits for no device by nature: it creates its temporary, writes it and
@@ -2512,7 +2512,7 @@
   and on ext4 a write can wait for a commit of the journal. A worker inside
   such a wait stalls every task it holds; with a single worker, Pingora's
   default, that is the whole service, and the deviation
-  \reqref{ADR-STORAGE.EXECUTOR-03} records came from such a stall.
+  \reqref{ADR-STORAGE.EXECUTOR-04} records came from such a stall.
 
   \textbf{Decision:} Keep $K$ \emph{inline slots}, as
   Appendix~\ref{app:executor-bounded} proposes. Each operation of an
@@ -2575,9 +2575,9 @@
       or with work stealing off, nothing changes.
     \item[--] A store's file work runs in two places, the pool and the
       workers, which must stay equivalent. The test cases of
-      \reqref{FDS-STORAGE.EXECUTOR-03} run on one worker, where no slot is
+      \reqref{FDS-STORAGE.EXECUTOR-04} run on one worker, where no slot is
       taken; \reqref{TC-STORAGE.INLINEWRITES-01} tests the slots.
-    \item[--] \reqref{TC-COMPLIANCE.RFC-01} runs its differential a second
+    \item[--] \reqref{TC-COMPLIANCE.RFC-02} runs its differential a second
       time, on four workers with unsynchronised stores.
   \end{itemize}
 
@@ -2587,7 +2587,7 @@
   take a slot, how a slot is taken and given back, the cap the runtime's
   workers set, and the option.}
 
-  \refine{ADR-STORAGE.EXECUTOR-03}
+  \refine{ADR-STORAGE.EXECUTOR-04}
   \trace{HLR-PERFORMANCE.STORERATE-01}
   \trace{HLR-SCOPE.V1-02}
   \trace{HLR-COMPLIANCE.RFC-01}
@@ -2608,7 +2608,7 @@
   polls the operation less one, and run the operation's file work on that
   worker, giving the slot back as soon as it returns. When it cannot take
   one, it shall run the operation on the blocking pool, as
-  \reqref{FDS-STORAGE.EXECUTOR-03} specifies. The workers are read from the
+  \reqref{FDS-STORAGE.EXECUTOR-04} specifies. The workers are read from the
   runtime at each operation, so that a runtime of one worker, or a runtime
   per worker as Pingora builds with work stealing off, takes no slot; the
   backend logs, once, that it uses fewer slots than the configuration asks.
@@ -2624,7 +2624,7 @@
 
   \textbf{Closing.} A store finished in a slot shall close its record on
   the worker if the record still has a name, as a hit closes its file
-  (\reqref{FDS-STORAGE.EXECUTOR-03}), and give it to the pool to close
+  (\reqref{FDS-STORAGE.EXECUTOR-04}), and give it to the pool to close
   otherwise. The record it replaced, whose close frees its storage, it
   shall always give to the pool.
 
@@ -2634,7 +2634,7 @@
   \reqcover{verify}{TC}
 
   \refine{ADR-STORAGE.INLINEWRITES-01}
-  \trace{FDS-STORAGE.EXECUTOR-03}
+  \trace{FDS-STORAGE.EXECUTOR-04}
   \trace{FDS-STORAGE.PUBLISH-03}
   \trace{FDS-PERSISTENCE.CRASHDISCARD-01}
 \end{requirement}
