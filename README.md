@@ -439,10 +439,23 @@ durable-cache is from nginx and its `proxy_cache`. Three caching proxies stand
 in front of one origin, an nginx serving fixed bodies: nginx with
 `proxy_cache`, and `fixture-proxy` on durable-cache and on `MemCache`, the
 in-memory backend of `pingora-cache`, which separates the cost of the storage
-from that of the proxy. Every round starts each server with an empty cache;
-the scenarios are cache hits on 1 KiB, 64 KiB and 1 MiB bodies, and filling
-the cache with new URLs of 4 KiB and 64 KiB. The report gives the medians of
-three rounds.
+from that of the proxy. Every round starts each server with an empty cache.
+The report gives the medians of three rounds, with each server's processor
+time per request and the most threads it ran, for these scenarios:
+
+- `hits`: cache hits on 1 KiB, 64 KiB and 1 MiB bodies;
+- `fills`: filling the cache with new URLs of 4 KiB, 64 KiB and 1 MiB;
+- `burst`: 1 KiB hits, for 2 s, while 16 connections store 4,000 new 1 MiB
+  bodies, with the host's peak dirty data and data under write-back (the
+  servers with a cache on disk only);
+- `cold`: 1 MiB hits on 400 objects that were evicted from the page cache,
+  then the same objects cached (the servers with a cache on disk only);
+- `census`: the system calls durable-cache makes per request, hits and
+  fills, which strace counts; a store's pool handoffs are its `pwrite`
+  calls.
+
+`--only` runs some of them, as in `--only burst,cold`; the test-case
+verdicts need `hits` and `fills`.
 
 ```bash
 cargo xtask bench --work-dir /var/tmp/durable-cache-bench
@@ -455,10 +468,11 @@ TC-PERFORMANCE.HITRATE-01 measures.
 
 It needs `nginx` and [`oha`](https://github.com/hatoo/oha), the load
 generator; `--nginx` and `--oha` name them if they are not on the `PATH`.
-nginx runs as an ordinary user, with its files in the work directory. Put
-that directory on the disk you mean to measure, since on a tmpfs `fdatasync`
-costs nothing; it needs about 1 GB free, as each server's cache is deleted
-after its runs. The servers and the load generator get separate physical cores
+The census also needs `strace`. nginx runs as an ordinary user, with its
+files in the work directory. Put that directory on the disk you mean to
+measure, since on a tmpfs `fdatasync` costs nothing; it needs about 7 GB
+free, as each server's cache is deleted after its runs. The burst writes
+about 4 GB to the disk per server and round. The servers and the load generator get separate physical cores
 (`--server-cpus` and `--load-cpus` override the split), and each server gets
 one worker per server CPU (`--threads` overrides it): `worker_processes` for
 nginx, and for fixture-proxy `ServerConf::threads`, whose default is 1. The
