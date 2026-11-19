@@ -16,14 +16,16 @@
 //! `all(target_os = "linux", not(feature = "as-if-not-linux"))`, the copy's
 //! manifest declares that feature, and every step enables it. The manifest
 //! also drops the Linux-only dependencies, so that code outside the Linux
-//! gates cannot use them. What this cannot catch is a call that the libc
-//! of another system lacks: the libc crate here is the Linux one.
+//! gates cannot use them. What this cannot catch is such code calling what
+//! only Linux has in std (`std::os::linux`) or in libc: the copy still
+//! builds for Linux.
 //!
 //! Every step's whole output goes to a log of its own, kept until the next
 //! run: a failing test's panic is printed where it happens, mid-run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -50,7 +52,9 @@ struct FeatureSet {
 }
 
 impl FeatureSet {
-    /// Cargo's flags for this set, with `extra` features on top of it.
+    /// Cargo's flags for this set, with `extra` features on top of it. With
+    /// every feature on, `--all-features` alone: the manifest declares the
+    /// `extra` features, so they are on too.
     fn args(&self, extra: &[&str]) -> Vec<String> {
         if self.all {
             return vec!["--all-features".to_owned()];
@@ -154,12 +158,9 @@ fn side_steps(
         args,
     };
     let clippy = |set: &FeatureSet, release: bool| {
-        let mut args = vec![
-            "clippy".to_owned(),
-            "-p".to_owned(),
-            "durable-cache".to_owned(),
-        ];
-        args.push("--all-targets".to_owned());
+        let mut args = ["clippy", "-p", "durable-cache", "--all-targets"]
+            .map(String::from)
+            .to_vec();
         if release {
             args.push("--release".to_owned());
         }
@@ -262,9 +263,11 @@ pub(crate) fn cfg_matrix(root: &Path, tests: bool) -> Result<()> {
 /// Bring the other-Unix copy at `copy` up to date with the working tree at
 /// `root`: every file git tracks or would track, except the specification
 /// under `docs/` and the submodules, which no build reads. durable-cache's
-/// sources, tests and manifest are rewritten ([`rewrite`]). A file is
+/// sources, tests and manifest are rewritten ([`rewrite`]). The files gone
+/// from the working tree leave the copy first, so that a path that turned
+/// from a directory into a file, or back, finds its place free. A file is
 /// written only when its content changes, so that cargo rebuilds only what
-/// did, and a file gone from the working tree goes from the copy too.
+/// did.
 fn sync_copy(root: &Path, copy: &Path) -> Result<()> {
     let listing = Command::new("git")
         .args([
@@ -280,7 +283,7 @@ fn sync_copy(root: &Path, copy: &Path) -> Result<()> {
     if !listing.status.success() {
         bail!("git ls-files failed");
     }
-    let mut kept = BTreeSet::new();
+    let mut files = BTreeMap::new();
     let mut rewritten_sources = 0;
     for path in String::from_utf8(listing.stdout)?.split('\0') {
         if path.is_empty() || path.starts_with("docs/") {
@@ -306,15 +309,7 @@ fn sync_copy(root: &Path, copy: &Path) -> Result<()> {
             }
             None => content,
         };
-        let destination = copy.join(path);
-        if fs::read(&destination).ok().as_deref() != Some(content.as_slice()) {
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&destination, &content)
-                .with_context(|| format!("failed to write {}", destination.display()))?;
-        }
-        kept.insert(PathBuf::from(path));
+        files.insert(PathBuf::from(path), content);
     }
     if rewritten_sources == 0 {
         bail!(
@@ -322,16 +317,33 @@ fn sync_copy(root: &Path, copy: &Path) -> Result<()> {
              update xtask/src/cfg_matrix.rs, or the other side checks nothing"
         );
     }
-    for entry in WalkDir::new(copy).min_depth(1).contents_first(true) {
-        let entry = entry?;
-        let relative = entry.path().strip_prefix(copy)?;
-        if entry.file_type().is_dir() {
-            // Only an empty directory goes; one that still holds files
-            // refuses, which is what is wanted.
-            let _ = fs::remove_dir(entry.path());
-        } else if !kept.contains(relative) {
-            fs::remove_file(entry.path())
-                .with_context(|| format!("failed to remove {}", entry.path().display()))?;
+    if copy.exists() {
+        for entry in WalkDir::new(copy).min_depth(1).contents_first(true) {
+            let entry = entry?;
+            let relative = entry.path().strip_prefix(copy)?;
+            let removed = if entry.file_type().is_dir() {
+                // Only an empty directory goes: one that still holds files
+                // refuses, which is what is wanted.
+                match fs::remove_dir(entry.path()) {
+                    Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => Ok(()),
+                    removed => removed,
+                }
+            } else if files.contains_key(relative) {
+                Ok(())
+            } else {
+                fs::remove_file(entry.path())
+            };
+            removed.with_context(|| format!("failed to remove {}", entry.path().display()))?;
+        }
+    }
+    for (path, content) in &files {
+        let destination = copy.join(path);
+        if fs::read(&destination).ok().as_deref() != Some(content.as_slice()) {
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&destination, content)
+                .with_context(|| format!("failed to write {}", destination.display()))?;
         }
     }
     Ok(())
@@ -339,8 +351,9 @@ fn sync_copy(root: &Path, copy: &Path) -> Result<()> {
 
 /// The copy's text of the file at `path`, if it differs from the working
 /// tree's: durable-cache's sources and tests with their Linux gates turned
-/// off by [`AS_IF_NOT_LINUX`], and its manifest declaring that feature and
-/// without Linux-only dependencies.
+/// off by [`AS_IF_NOT_LINUX`], and its manifest declaring that feature,
+/// with its Linux-only tables (dependencies, dev- and build-dependencies)
+/// for no target.
 fn rewrite(path: &str, content: &[u8]) -> Result<Option<String>> {
     let source = (path.starts_with("durable-cache/src/")
         || path.starts_with("durable-cache/tests/"))
@@ -361,12 +374,91 @@ fn rewrite(path: &str, content: &[u8]) -> Result<Option<String>> {
         }
         // `cfg(any())` holds on no target.
         let text = text
-            .replace(
-                &format!("[target.'cfg({LINUX})'.dependencies]"),
-                "[target.'cfg(any())'.dependencies]",
-            )
+            .replace(&format!("[target.'cfg({LINUX})'."), "[target.'cfg(any())'.")
             .replace(features, &format!("{features}{AS_IF_NOT_LINUX} = []\n"));
         return Ok(Some(text));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both sides of a Linux gate select the other side, in durable-cache's
+    /// sources and tests only.
+    #[test]
+    fn the_linux_gates_select_their_other_side() {
+        let source = "#[cfg(target_os = \"linux\")]\nmod a;\n\
+                      #[cfg(not(target_os = \"linux\"))]\nmod b;\n";
+        let rewritten = rewrite("durable-cache/src/lib.rs", source.as_bytes())
+            .expect("a source")
+            .expect("its gates are rewritten");
+        assert_eq!(
+            rewritten,
+            "#[cfg(all(target_os = \"linux\", not(feature = \"as-if-not-linux\")))]\nmod a;\n\
+             #[cfg(not(all(target_os = \"linux\", not(feature = \"as-if-not-linux\"))))]\nmod b;\n"
+        );
+        let test = rewrite("durable-cache/tests/support/mod.rs", source.as_bytes());
+        assert!(
+            test.expect("a test").is_some(),
+            "the tests are rewritten too"
+        );
+        let other = rewrite("xtask/src/main.rs", source.as_bytes());
+        assert!(
+            other.expect("another crate").is_none(),
+            "other crates are left"
+        );
+        let ungated = rewrite("durable-cache/src/lib.rs", b"mod a;\n");
+        assert!(ungated.expect("a source").is_none(), "nothing to rewrite");
+    }
+
+    /// The copy's manifest declares the feature, and its Linux-only tables
+    /// hold for no target.
+    #[test]
+    fn the_manifest_declares_the_feature_and_drops_the_linux_tables() {
+        let manifest = "[dependencies]\nlog = \"0.4\"\n\n\
+                        [target.'cfg(target_os = \"linux\")'.dependencies]\nrustix = \"1\"\n\n\
+                        [target.'cfg(target_os = \"linux\")'.dev-dependencies]\nlibc = \"0.2\"\n\n\
+                        [features]\ndefault = []\n";
+        let rewritten = rewrite("durable-cache/Cargo.toml", manifest.as_bytes())
+            .expect("a manifest")
+            .expect("it is rewritten");
+        assert_eq!(
+            rewritten,
+            "[dependencies]\nlog = \"0.4\"\n\n\
+             [target.'cfg(any())'.dependencies]\nrustix = \"1\"\n\n\
+             [target.'cfg(any())'.dev-dependencies]\nlibc = \"0.2\"\n\n\
+             [features]\nas-if-not-linux = []\ndefault = []\n"
+        );
+        let without_features = rewrite("durable-cache/Cargo.toml", b"[dependencies]\n");
+        assert!(
+            without_features.is_err(),
+            "no table to declare the feature in"
+        );
+    }
+
+    fn set(no_default: bool, features: &[&str], all: bool) -> FeatureSet {
+        FeatureSet {
+            label: String::new(),
+            no_default,
+            features: features.iter().map(|f| f.to_string()).collect(),
+            all,
+        }
+    }
+
+    /// Each feature set's flags, with an extra feature on top.
+    #[test]
+    fn feature_sets_turn_into_cargo_flags() {
+        assert!(set(false, &[], false).args(&[]).is_empty());
+        assert_eq!(
+            set(true, &[], false).args(&["x"]),
+            ["--no-default-features", "--features", "x"]
+        );
+        assert_eq!(
+            set(false, &["metrics"], false).args(&["x"]),
+            ["--features", "metrics,x"]
+        );
+        assert_eq!(set(false, &[], true).args(&["x"]), ["--all-features"]);
+    }
 }

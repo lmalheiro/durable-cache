@@ -352,7 +352,8 @@ build, and nextest with the default features and with all of them, first in
 the workspace, then in a copy under the target directory whose Linux gates
 select their other-Unix side. `--no-tests` lints only. Each step's whole log
 stays under `<target>/xtask/cfg-matrix/logs` until the next run. What it
-cannot catch is a call that another system's libc lacks.
+cannot catch is code outside the Linux gates that calls what only Linux has
+in std (`std::os::linux`) or in libc: the copy still builds for Linux.
 
 **Other targets.** CI builds for 64-bit glibc only. The 32-bit glibc and
 the musl code (`durable-cache/src/nowait.rs`) can be checked on an amd64
