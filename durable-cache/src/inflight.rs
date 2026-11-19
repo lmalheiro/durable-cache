@@ -148,8 +148,8 @@ impl InFlightRegistry {
         }
     }
 
-    /// Deregister a store. Entries with no stores left are pruned so the
-    /// map does not grow unbounded. Each store ends once, after it began; a
+    /// Deregister a store. Entries with no stores left are pruned so the map
+    /// does not grow unbounded. Each store ends once, after it began; a
     /// debug build checks it, and a release build ignores a store that is
     /// not there, since this runs from the miss handler's `Drop`, where a
     /// panic during unwinding would abort the process.
@@ -176,14 +176,14 @@ impl InFlightRegistry {
     /// The map, shared.
     ///
     /// An `RwLock` is poisoned only by a panic while it is held for writing,
-    /// and nothing run under this one's write lock panics today: `begin`
-    /// and `end` only insert, remove and prune entries, and `HashMap` and
-    /// `Vec` panic only when a collection outgrows the address space,
-    /// leaving themselves valid. Should a later change make a panic
-    /// possible, the registry stays usable, and the first acquisition after
-    /// the panic reports it and clears the poison, as the publication locks
-    /// do. Several threads can hold the map shared at once, so more than one
-    /// of them may report it.
+    /// and nothing run under this one's write lock panics today: `begin` and
+    /// `end` only insert, remove and prune entries, and `HashMap` and `Vec`
+    /// panic only when a collection outgrows the address space, leaving
+    /// themselves valid. Should a later change make a panic possible, the
+    /// registry stays usable, and the first acquisition after the panic
+    /// reports it and clears the poison, as the publication locks do.
+    /// Several threads can hold the map shared at once, so more than one of
+    /// them may report it.
     fn read_map(&self) -> RwLockReadGuard<'_, StoresByKey> {
         self.by_key.read().unwrap_or_else(|poisoned| {
             log::error!("an earlier panic poisoned the in-flight registry; it stays in use");
@@ -279,8 +279,8 @@ mod tests {
 
     /// A reader registers for the next notification before it checks the
     /// store's state, as the partial-hit read loop does. A new valid length,
-    /// and then the store's outcome, each wake it, and each is visible to
-    /// it once woken.
+    /// and then the store's outcome, each wake it, and each is visible to it
+    /// once woken.
     #[tokio::test]
     async fn a_reader_registered_before_a_change_is_woken_by_it() {
         let registry = InFlightRegistry::new();

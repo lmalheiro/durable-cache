@@ -4,14 +4,14 @@
 //! TC-COMPAT.STREAMING-01 — Followers stream a partial hit.
 //!
 //! The backend advertises streaming partial writes
-//! (FRE-COMPAT.STREAMFLAG-01), a lookup while several stores of a key are
-//! in flight resolves to the most recently opened one
+//! (FRE-COMPAT.STREAMFLAG-01), a lookup while several stores of a key are in
+//! flight resolves to the most recently opened one
 //! (FRE-COMPAT.STREAMING-01), chunks reach followers within the bound
 //! FRE-COMPAT.STREAMDELIVERY-01 sets, and a follower ends normally when the
 //! store completes (FRE-COMPAT.STREAMEND-01).
 //!
-//! Two legs need a real proxy rather than the `Storage` API: the cache
-//! lock being released once the leader's miss handler opens (step 2), and
+//! Two legs need a real proxy rather than the `Storage` API: the cache lock
+//! being released once the leader's miss handler opens (step 2), and
 //! counting upstream fetches (step 9). Those are
 //! `test/compat/tests/streaming.rs`'s, which carries the IMP marker that
 //! closes this TC jointly with this file. The abort leg
@@ -55,8 +55,8 @@ async fn tc_compat_streaming_01_follower_streams_as_leader_writes() {
     let first = follower.read_body().await.unwrap();
     assert_eq!(first, Some(Bytes::from_static(b"chunk1-")));
 
-    // The next read has nothing available yet, so it must wait — run it on
-    // a spawned task and let the leader's next write wake it.
+    // The next read has nothing available yet, so it must wait — run it on a
+    // spawned task and let the leader's next write wake it.
     let read_task = tokio::spawn(async move {
         let second = follower.read_body().await.unwrap();
         let third = follower.read_body().await.unwrap();
@@ -114,19 +114,19 @@ async fn tc_compat_streaming_01_lookup_resolves_to_the_most_recently_opened_writ
     );
 
     // Let both writers finish so the test does not leave a dangling
-    // in-flight entry behind (last rename wins; either outcome is fine
-    // here, only the *lookup* resolution above is under test).
+    // in-flight entry behind (last rename wins; either outcome is fine here,
+    // only the *lookup* resolution above is under test).
     first_writer.write_body(Bytes::new(), true).await.unwrap();
     first_writer.finish().await.unwrap();
     second_writer.write_body(Bytes::new(), true).await.unwrap();
     second_writer.finish().await.unwrap();
 }
 
-/// Steps 6 to 8: several followers on one in-flight store receive each
-/// chunk as the store writes it — at least 99 % of deliveries within 10 ms
-/// of the chunk's `write_body` returning (FRE-COMPAT.STREAMDELIVERY-01) —
-/// and every follower's body matches the store's, ending normally across
-/// the concluding rename (FRE-COMPAT.STREAMEND-01).
+/// Steps 6 to 8: several followers on one in-flight store receive each chunk
+/// as the store writes it — at least 99 % of deliveries within 10 ms of the
+/// chunk's `write_body` returning (FRE-COMPAT.STREAMDELIVERY-01) — and every
+/// follower's body matches the store's, ending normally across the
+/// concluding rename (FRE-COMPAT.STREAMEND-01).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn tc_compat_streaming_01_followers_receive_chunks_within_the_latency_bound() {
     const FOLLOWERS: usize = 10;
@@ -202,8 +202,8 @@ async fn tc_compat_streaming_01_followers_receive_chunks_within_the_latency_boun
 }
 
 /// A lookup carrying a store's streaming write tag, which `pingora-cache`
-/// makes from the request that opened the store to read back the body it
-/// is writing, resolves to that very store, not to whichever opened most
+/// makes from the request that opened the store to read back the body it is
+/// writing, resolves to that very store, not to whichever opened most
 /// recently.
 #[tokio::test]
 async fn tc_compat_streaming_01_a_tagged_lookup_resolves_to_its_own_writer() {
@@ -293,9 +293,9 @@ async fn tc_compat_streaming_01_multiple_concurrent_followers_see_the_same_write
         .unwrap();
     writer.finish().await.unwrap();
 
-    // Once published, plain repeated lookups are still just complete hits
-    // — this exercises that concurrent lookups of the same now-published
-    // key all see the identical, whole object.
+    // Once published, plain repeated lookups are still just complete hits —
+    // this exercises that concurrent lookups of the same now-published key
+    // all see the identical, whole object.
     for _ in 0..4 {
         let (_meta, mut hit) = cache.lookup(&key, &trace).await.unwrap().unwrap();
         let mut body = Vec::new();
@@ -306,10 +306,10 @@ async fn tc_compat_streaming_01_multiple_concurrent_followers_see_the_same_write
     }
 }
 
-/// A tagged lookup is answered from the store its tag names while that
-/// store is in flight, and otherwise with nothing: never from another
-/// writer's body, and never from the published record, which may be
-/// another store's (`Storage::lookup_streaming_write`'s own contract).
+/// A tagged lookup is answered from the store its tag names while that store
+/// is in flight, and otherwise with nothing: never from another writer's
+/// body, and never from the published record, which may be another store's
+/// (`Storage::lookup_streaming_write`'s own contract).
 #[tokio::test]
 async fn tc_compat_streaming_01_a_tagged_lookup_never_falls_back_to_another_object() {
     let (cache, _tmp) = support::leaked_cache();
@@ -329,8 +329,8 @@ async fn tc_compat_streaming_01_a_tagged_lookup_never_falls_back_to_another_obje
     store.finish().await.unwrap();
 
     // The store has completed, so its tag names nothing in flight. Not even
-    // the record it published answers: the record under a key may be a
-    // newer store's.
+    // the record it published answers: the record under a key may be a newer
+    // store's.
     assert!(
         cache
             .lookup_streaming_write(&key, Some(&tag), &trace)

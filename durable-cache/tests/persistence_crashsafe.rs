@@ -12,8 +12,7 @@
 //! every flush and FUA point. That needs root, a scratch block device, and
 //! the kernel's replay tool, and this repository has no harness for it yet.
 //! This file covers the same contract by constructing the on-disk states
-//! such a replay produces —
-//! which is what the design's argument turns on:
+//! such a replay produces — which is what the design's argument turns on:
 //!
 //! - a store's bytes not yet on stable storage when the name appeared
 //!   (`fdatasync` precedes the rename, so on storage that honours flushes,
@@ -25,10 +24,10 @@
 //! - a purge whose directory entry was written but whose object file's
 //!   blocks were not;
 //! - with stores unsynchronised (ADR-PERSISTENCE.UNSYNCED-01), a published
-//!   record whose body never reached the device: zeros under a valid
-//!   header, as a file system that records a file's length first can leave
-//!   it, after a host restart the discard detects; or cut short, as one
-//!   that records the length only once the data is written leaves it.
+//!   record whose body never reached the device: zeros under a valid header,
+//!   as a file system that records a file's length first can leave it, after
+//!   a host restart the discard detects; or cut short, as one that records
+//!   the length only once the data is written leaves it.
 
 use durable_cache::recovery::recover;
 use pingora_cache::eviction::simple_lru::Manager;
@@ -39,10 +38,10 @@ use super::support;
 
 // IMP-TC.PERSISTENCE.CRASHSAFE-02: satisfy TC-PERSISTENCE.CRASHSAFE-02
 
-/// A torn in-place metadata update: the metadata region holds the new
-/// bytes while the header still commits the old ones, or the other way
-/// round. Either way a reader sees one complete version or a miss, never a
-/// mixture of the two.
+/// A torn in-place metadata update: the metadata region holds the new bytes
+/// while the header still commits the old ones, or the other way round.
+/// Either way a reader sees one complete version or a miss, never a mixture
+/// of the two.
 #[tokio::test]
 async fn tc_persistence_crashsafe_02_a_torn_metadata_update_is_never_a_mixture() {
     let (cache, tmp) = support::leaked_cache();
@@ -53,8 +52,8 @@ async fn tc_persistence_crashsafe_02_a_torn_metadata_update_is_never_a_mixture()
     let before = std::fs::read(&path).unwrap();
 
     // Apply an in-place update, then reconstruct the states a crash could
-    // have left between its two writes: region new + header old, and
-    // region old + header new.
+    // have left between its two writes: region new + header old, and region
+    // old + header new.
     let trace = support::inactive_trace();
     let second = support::revalidation(&first, &support::meta_with_header_filler(64));
     cache.update_meta(&key, &second, &trace).await.unwrap();
@@ -103,8 +102,8 @@ async fn tc_persistence_crashsafe_02_a_torn_metadata_update_is_never_a_mixture()
 
 /// A torn withdrawal: an update whose metadata outgrew the region rewrites
 /// only the header, as withdrawn, and a crash can keep part of that write:
-/// the version without the checksum, or the checksum without the version.
-/// A reader then finds the record as it was, or a miss, never a mixture.
+/// the version without the checksum, or the checksum without the version. A
+/// reader then finds the record as it was, or a miss, never a mixture.
 #[tokio::test]
 async fn tc_persistence_crashsafe_02_a_torn_withdrawal_is_never_a_mixture() {
     use durable_cache::format;
@@ -134,7 +133,8 @@ async fn tc_persistence_crashsafe_02_a_torn_withdrawal_is_never_a_mixture() {
         "a withdrawal writes only the header"
     );
 
-    // The version and the checksum are the header bytes a withdrawal changes.
+    // The version and the checksum are the header bytes a withdrawal
+    // changes.
     let version = format::VERSION_OFFSET..format::VERSION_OFFSET + 4;
     let checksum = format::HEADER_CRC_OFFSET..format::HEADER_CRC_OFFSET + 4;
     let torn = |written: std::ops::Range<usize>| {
@@ -189,8 +189,8 @@ async fn tc_persistence_crashsafe_02_an_unfinished_store_is_never_served() {
         .unwrap();
 
     // A crash drops no handler, so the temporary stays behind: forget the
-    // handler rather than dropping it, which is what a killed process
-    // leaves on disk.
+    // handler rather than dropping it, which is what a killed process leaves
+    // on disk.
     std::mem::forget(handler);
 
     let restarted = support::leaked_cache_at(tmp.path());
@@ -204,10 +204,10 @@ async fn tc_persistence_crashsafe_02_an_unfinished_store_is_never_served() {
     );
 }
 
-/// A purge is acknowledged only once the shard directory is synchronised,
-/// so an acknowledged purge cannot come back after a crash: the states in
-/// which the object could return are exactly the ones in which the purge
-/// was never acknowledged.
+/// A purge is acknowledged only once the shard directory is synchronised, so
+/// an acknowledged purge cannot come back after a crash: the states in which
+/// the object could return are exactly the ones in which the purge was never
+/// acknowledged.
 #[tokio::test]
 async fn tc_persistence_crashsafe_02_an_acknowledged_purge_never_returns() {
     let (cache, tmp) = support::leaked_cache();

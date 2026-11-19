@@ -4,15 +4,15 @@
 //! Page-cache reads (`FsCacheConfig::with_page_cache_reads`), Linux only: a
 //! lookup, and each read of a hit's body, first tried on the async worker
 //! with the calls of `crate::nowait`, which fail rather than wait for the
-//! device. What the worker leaves, the caller in `crate::lookup` does on
-//! the blocking pool (FDS-STORAGE.PAGECACHE-01): a lookup again from the
-//! start, with the file the worker opened, and the rest of a body read.
+//! device. What the worker leaves, the caller in `crate::lookup` does on the
+//! blocking pool (FDS-STORAGE.PAGECACHE-01): a lookup again from the start,
+//! with the file the worker opened, and the rest of a body read.
 //!
-//! Each function here does nothing when the configuration leaves these
-//! reads off, as the cache then holds no `nowait::PageCacheReads`, which
-//! only the check at construction makes. A call the system does not support after all, although
-//! `FsCache::new` checked that it did, is an error naming the file: a
-//! page-cache read never turns into a pool read unnoticed.
+//! Each function here does nothing when the configuration leaves these reads
+//! off, as the cache then holds no `nowait::PageCacheReads`, which only the
+//! check at construction makes. A call the system does not support after
+//! all, although `FsCache::new` checked that it did, is an error naming the
+//! file: a page-cache read never turns into a pool read unnoticed.
 
 use std::fs::File;
 use std::path::Path;
@@ -90,9 +90,9 @@ pub(super) fn open_published(
 }
 
 /// [`open_partial_hit`](super::open_partial_hit) on the worker, from the
-/// page cache only, when the configuration asks. It answers a partial hit,
-/// a temporary that is gone, and a call the system does not support after
-/// all. Anything else goes to the pool, which does it all again.
+/// page cache only, when the configuration asks. It answers a partial hit, a
+/// temporary that is gone, and a call the system does not support after all.
+/// Anything else goes to the pool, which does it all again.
 pub(super) fn open_partial_hit(
     cache: &'static FsCache,
     writer: &Arc<InFlightWriter>,
@@ -160,10 +160,10 @@ pub(super) fn fill(
     }
 }
 
-/// The error of a page-cache read of `path` that the system does not
-/// support after all, although `FsCache::new` checked that it did: a file
-/// in the cache lies on another file system than the root, or the system
-/// changed since.
+/// The error of a page-cache read of `path` that the system does not support
+/// after all, although `FsCache::new` checked that it did: a file in the
+/// cache lies on another file system than the root, or the system changed
+/// since.
 fn unsupported<T>(path: &Path, e: std::io::Error) -> Result<T> {
     Error::e_because(
         ErrorType::FileReadError,
@@ -176,8 +176,8 @@ fn unsupported<T>(path: &Path, e: std::io::Error) -> Result<T> {
 }
 
 /// Close `file`, from `path`, on the blocking pool: the worker never closes
-/// a record it gives up on, as the close may free a record that a store or
-/// a purge has just removed (see `FsHitHandler`'s `Drop`).
+/// a record it gives up on, as the close may free a record that a store or a
+/// purge has just removed (see `FsHitHandler`'s `Drop`).
 fn close_on_pool(file: File, cache: &'static FsCache, path: &Path) {
     blocking::close_removed_file(file, cache, path);
 }

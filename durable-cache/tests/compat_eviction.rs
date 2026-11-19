@@ -147,8 +147,8 @@ async fn tc_compat_eviction_01_admits_each_objects_own_freshness_deadline() {
     let (cache, tmp) = support::leaked_cache();
     let body = vec![b'e'; 10_000];
 
-    // One object already past its freshness deadline, one comfortably
-    // inside it, both the same size and stored in this order.
+    // One object already past its freshness deadline, one comfortably inside
+    // it, both the same size and stored in this order.
     let stale = support::key("/eviction-stale");
     let expired = pingora_cache::CacheMeta::new(
         SystemTime::now() - Duration::from_secs(60),
@@ -170,9 +170,9 @@ async fn tc_compat_eviction_01_admits_each_objects_own_freshness_deadline() {
     recover(restarted, &manager).await.unwrap();
     assert_eq!(manager.total_items(), 2);
 
-    // Admitting a third forces a choice; `simple_lru` evicts what is
-    // already stale first, which it can only know from the deadline the
-    // scan admitted with.
+    // Admitting a third forces a choice; `simple_lru` evicts what is already
+    // stale first, which it can only know from the deadline the scan
+    // admitted with.
     let newcomer = support::key("/eviction-newcomer");
     let victims = manager.admit(
         support::entry(&newcomer),

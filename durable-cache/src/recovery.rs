@@ -10,8 +10,8 @@
 //!
 //! Running alongside live traffic is safe by construction: every admission
 //! is re-checked under the key's publication lock, which a live store's
-//! rename also takes, and a ghost pass after enumeration drops entries
-//! whose file has gone.
+//! rename also takes, and a ghost pass after enumeration drops entries whose
+//! file has gone.
 
 use std::fs::{DirEntry, File, FileType, ReadDir};
 use std::io;
@@ -31,9 +31,9 @@ use crate::{blocking, key_codec, metrics, purge, sharding, writerid, FsCache};
 
 /// What one recovery pass did, for logging and tests.
 ///
-/// Fields may be added in later versions. So that this breaks no
-/// integrator, code outside this crate can read the report but not build it
-/// with a struct literal or match all of its fields.
+/// Fields may be added in later versions. So that this breaks no integrator,
+/// code outside this crate can read the report but not build it with a
+/// struct literal or match all of its fields.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RecoveryReport {
@@ -102,19 +102,19 @@ impl RecoveryReport {
 /// orphaned files as it goes.
 ///
 /// Safe to call on a first launch, a post-crash restart, or the incoming
-/// side of a hot upgrade; on the last, the integrator calls it only once
-/// its server holds the listening sockets and the upgrade's close timeout
-/// has elapsed (FDS-COMPAT.READONLY-02).
+/// side of a hot upgrade; on the last, the integrator calls it only once its
+/// server holds the listening sockets and the upgrade's close timeout has
+/// elapsed (FDS-COMPAT.READONLY-02).
 ///
 /// `cache` is `'static`, as it already is to serve as a `Storage`: what the
 /// scan removes, it removes on the blocking pool.
 ///
 /// # Errors
 ///
-/// None today. A directory or file the scan cannot list or read is
-/// skipped, named in a warning and counted: one bad entry must not stop the
-/// admission of the rest. The `Result` keeps room for a failure that would
-/// stop the pass.
+/// None today. A directory or file the scan cannot list or read is skipped,
+/// named in a warning and counted: one bad entry must not stop the admission
+/// of the rest. The `Result` keeps room for a failure that would stop the
+/// pass.
 pub async fn recover(
     cache: &'static FsCache,
     eviction: &dyn EvictionManager,
@@ -151,8 +151,8 @@ pub(crate) async fn recover_until(
             continue;
         };
         // Each second-level directory in this first-level one. Every
-        // directory here is walked, whatever its name: a record found in
-        // the wrong one is reclaimed as misplaced (FDS-STORAGE.RECLAIM-01).
+        // directory here is walked, whatever its name: a record found in the
+        // wrong one is reclaimed as misplaced (FDS-STORAGE.RECLAIM-01).
         for second in second_dirs {
             let Some(second) = listed(second, &first_dir, &mut report) else {
                 continue;
@@ -213,7 +213,8 @@ pub(crate) async fn recover_until(
     //
     // 1. A live store's admission makes the manager return a victim, V, and
     //    the manager drops V's entry at once.
-    // 2. `HttpCache` purges V's record only afterwards, in a task of its own.
+    // 2. `HttpCache` purges V's record only afterwards, in a task of its
+    //    own.
     // 3. In between, the walk reaches V's record, still on disk, finds it
     //    unchanged under V's lock, and admits it: V's entry is back.
     // 4. The purge then removes V's record. V's entry outlives it, counting
@@ -228,8 +229,8 @@ pub(crate) async fn recover_until(
     // purge; and a key live traffic republishes after its check is admitted
     // by the live path.
     for entry in &admitted {
-        // One record at a time, as in the walk: the pass visits every
-        // record the walk admitted (FDS-STORAGE.EXECUTOR-02).
+        // One record at a time, as in the walk: the pass visits every record
+        // the walk admitted (FDS-STORAGE.EXECUTOR-02).
         tokio::task::yield_now().await;
         // And, as in the walk, not once the server is shutting down.
         if shutting_down() {
@@ -248,10 +249,10 @@ pub(crate) async fn recover_until(
         };
         if !path.exists() {
             // The borrowed form of the very identity admitted below: a
-            // key-only entry, since this backend assigns no entry
-            // identifier (ADR-COMPAT.ENTRYID-01). A manager is required to
-            // match the complete identity, so anything else would not
-            // remove what the scan admitted.
+            // key-only entry, since this backend assigns no entry identifier
+            // (ADR-COMPAT.ENTRYID-01). A manager is required to match the
+            // complete identity, so anything else would not remove what the
+            // scan admitted.
             eviction.remove(CacheEntryKeyRef::from(entry));
             report.admitted -= 1;
         }
@@ -320,10 +321,9 @@ async fn process_entry(
     };
     // A withdrawn record holds no object: a metadata update withdrew it, and
     // a store of its key would have replaced it. Lookups leave it in place,
-    // so the scan reclaims it.
-    // A damaged or foreign record cannot be admitted — its key and
-    // freshness deadline cannot be trusted or decoded — and lookups leave
-    // it in place too.
+    // so the scan reclaims it. A damaged or foreign record cannot be
+    // admitted — its key and freshness deadline cannot be trusted or decoded
+    // — and lookups leave it in place too.
     let mut read = record::read_record_blocking(&file, RecordKind::Published, None);
     // Checksums that kept failing may be an in-place metadata update caught
     // between its two writes. Every in-place update holds the key's
@@ -389,11 +389,11 @@ async fn process_entry(
     test_hook! { cache.hooks.pause(PausePoint::RecoverBeforeAdmit, path); }
 
     // Admit under the key's publication lock, after re-checking that the
-    // path still names the file just read: live traffic may have removed
-    // it, or published and will admit its replacement itself.
-    // The same shape `HttpCache` builds for a live admission, so the scan
-    // and live traffic address one entry rather than two: the cache key
-    // alone, with no storage-assigned identifier (ADR-COMPAT.ENTRYID-01).
+    // path still names the file just read: live traffic may have removed it,
+    // or published and will admit its replacement itself. The same shape
+    // `HttpCache` builds for a live admission, so the scan and live traffic
+    // address one entry rather than two: the cache key alone, with no
+    // storage-assigned identifier (ADR-COMPAT.ENTRYID-01).
     let entry = CacheEntryKey::key_only(key);
     let victims = {
         // Skipped once read-only, as the ghost pass is.
@@ -478,11 +478,11 @@ fn skip(report: &mut RecoveryReport, path: &Path, e: &dyn std::fmt::Display) {
     report.skipped += 1;
 }
 
-/// Reclaim the canonical record at `path`, read from `file`, on the
-/// blocking pool: the unlink, under the key's lock, and then the close that
-/// frees the record, which for a large record would hold the worker far
-/// longer than reading it did (FDS-STORAGE.EXECUTOR-02). Returns the bytes
-/// reclaimed, or `None` if the record was left in place.
+/// Reclaim the canonical record at `path`, read from `file`, on the blocking
+/// pool: the unlink, under the key's lock, and then the close that frees the
+/// record, which for a large record would hold the worker far longer than
+/// reading it did (FDS-STORAGE.EXECUTOR-02). Returns the bytes reclaimed, or
+/// `None` if the record was left in place.
 async fn reclaim_record(
     cache: &'static FsCache,
     name: &str,
@@ -507,8 +507,8 @@ async fn reclaim_record(
 
 /// One summary line per scan, plus the counters when the `metrics` feature
 /// is enabled (FDS-STORAGE.RECLAIM-01, "Reporting"). A scan that found the
-/// backend read-only, or that `shut_down` for its server, stopped short,
-/// and says why.
+/// backend read-only, or that `shut_down` for its server, stopped short, and
+/// says why.
 fn report_scan(cache: &FsCache, report: &RecoveryReport, shut_down: bool) {
     let outcome = if cache.is_read_only() {
         "stopped, the backend being read-only"

@@ -4,7 +4,8 @@
 //! TC-COMPLIANCE.VARY-01 — Vary variants stored and selected.
 //!
 //! `pingora-cache` folds the request's `Vary`-named fields into the cache
-//! key's variance *before* ever calling this backend (FRE-COMPLIANCE.VARY-01:
+//! key's variance *before* ever calling this backend
+//! (FRE-COMPLIANCE.VARY-01:
 //! "the backend never sees the request itself") — so the backend's own
 //! obligation is entirely about the key it is actually given: store and
 //! return exactly the object at that key, primary or variant, never
@@ -160,8 +161,8 @@ async fn tc_compliance_vary_01_full_variant_set_survives_a_restart() {
     );
 }
 
-/// Step 3, continued: purging one variant through its own
-/// variance-augmented key leaves the other variants and the primary alone
+/// Step 3, continued: purging one variant through its own variance-augmented
+/// key leaves the other variants and the primary alone
 /// (FRE-COMPLIANCE.VARYISOLATION-01).
 #[tokio::test]
 async fn tc_compliance_vary_01_purging_one_variants_own_key_leaves_the_others() {

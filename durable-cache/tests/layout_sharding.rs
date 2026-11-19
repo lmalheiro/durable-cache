@@ -50,8 +50,8 @@ async fn tc_layout_sharding_01_store_and_purge_resolve_to_the_same_file() {
             "the {name} store resolved to {stored_at:?}"
         );
 
-        // The purge sees only the compact key, wrapped in the Active
-        // target `HttpCache` issues an invalidation with.
+        // The purge sees only the compact key, wrapped in the Active target
+        // `HttpCache` issues an invalidation with.
         assert_eq!(
             support::purge_active(cache, &key).await,
             PurgeOutcome::Purged(None)
@@ -175,8 +175,8 @@ async fn tc_layout_sharding_01_split_falls_on_the_first_four_hex_characters() {
     }
 }
 
-/// Step 5 (analysis): with the layout's fixed fan-out, 10^8 uniformly
-/// hashed objects leave every directory inside REQ-EFFICIENCY.DIRSCALE-01's
+/// Step 5 (analysis): with the layout's fixed fan-out, 10^8 uniformly hashed
+/// objects leave every directory inside REQ-EFFICIENCY.DIRSCALE-01's
 /// 2,000-entry bound, even allowing for the temporaries a leaf holds at peak
 /// concurrency.
 #[test]

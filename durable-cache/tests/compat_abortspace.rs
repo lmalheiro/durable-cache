@@ -54,8 +54,8 @@ async fn tc_compat_abortspace_01_dropped_handler_releases_its_space() {
     assert!(support::lookup_body(cache, &key).await.is_none());
 }
 
-/// Step 2: with a partial-hit reader attached, the reader's stream ends
-/// with an error and the space is still released
+/// Step 2: with a partial-hit reader attached, the reader's stream ends with
+/// an error and the space is still released
 /// (FRE-COMPLIANCE.PARTIALABORT-01).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tc_compat_abortspace_01_releases_space_with_a_reader_attached() {
@@ -118,16 +118,15 @@ async fn tc_compat_abortspace_01_store_ended_by_a_write_failure_releases_its_spa
     assert_eq!(support::tree_file_usage(cache.root()), before);
 }
 
-/// Step 4: a thousand aborts in a row leave the cache directory's disk
-/// usage where it started — space is released per store, not at some later
-/// sweep.
+/// Step 4: a thousand aborts in a row leave the cache directory's disk usage
+/// where it started — space is released per store, not at some later sweep.
 #[tokio::test]
 async fn tc_compat_abortspace_01_a_thousand_aborts_leak_nothing() {
     let (cache, _tmp) = support::leaked_cache();
     let meta = support::meta();
     let trace = support::inactive_trace();
-    // One store first, so the shard directories the loop uses already
-    // exist and their own blocks are part of the baseline.
+    // One store first, so the shard directories the loop uses already exist
+    // and their own blocks are part of the baseline.
     let warmup = support::key("/abortspace-loop-0");
     let mut handler = cache
         .get_miss_handler(&warmup, &meta, &trace)

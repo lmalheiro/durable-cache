@@ -15,20 +15,20 @@
 //! `SDS-*`) each one realises.
 //!
 //! Construction: [`FsCache::new`] builds the cache itself. Separately, call
-//! [`recover`] once at process start to reconstruct the
-//! `EvictionManager`'s view from durable state (ADR-COMPAT.EVICTION-01) —
-//! it is not run automatically by `new`, since it needs the
-//! `EvictionManager` instance, which this crate has no opinion about. On a
-//! Pingora server, [`hotupgrade::install`] does that and makes the backend
-//! read-only on a hot upgrade, and is required for hot upgrades
-//! (FDS-COMPAT.READONLY-02).
+//! [`recover`] once at process start to reconstruct the `EvictionManager`'s
+//! view from durable state (ADR-COMPAT.EVICTION-01) — it is not run
+//! automatically by `new`, since it needs the `EvictionManager` instance,
+//! which this crate has no opinion about. On a Pingora server,
+//! [`hotupgrade::install`] does that and makes the backend read-only on a
+//! hot upgrade, and is required for hot upgrades (FDS-COMPAT.READONLY-02).
 //!
-//! **Deployment constraint.** Every process sharing one cache directory
-//! must run on the same host, with the directory on a local file system:
-//! each backend instance holds a lease under the root, locked with `flock`, and the restart-time scan decides whether a
-//! temporary's writer is still running by trying that lock
-//! (ADR-STORAGE.WRITERID-01). Processes in different PID namespaces, such as
-//! containers on one host, may share a directory.
+//! **Deployment constraint.** Every process sharing one cache directory must
+//! run on the same host, with the directory on a local file system:
+//! each backend instance holds a lease under the root, locked with `flock`,
+//! and the restart-time scan decides whether a temporary's writer is still
+//! running by trying that lock (ADR-STORAGE.WRITERID-01). Processes in
+//! different PID namespaces, such as containers on one host, may share a
+//! directory.
 //!
 //! **Logging.** The crate logs through the `log` crate. Each record's target
 //! is the module that wrote it, under `durable_cache` (for example
@@ -43,9 +43,9 @@
 /// Run a test hook (see `src/hooks/mod.rs`): the body is compiled only into
 /// this crate's own test build. Everything in it, the arguments a hook call
 /// computes included, is absent from any other build, so a hook can never
-/// cost a production build anything or block it. The body is a block: a
-/// `?` inside it returns from the enclosing function, and a `let` inside it
-/// is not visible after it.
+/// cost a production build anything or block it. The body is a block: a `?`
+/// inside it returns from the enclosing function, and a `let` inside it is
+/// not visible after it.
 macro_rules! test_hook {
     ($($body:tt)*) => {
         #[cfg(test)]
@@ -66,13 +66,13 @@ pub(crate) mod format;
 pub(crate) mod hooks;
 /// Outside this crate's own test build, the hooks are an empty stand-in, so
 /// that the code carrying an instance's hooks to the places that call them
-/// reads the same in every build. It has nothing to call: every hook call
-/// is inside `test_hook!`.
+/// reads the same in every build. It has nothing to call: every hook call is
+/// inside `test_hook!`.
 #[cfg(not(test))]
 pub(crate) mod hooks {
     /// The test hooks of an instance: none, and zero bytes, in this build.
-    /// It derives what the real `Hooks` has, `Default`, and nothing more.
-    /// It is braced rather than a unit struct, so that clippy accepts the
+    /// It derives what the real `Hooks` has, `Default`, and nothing more. It
+    /// is braced rather than a unit struct, so that clippy accepts the
     /// `Hooks::default()` that `FsCache::new` calls in every build.
     #[derive(Default)]
     pub(crate) struct Hooks {}
@@ -103,9 +103,9 @@ pub use storage_impl::FsCache;
 
 /// Internals the workspace's test crates (`test/harness`, `test/compat`,
 /// `test/fixture-proxy`) use to tamper with records, inspect temporaries,
-/// and run Eviction Recovery their own way. Not API: it exists only with
-/// the `test-support` feature, which those crates enable, and is exempt
-/// from semver.
+/// and run Eviction Recovery their own way. Not API: it exists only with the
+/// `test-support` feature, which those crates enable, and is exempt from
+/// semver.
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub mod test_support {

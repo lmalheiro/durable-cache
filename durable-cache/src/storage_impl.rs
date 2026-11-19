@@ -71,9 +71,9 @@ fn logged(root: &Path, built: Result<FsCache>) -> Result<FsCache> {
 impl FsCache {
     /// Build a cache rooted at `config.root()`.
     ///
-    /// It runs the construction-time shard scan of FDS-LAYOUT.STARTUP-01, but
-    /// *not* Eviction Recovery (see [`crate::recover`]): that is a separate
-    /// call the integrator makes explicitly, since it needs the
+    /// It runs the construction-time shard scan of FDS-LAYOUT.STARTUP-01,
+    /// but *not* Eviction Recovery (see [`crate::recover`]): that is a
+    /// separate call the integrator makes explicitly, since it needs the
     /// `EvictionManager` instance too, which this constructor has no opinion
     /// about.
     ///
@@ -184,10 +184,10 @@ impl FsCache {
     /// integrator calls this when its server announces
     /// `ExecutionPhase::GracefulUpgradeTransferringFds`, while the process
     /// drains its sessions. Callable from any thread and idempotent; when it
-    /// returns, no durable change that began before it is still running,
-    /// and none can begin after it. A restart scan ([`crate::recover`])
-    /// still running, or run later, then admits nothing: the eviction
-    /// manager it would fill is discarded when the process exits.
+    /// returns, no durable change that began before it is still running, and
+    /// none can begin after it. A restart scan ([`crate::recover`]) still
+    /// running, or run later, then admits nothing: the eviction manager it
+    /// would fill is discarded when the process exits.
     ///
     /// It does not flush the cache: call [`Self::flush`] afterwards, where
     /// blocking is allowed, as the hot-upgrade helper does
@@ -198,16 +198,16 @@ impl FsCache {
     }
 
     /// Make everything the cache holds durable, then remove this instance's
-    /// unsynchronised-store marker, and those of instances that have
-    /// stopped (FDS-PERSISTENCE.CRASHDISCARD-01).
+    /// unsynchronised-store marker, and those of instances that have stopped
+    /// (FDS-PERSISTENCE.CRASHDISCARD-01).
     ///
-    /// It flushes the file system
-    /// that holds the cache with `syncfs` on Linux, and elsewhere with
-    /// `sync`, which flushes every file system. It waits for the device:
+    /// It flushes the file system that holds the cache with `syncfs` on
+    /// Linux, and elsewhere with `sync`, which flushes every file system. It
+    /// waits for the device:
     /// call it where blocking is allowed. On systems other than Linux,
-    /// `sync` may return before the writes complete; there the flush is
-    /// best effort, and no marker depends on it, as the discard exists only
-    /// on Linux.
+    /// `sync` may return before the writes complete; there the flush is best
+    /// effort, and no marker depends on it, as the discard exists only on
+    /// Linux.
     ///
     /// With [`FsCacheConfig::with_discard_after_host_restart`], the cache
     /// must be flushed once its server stops serving: otherwise the next
@@ -265,15 +265,16 @@ impl FsCache {
     }
 
     /// Deserialise a record's metadata, counting the decode so
-    /// TC-COMPAT.FORMATUPGRADE-01 can show a foreign record is never decoded.
+    /// TC-COMPAT.FORMATUPGRADE-01 can show a foreign record is never
+    /// decoded.
     pub(crate) fn decode_meta(&self, internal: &[u8], header: &[u8]) -> Result<CacheMeta> {
         test_hook! { self.hooks.count_meta_decode(); }
         CacheMeta::deserialize(internal, header)
     }
 
     /// `fsync` a shard directory, so an `unlink` in it survives a host crash
-    /// (ADR-PERSISTENCE.DURABILITY-02). On Unix a directory opens like a file,
-    /// read-only, and `fsync` on its descriptor flushes its entries.
+    /// (ADR-PERSISTENCE.DURABILITY-02). On Unix a directory opens like a
+    /// file, read-only, and `fsync` on its descriptor flushes its entries.
     pub(crate) fn sync_shard_dir(&self, dir: &Path) -> Result<()> {
         test_hook! { self.hooks.fault(crate::hooks::FaultPoint::SyncDir)?; }
         std::fs::File::open(dir)
@@ -369,8 +370,7 @@ impl Storage for FsCache {
         _trace: &SpanHandle,
     ) -> Result<bool> {
         // Serialising the new metadata is CPU work and stays here; reading
-        // the record and writing it back does not
-        // (FDS-STORAGE.EXECUTOR-02).
+        // the record and writing it back does not (FDS-STORAGE.EXECUTOR-02).
         let prepared = crate::metaupdate::prepare(self, key, meta)?;
         crate::blocking::run(move || crate::metaupdate::update_meta(self, prepared)).await
     }

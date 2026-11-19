@@ -8,8 +8,8 @@
 //! `hooks` field and the parameters that carry it down to a hook are there
 //! in every build, without a gate; a function whose parameter only a hook
 //! uses discards it in the other builds (`let _ = …`). Every call into the
-//! hooks is wrapped in `test_hook!`, the arguments it computes included,
-//! and the rest of the code that reaches them is `#[cfg(test)]`:
+//! hooks is wrapped in `test_hook!`, the arguments it computes included, and
+//! the rest of the code that reaches them is `#[cfg(test)]`:
 //!
 //! - `FsCache::with_test_hooks` and `FsCache::hooks`;
 //! - the imports of the hook types;
@@ -17,12 +17,12 @@
 //!   error;
 //! - the values a hook needs before the call that uses it: the boot
 //!   identity's path in `FsCache::build`, the owned path that
-//!   `close_removed_file` hands its pause, and the cache that a body
-//!   chunk's write moves into its pool task (`miss.rs`);
+//!   `close_removed_file` hands its pause, and the cache that a body chunk's
+//!   write moves into its pool task (`miss.rs`);
 //! - the test-build line of `on_worker!` in `lookup/page_cache.rs`.
 //!
-//! So no other build contains a hook, a hook call, or anything a hook
-//! call's arguments compute.
+//! So no other build contains a hook, a hook call, or anything a hook call's
+//! arguments compute.
 //!
 //! Hooks are per [`crate::FsCache`] instance, so tests running in parallel
 //! in one binary never see each other's pauses or faults.
@@ -42,25 +42,24 @@ pub use self::worker::WorkerCall;
 /// A place in the backend where a test can hold an operation.
 ///
 /// A test arms a pause with [`Hooks::arm_pause`], naming the point and,
-/// optionally, the path the operation works on. The first operation to
-/// reach that point, on that path, stops there until the test releases it;
-/// the pause is then used up. Each point below says where it is, which path
-/// it is given, and the test cases whose tests pause there, or the design,
-/// for a point only regression tests use.
+/// optionally, the path the operation works on. The first operation to reach
+/// that point, on that path, stops there until the test releases it; the
+/// pause is then used up. Each point below says where it is, which path it
+/// is given, and the test cases whose tests pause there, or the design, for
+/// a point only regression tests use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PausePoint {
     /// Reclaim, during the restart scan: after a record is found
-    /// reclaimable, before the key's publication lock is taken to unlink
-    /// it, or before a stopped writer's temporary is unlinked. Path: the
-    /// record or the temporary (TC-STORAGE.RECLAIM-01,
-    /// TC-STORAGE.EXECUTOR-02).
+    /// reclaimable, before the key's publication lock is taken to unlink it,
+    /// or before a stopped writer's temporary is unlinked. Path: the record
+    /// or the temporary (TC-STORAGE.RECLAIM-01, TC-STORAGE.EXECUTOR-02).
     ReclaimBeforeUnlink,
     /// Restart scan: after a record is read, before it is checked again
     /// under the key's publication lock and admitted to the eviction
     /// manager. Path: the record (TC-EVICTION.RECONSTRUCT-01).
     RecoverBeforeAdmit,
-    /// Restart scan: after a record is admitted, before the next one.
-    /// Path: the record (TC-COMPAT.HOTUPGRADE-01).
+    /// Restart scan: after a record is admitted, before the next one. Path:
+    /// the record (TC-COMPAT.HOTUPGRADE-01).
     RecoverAfterAdmit,
     /// Restart scan: after every record has been read, before the pass that
     /// removes from the eviction manager the objects whose record has gone
@@ -101,8 +100,8 @@ pub enum PausePoint {
     /// record replaced or purged while a hit read it, or a removed temporary
     /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-02).
     BeforeClosingRemovedFile,
-    /// Store: at the start of its miss handler's `Drop`. A test holds a store
-    /// here to see on which thread its handler is dropped. Path: the
+    /// Store: at the start of its miss handler's `Drop`. A test holds a
+    /// store here to see on which thread its handler is dropped. Path: the
     /// canonical record (FDS-STORAGE.EXECUTOR-02).
     StoreDropping,
 }
@@ -111,8 +110,8 @@ pub enum PausePoint {
 /// make it fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FaultPoint {
-    /// Writing to a store's temporary: its fixed part as the store opens,
-    /// or a body chunk (TC-COMPAT.WRITEFAIL-01, TC-COMPAT.ABORTSPACE-01).
+    /// Writing to a store's temporary: its fixed part as the store opens, or
+    /// a body chunk (TC-COMPAT.WRITEFAIL-01, TC-COMPAT.ABORTSPACE-01).
     WriteTemp,
     /// Synchronising a store's temporary before it is renamed into place
     /// (TC-COMPAT.WRITEFAIL-01, TC-STORAGE.PUBLISH-02).
@@ -182,8 +181,8 @@ impl PauseHandle {
 impl Drop for PauseHandle {
     fn drop(&mut self) {
         // Never leave the backend blocked behind a test that gave up. A
-        // pause released unreached is discarded by the next operation
-        // that reaches its point.
+        // pause released unreached is discarded by the next operation that
+        // reaches its point.
         self.release();
     }
 }
@@ -196,11 +195,11 @@ struct Armed {
 /// Configuration fixed at construction.
 #[derive(Clone, Default)]
 pub struct HookConfig {
-    /// Maps the name a key's files would have to the one the backend
-    /// uses for its path (TC-LAYOUT.SHARDING-01).
+    /// Maps the name a key's files would have to the one the backend uses
+    /// for its path (TC-LAYOUT.SHARDING-01).
     pub object_name: Option<NameOverride>,
-    /// The file the backend reads the current boot's identity from, in
-    /// place of `/proc/sys/kernel/random/boot_id`
+    /// The file the backend reads the current boot's identity from, in place
+    /// of `/proc/sys/kernel/random/boot_id`
     /// (TC-PERSISTENCE.CRASHDISCARD-01).
     pub boot_id_path: Option<PathBuf>,
     /// Faults armed from the start, for the operations construction makes:
@@ -238,8 +237,8 @@ impl Hooks {
     /// A pause blocks the thread that reaches it until the test releases it.
     /// When that thread is a worker of the test's own runtime, as for the
     /// restart scan's reads, the runtime needs a second worker for the test
-    /// to go on meanwhile: `#[tokio::test(flavor = "multi_thread",
-    /// worker_threads = 2)]`.
+    /// to go on meanwhile:
+    /// `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`.
     pub fn arm_pause(&self, point: PausePoint, path: Option<&Path>) -> PauseHandle {
         let gate = Arc::new(Gate::default());
         lock(&self.pauses).entry(point).or_default().push(Armed {

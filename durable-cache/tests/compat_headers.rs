@@ -150,10 +150,10 @@ async fn tc_compliance_headers_01_oversized_header_set_round_trips() {
 }
 
 /// Metadata regions left exactly full: with no headroom, a region's capacity
-/// is its segments' own length, so its last byte is the one before the
-/// body. Header sets of eight consecutive serialised sizes put that boundary
-/// at every offset modulo 8, where an off-by-one in the region's capacity
-/// or in the body's offset would show (SDS-LAYOUT.OBJECTFILE-02).
+/// is its segments' own length, so its last byte is the one before the body.
+/// Header sets of eight consecutive serialised sizes put that boundary at
+/// every offset modulo 8, where an off-by-one in the region's capacity or in
+/// the body's offset would show (SDS-LAYOUT.OBJECTFILE-02).
 #[tokio::test]
 async fn tc_compliance_headers_01_exactly_full_metadata_regions_round_trip() {
     let (cache, _tmp) = support::leaked_cache_with_headroom(0);

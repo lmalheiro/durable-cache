@@ -6,9 +6,9 @@
 //!
 //! With `Durability::NoStoreSync`, a store is renamed into place without
 //! synchronising its temporary first, so a host crash can leave a published
-//! name over a body that never reached the device. The read validation
-//! turns a body left short or empty into a miss; a body of the right length
-//! that reads back as zeros it cannot see. With the discard switched on
+//! name over a body that never reached the device. The read validation turns
+//! a body left short or empty into a miss; a body of the right length that
+//! reads back as zeros it cannot see. With the discard switched on
 //! (`FsCacheConfig::with_discard_after_host_restart`, Linux only), the
 //! backend can tell whether that can have happened:
 //!
@@ -16,17 +16,16 @@
 //!   place, the instance writes, durably, a marker beside its writer lease,
 //!   `writers/<pid>-<nonce>.unsynced`, holding the current boot's identity
 //!   ([`Marker::ensure`]).
-//! - **The flush.** [`Marker::flush`] flushes the file system that holds
-//!   the cache, so everything published is on the device, and then removes
-//!   the instance's marker and those of instances that have stopped.
+//! - **The flush.** [`Marker::flush`] flushes the file system that holds the
+//!   cache, so everything published is on the device, and then removes the
+//!   instance's marker and those of instances that have stopped.
 //! - **At construction**, whatever the configuration, a marker naming
 //!   another boot means stores published unsynchronised may have been lost.
 //!   The backend then moves every first-level shard directory into
 //!   `discarded-<nonce>` under the root, before it serves anything, and only
 //!   then removes the markers of the instances that have stopped
-//!   ([`at_construction`]). The moved tree is
-//!   removed in the background ([`remove_discarded`]), outside the tree the
-//!   restart scan walks.
+//!   ([`at_construction`]). The moved tree is removed in the background
+//!   ([`remove_discarded`]), outside the tree the restart scan walks.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -48,8 +47,8 @@ use crate::{platform, sharding, FsCacheConfig};
 pub(crate) const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
 /// A marker's extension: `<pid>-<nonce>.unsynced`.
 const MARKER_SUFFIX: &str = "unsynced";
-/// The extra extension of a marker being written, before it is renamed
-/// into place.
+/// The extra extension of a marker being written, before it is renamed into
+/// place.
 const STAGING_SUFFIX: &str = "new";
 /// The prefix of a directory of discarded shards: `discarded-<nonce>`.
 const DISCARDED_PREFIX: &str = "discarded-";
@@ -202,10 +201,10 @@ fn remove_markers(root: &Path, which: impl Fn(WriterId) -> bool) -> io::Result<u
 
 /// The boot identity each marker in place names, or `None` for one that
 /// cannot be read. Staging markers are left out: a store waits for its
-/// marker's rename, so none was published on the strength of one. So are
-/// the markers of writers still running, whose lease is held: an instance
-/// that runs now was started in this boot, and its stores are in the page
-/// cache, whatever its marker says.
+/// marker's rename, so none was published on the strength of one. So are the
+/// markers of writers still running, whose lease is held: an instance that
+/// runs now was started in this boot, and its stores are in the page cache,
+/// whatever its marker says.
 fn marker_boots(root: &Path) -> io::Result<Vec<Option<String>>> {
     let entries = match std::fs::read_dir(root.join(LEASE_DIR)) {
         Ok(entries) => entries,
@@ -335,8 +334,8 @@ fn is_discarded_name(name: &str) -> bool {
 }
 
 /// Remove every directory of discarded shards under `root`, this start's or
-/// one a crash left behind, in the background: on the blocking pool inside
-/// a Tokio runtime, on a thread of its own outside one. Failures are logged.
+/// one a crash left behind, in the background: on the blocking pool inside a
+/// Tokio runtime, on a thread of its own outside one. Failures are logged.
 pub(crate) fn remove_discarded(root: &Path) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;

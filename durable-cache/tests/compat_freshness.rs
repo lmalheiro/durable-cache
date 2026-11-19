@@ -8,10 +8,10 @@
 //! fields (`fresh_until`, `created`, `updated`, the two stale-serving
 //! durations) before `pingora-cache` ever calls this backend --- that
 //! interpretation is `pingora_cache::filters::resp_cacheable`'s job, not
-//! this backend's (FDS-STORAGE.PUBLISH-02's own boundary: the backend
-//! stores whatever `CacheMeta`/`ResponseHeader` it is given, verbatim). So
-//! this TC's obligation on the backend is to round-trip those numeric
-//! fields exactly, and the raw header bytes they were derived from
+//! this backend's (FDS-STORAGE.PUBLISH-02's own boundary: the backend stores
+//! whatever `CacheMeta`/`ResponseHeader` it is given, verbatim). So this
+//! TC's obligation on the backend is to round-trip those numeric fields
+//! exactly, and the raw header bytes they were derived from
 //! (`compat_headers.rs`'s concern) alongside them — both covered here,
 //! directly against `Storage`, no HTTP needed.
 
@@ -52,8 +52,8 @@ fn build_meta(inputs: &FreshnessInputs) -> CacheMeta {
 }
 
 /// A fixed reference instant (not "now" at assertion time) so `is_fresh`/
-/// `fresh_sec` comparisons are deterministic regardless of how long the
-/// test takes to run.
+/// `fresh_sec` comparisons are deterministic regardless of how long the test
+/// takes to run.
 fn reference_time() -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000)
 }
@@ -129,8 +129,8 @@ fn scenarios() -> Vec<(&'static str, FreshnessInputs)> {
             "max-age-zero",
             FreshnessInputs {
                 // Matches how pingora-cache itself treats a zero freshness
-                // duration: fresh_until placed just before `created`, so
-                // the object is immediately stale.
+                // duration: fresh_until placed just before `created`, so the
+                // object is immediately stale.
                 fresh_until: now - Duration::from_secs(1),
                 created: now,
                 stale_while_revalidate_sec: 0,

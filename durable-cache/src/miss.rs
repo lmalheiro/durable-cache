@@ -89,9 +89,9 @@ pub struct FsMissHandler {
 
 impl FsMissHandler {
     /// The CPU-only half of opening a store for `key`: hashing the key and
-    /// serialising the metadata. Split out so the borrowed `CacheKey`/`CacheMeta` stay on
-    /// the caller's side and only owned bytes reach the blocking pool
-    /// (FDS-STORAGE.EXECUTOR-02).
+    /// serialising the metadata. Split out so the borrowed
+    /// `CacheKey`/`CacheMeta` stay on the caller's side and only owned bytes
+    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-02).
     pub(crate) fn prepare(
         cache: &'static FsCache,
         key: &CacheKey,
@@ -143,8 +143,8 @@ impl FsMissHandler {
         let mut write_fixed_part = || -> Result<()> {
             // One write for the whole fixed part of the record: header, key,
             // both metadata segments, and the headroom that completes the
-            // region. The body then starts exactly at `header.body_offset()`,
-            // which is what a reader computes.
+            // region. The body then starts exactly at
+            // `header.body_offset()`, which is what a reader computes.
             let mut prefix = Vec::with_capacity(header.body_offset());
             prefix.extend_from_slice(header.as_bytes());
             prefix.extend_from_slice(&key_bytes);
@@ -267,10 +267,10 @@ impl FsMissHandler {
         let mut ended_by_purge = false;
         let replaced = match self.cache.locks.begin(&self.name) {
             // An invalidating purge of the key ended this store while it was
-            // in flight (FRE-COMPLIANCE.PURGE-01): publish nothing. The purge
-            // marks the store under this same lock, so a purge either came
-            // first and is seen here, or comes after the rename and removes
-            // the record.
+            // in flight (FRE-COMPLIANCE.PURGE-01): publish nothing. The
+            // purge marks the store under this same lock, so a purge either
+            // came first and is seen here, or comes after the rename and
+            // removes the record.
             Some(_change) if self.writer.purged() => {
                 publish::discard_temp(&self.temp_path);
                 self.discarded = true;
@@ -300,7 +300,8 @@ impl FsMissHandler {
         });
         self.cache.inflight.end(&self.name, self.writer.id);
         self.finished = true;
-        // Last, so that freeing the replaced record delays none of the above.
+        // Last, so that freeing the replaced record delays none of the
+        // above.
         test_hook! {
             self.cache.hooks.pause(
                 crate::hooks::PausePoint::BeforeFreeingOldRecord,
@@ -310,8 +311,8 @@ impl FsMissHandler {
         drop(replaced);
         if ended_by_purge {
             // An error, so that `HttpCache` admits nothing to its eviction
-            // manager, and lets the requests waiting on its cache lock
-            // retry rather than read a record that does not exist.
+            // manager, and lets the requests waiting on its cache lock retry
+            // rather than read a record that does not exist.
             return Error::e_explain(
                 STORE_PURGED,
                 format!(
@@ -324,9 +325,9 @@ impl FsMissHandler {
     }
 }
 
-/// Create the store's temporary exclusively. On a name collision the
-/// counter advances; if the shard directory has been removed behind the
-/// backend's back, it is recreated once (FDS-LAYOUT.STARTUP-01).
+/// Create the store's temporary exclusively. On a name collision the counter
+/// advances; if the shard directory has been removed behind the backend's
+/// back, it is recreated once (FDS-LAYOUT.STARTUP-01).
 pub(crate) fn create_temp(cache: &FsCache, name: &str) -> Result<(File, PathBuf)> {
     let mut recreated_dir = false;
     for _ in 0..NAME_ATTEMPTS {
@@ -405,9 +406,9 @@ impl HandleMiss for FsMissHandler {
 
     async fn finish(self: Box<Self>) -> Result<MissFinishType> {
         // `finish` patches the header, `fdatasync`s unless the configured
-        // durability skips it, and renames: up to three syscalls, one of them
-        // a flush that can take milliseconds on a real device. So the whole
-        // handler moves to the blocking pool
+        // durability skips it, and renames: up to three syscalls, one of
+        // them a flush that can take milliseconds on a real device. So the
+        // whole handler moves to the blocking pool
         // (FDS-STORAGE.EXECUTOR-02), and is dropped there as the closure
         // ends, whether the store published or failed. A failed store's
         // `Drop` aborts it and removes its temporary
@@ -422,8 +423,8 @@ impl HandleMiss for FsMissHandler {
         .await?;
         // This backend always writes a brand-new per-writer temporary, even
         // when replacing an existing object (FRE-COMPLIANCE.REPLACE-01) --
-        // never incrementally reopens an old file across handler calls --
-        // so every completed write is a fresh `Created`, never `Appended`.
+        // never incrementally reopens an old file across handler calls -- so
+        // every completed write is a fresh `Created`, never `Appended`.
         Ok(MissFinishType::Created(record_len as usize))
     }
 
@@ -449,12 +450,12 @@ impl Drop for FsMissHandler {
                 .hooks
                 .pause(crate::hooks::PausePoint::StoreDropping, &self.canonical_path);
         }
-        // "When self is dropped without calling [finish], the storage
-        // should consider this write failed" (HandleMiss::finish's own
-        // doc) — an orderly abort, an upstream failure, a cancellation, a
-        // write failure, or a same-process panic. The temporary goes with
-        // it (FRE-COMPAT.ABORTSPACE-01); a real process crash leaves one
-        // behind for FDS-STORAGE.RECLAIM-01's restart-time scan instead.
+        // "When self is dropped without calling [finish], the storage should
+        // consider this write failed" (HandleMiss::finish's own doc) — an
+        // orderly abort, an upstream failure, a cancellation, a write
+        // failure, or a same-process panic. The temporary goes with it
+        // (FRE-COMPAT.ABORTSPACE-01); a real process crash leaves one behind
+        // for FDS-STORAGE.RECLAIM-01's restart-time scan instead.
         if !self.finished {
             // One of the two syscalls this backend still makes on the
             // caller's thread (FDS-STORAGE.EXECUTOR-02). `Drop` cannot

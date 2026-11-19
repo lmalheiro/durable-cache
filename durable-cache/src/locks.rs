@@ -7,12 +7,12 @@
 //! **Changes** are a store's final rename, a metadata update or an expiry
 //! (written in place, or withdrawing or removing the record), a purge's
 //! unlink, and the restart scan's removals of records, temporaries and
-//! leases: the *durable* changes, which other readers of the cache
-//! directory see. The restart scan's admission checks count as changes too,
-//! though they change only this process's eviction manager. Lookups change
-//! nothing. One takes a key's publication lock only to read once more a
-//! record whose checksums kept failing ([`ChangeLocks::lock_key`]), and
-//! never enters the gate.
+//! leases: the *durable* changes, which other readers of the cache directory
+//! see. The restart scan's admission checks count as changes too, though
+//! they change only this process's eviction manager. Lookups change nothing.
+//! One takes a key's publication lock only to read once more a record whose
+//! checksums kept failing ([`ChangeLocks::lock_key`]), and never enters the
+//! gate.
 //!
 //! **The read-only gate** (FDS-COMPAT.READONLY-02) decides whether this
 //! process may still make changes. Every change enters it and stays inside,
@@ -29,9 +29,9 @@
 //! changes check a key's canonical file and then act on what they found, and
 //! the file must not change in between:
 //!
-//! - a metadata update or an expiry opens and reads the record, decides,
-//!   and writes the new metadata into it in place, or withdraws or removes
-//!   the record;
+//! - a metadata update or an expiry opens and reads the record, decides, and
+//!   writes the new metadata into it in place, or withdraws or removes the
+//!   record;
 //! - the reclaim scan confirms that the name still refers to the file it
 //!   found reclaimable, then unlinks it;
 //! - the restart scan confirms that the name still refers to the file it
@@ -97,10 +97,10 @@ const STRIPE_DIGITS: usize = 3;
 /// finish. Each stripe takes 8 bytes on Linux, 32 KiB in all.
 ///
 /// The stripes are packed, eight to a 64-byte cache line, and deliberately
-/// not padded apart. Two keys' stripes share a line only by chance too, 1
-/// in 512, and a lock writes its line only as it is taken and released, so
-/// the line seldom moves between cores. Padding each stripe to a line of
-/// its own would spare even that, at eight times the memory.
+/// not padded apart. Two keys' stripes share a line only by chance too, 1 in
+/// 512, and a lock writes its line only as it is taken and released, so the
+/// line seldom moves between cores. Padding each stripe to a line of its own
+/// would spare even that, at eight times the memory.
 const STRIPES: usize = (RADIX as usize).pow(STRIPE_DIGITS as u32);
 
 // The count the documentation states: a change to the constants above that
@@ -108,8 +108,8 @@ const STRIPES: usize = (RADIX as usize).pow(STRIPE_DIGITS as u32);
 const _: () = assert!(STRIPES == 4096);
 
 /// The locks that order changes: the read-only gate, and the publication
-/// locks, one per key, in a fixed table of stripes that keys share
-/// according to their names' first digits.
+/// locks, one per key, in a fixed table of stripes that keys share according
+/// to their names' first digits.
 pub struct ChangeLocks {
     /// The read-only gate's flag, `true` once the backend is read-only.
     /// Changes hold the gate shared; `set_read_only` takes it exclusively.
@@ -127,10 +127,10 @@ impl Default for ChangeLocks {
     }
 }
 
-/// A change in progress: the publication lock of its key, if it has one,
-/// and the read-only gate, both held until it is dropped, which releases
-/// the key first, then the gate. Bind it to a name for as long as the
-/// change runs: `let Some(_) = …` would drop it, and its locks, at once.
+/// A change in progress: the publication lock of its key, if it has one, and
+/// the read-only gate, both held until it is dropped, which releases the key
+/// first, then the gate. Bind it to a name for as long as the change runs:
+/// `let Some(_) = …` would drop it, and its locks, at once.
 #[must_use = "a change holds its locks only while it is kept"]
 pub struct Change<'a> {
     // Fields are dropped in the order they are declared: the key's lock
@@ -253,10 +253,10 @@ impl ChangeLocks {
         // usable anyway. What the lock protects is the key's files, not the
         // `()` it guards, and a panic leaves them as a crash at the same
         // point would, which the design already handles. Each change made
-        // under the lock is a single rename or unlink, which is atomic, except
-        // the in-place metadata update: it writes the metadata region, then
-        // the header, and a stop between the two leaves a record whose
-        // metadata checksum fails, which reads as a miss
+        // under the lock is a single rename or unlink, which is atomic,
+        // except the in-place metadata update: it writes the metadata
+        // region, then the header, and a stop between the two leaves a
+        // record whose metadata checksum fails, which reads as a miss
         // (ADR-PERSISTENCE.DURABILITY-02, TC-PERSISTENCE.CRASHSAFE-02). The
         // restart scan's admission checks change no file.
         //
@@ -430,8 +430,8 @@ mod tests {
     /// `set_read_only` returns only once the changes in progress have ended.
     /// The barrier makes sure the other thread is about to call it when the
     /// sleep starts. Were that thread kept off the processor for the whole
-    /// sleep, the test would pass without testing anything, but it can
-    /// never fail falsely.
+    /// sleep, the test would pass without testing anything, but it can never
+    /// fail falsely.
     #[test]
     fn set_read_only_waits_for_changes_in_progress() {
         let locks = Arc::new(ChangeLocks::default());
@@ -476,8 +476,8 @@ mod tests {
         assert!(locks.begin(&name).is_none(), "still read-only");
     }
 
-    /// In a debug build, a thread that holds a change and begins another,
-    /// on any key, fails an assertion at once, instead of risking a deadlock
+    /// In a debug build, a thread that holds a change and begins another, on
+    /// any key, fails an assertion at once, instead of risking a deadlock
     /// behind a waiting `set_read_only`.
     #[cfg(debug_assertions)]
     #[test]

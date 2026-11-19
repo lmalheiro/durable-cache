@@ -3,10 +3,10 @@
 
 //! The read-time body check (ADR-PERSISTENCE.DURABILITY-02), with the
 //! `body-crc-verify` feature: a hit that delivers a whole body from its
-//! start compares it with the CRC-32C stored with it, and logs an error on
-//! a mismatch. Without the feature, [`BodyCheck`] is empty and checks
-//! nothing, as `crate::metrics` counts nothing without the `metrics`
-//! feature, so that a hit's code reads the same in every build.
+//! start compares it with the CRC-32C stored with it, and logs an error on a
+//! mismatch. Without the feature, [`BodyCheck`] is empty and checks nothing,
+//! as `crate::metrics` counts nothing without the `metrics` feature, so that
+//! a hit's code reads the same in every build.
 
 #[cfg(feature = "body-crc-verify")]
 mod imp {
@@ -39,8 +39,8 @@ mod imp {
             )
         }
 
-        /// No check: for a partial hit, as a store in flight has no
-        /// checksum yet.
+        /// No check: for a partial hit, as a store in flight has no checksum
+        /// yet.
         pub fn none() -> Self {
             Self(None)
         }

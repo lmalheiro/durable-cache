@@ -7,9 +7,9 @@
 //! The crate has no error type of its own: every fallible function returns
 //! `pingora_error::Result`, as the Pingora crates themselves do. Where a
 //! lower-level error becomes a failure, `pingora_error::OrErr` gives it one
-//! of the predefined Pingora error types (`File*Error`, `InternalError`)
-//! and a context saying what was being done, and keeps the lower-level
-//! error as the cause.
+//! of the predefined Pingora error types (`File*Error`, `InternalError`) and
+//! a context saying what was being done, and keeps the lower-level error as
+//! the cause.
 
 use std::fmt;
 
@@ -30,8 +30,8 @@ pub(crate) const CACHE_READ_ONLY: ErrorType = ErrorType::Custom("cache_read_only
 pub(crate) const STORE_PURGED: ErrorType = ErrorType::Custom("store_purged");
 
 /// The operations that change the shared cache on a caller's request, named
-/// in one place for the messages about them: a read-only refusal, a
-/// missing object, a withdrawn record.
+/// in one place for the messages about them: a read-only refusal, a missing
+/// object, a withdrawn record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Op {
     Purge,

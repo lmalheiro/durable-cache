@@ -227,8 +227,8 @@ async fn tc_layout_objectfile_01_the_body_check_logs_only_a_whole_mismatched_bod
     assert_eq!(mismatches(), 0, "a sought read is not checked");
 }
 
-/// Step 8: a header whose lengths do not fit is a miss that leaves the file in
-/// place, even though its CRC verifies: metadata segments that exceed
+/// Step 8: a header whose lengths do not fit is a miss that leaves the file
+/// in place, even though its CRC verifies: metadata segments that exceed
 /// `meta_capacity`, and a `key_len` that puts the key and the body past the
 /// end of the file. Both are caught before the reader sizes any read by a
 /// length from the header.
@@ -262,10 +262,10 @@ async fn tc_layout_objectfile_01_header_lengths_that_do_not_fit_are_a_miss() {
 }
 
 /// Step 7, without the race: a lookup that finds an in-place update stopped
-/// between its two writes is not a miss. Its re-reads all fail the
-/// checksum, so it reads once more holding the key's publication lock,
-/// which the update holds until its header is written, and then finds the
-/// updated metadata.
+/// between its two writes is not a miss. Its re-reads all fail the checksum,
+/// so it reads once more holding the key's publication lock, which the
+/// update holds until its header is written, and then finds the updated
+/// metadata.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tc_layout_objectfile_01_a_lookup_waits_out_an_update_stopped_between_its_writes() {
     use durable_cache::hooks::PausePoint;

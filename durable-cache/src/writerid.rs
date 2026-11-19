@@ -44,8 +44,8 @@
 //! stopped writer's lease, and remove it. So a new lease is locked before it
 //! gets its final name: it is created as `<pid>-<nonce>.lock.new`, locked,
 //! and only then renamed. A scan may still remove the staging file before it
-//! is locked, as it removes those a crash leaves behind; but then the lock or
-//! the rename fails, and the instance tries again with a new name.
+//! is locked, as it removes those a crash leaves behind; but then the lock
+//! or the rename fails, and the instance tries again with a new name.
 //!
 //! The locks work only if all the processes that use a cache directory run
 //! on the same host, with the directory on a local file system, so that each
@@ -210,8 +210,8 @@ fn staging_path(lease: &Path) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// Whether `name` is a lease, or a lease still being created: the only
-/// files the scan removes from the lease directory.
+/// Whether `name` is a lease, or a lease still being created: the only files
+/// the scan removes from the lease directory.
 pub fn is_lease_name(name: &str) -> bool {
     let id = name
         .strip_suffix(&format!(".{LEASE_SUFFIX}"))
@@ -318,8 +318,8 @@ mod tests {
 
     /// Only the one spelling this module writes parses: the same numbers
     /// spelled another way, which the integer parsers alone accept, belong
-    /// to a file this backend never wrote. That covers a sign, leading zeros,
-    /// and an uppercase or short nonce, in an identity or a counter.
+    /// to a file this backend never wrote. That covers a sign, leading
+    /// zeros, and an uppercase or short nonce, in an identity or a counter.
     #[test]
     fn only_the_written_spelling_parses() {
         assert_eq!(WriterId::parse("4711-6fd5a44b00000001"), Some(WRITER));

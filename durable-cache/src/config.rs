@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Durability {
-    /// Each store's temporary is synchronised to stable storage before it
-    /// is renamed into place. A host crash or a power loss can lose a
-    /// store, but never leave a published record over data that is not on
-    /// stable storage (HLR-PERSISTENCE.CRASHSAFE-02). The default.
+    /// Each store's temporary is synchronised to stable storage before it is
+    /// renamed into place. A host crash or a power loss can lose a store,
+    /// but never leave a published record over data that is not on stable
+    /// storage (HLR-PERSISTENCE.CRASHSAFE-02). The default.
     #[default]
     Strict,
     /// Stores are renamed into place without being synchronised first, so
@@ -23,11 +23,11 @@ pub enum Durability {
     /// orderly restart still loses nothing, as the kernel keeps the data
     /// (HLR-PERSISTENCE.DURABLE-01). A host crash or a power loss may lose
     /// the stores the kernel had not written back yet, and may leave a
-    /// published record whose body never reached the device: short, which
-    /// a lookup reports as a miss, or zero-filled under a valid header,
-    /// which a hit would serve. A file system that records a file's length
-    /// only once its data is written leaves only short ones; on one that
-    /// may record the length first, HLR-PERSISTENCE.CRASHSAFE-02 accepts the
+    /// published record whose body never reached the device: short, which a
+    /// lookup reports as a miss, or zero-filled under a valid header, which
+    /// a hit would serve. A file system that records a file's length only
+    /// once its data is written leaves only short ones; on one that may
+    /// record the length first, HLR-PERSISTENCE.CRASHSAFE-02 accepts the
     /// zero-filled ones in this mode, unless the discard after a host
     /// restart is switched on (see
     /// [`FsCacheConfig::with_discard_after_host_restart`], Linux only).
@@ -90,24 +90,24 @@ impl FsCacheConfig {
     /// crate reads access times.
     ///
     /// The kernel allows `O_NOATIME` only to the owner of a file, or to a
-    /// process with `CAP_FOWNER`, such as root. Otherwise, with the option on,
-    /// [`crate::FsCache::new`] fails if this process does not own the cache
-    /// root, and a read of a record that another user owns fails: switch it
-    /// off where the cache's files belong to another user. A file system
-    /// mounted `noatime` or `lazytime` does not need it.
+    /// process with `CAP_FOWNER`, such as root. Otherwise, with the option
+    /// on, [`crate::FsCache::new`] fails if this process does not own the
+    /// cache root, and a read of a record that another user owns fails:
+    /// switch it off where the cache's files belong to another user. A file
+    /// system mounted `noatime` or `lazytime` does not need it.
     #[cfg(target_os = "linux")]
     pub fn with_noatime(mut self, enabled: bool) -> Self {
         self.noatime = enabled;
         self
     }
 
-    /// Serve hits from the page cache on the async worker, without a
-    /// handoff to the blocking pool, when what they read is cached; on
-    /// unless switched off. Linux only: elsewhere every hit is served from
-    /// the pool. A lookup opens the record with `openat2` and
-    /// `RESOLVE_CACHED` (Linux 5.12), and reads it with `preadv2` and
-    /// `RWF_NOWAIT`, which fail rather than wait for the device; whatever
-    /// would wait goes to the pool (FDS-STORAGE.EXECUTOR-02).
+    /// Serve hits from the page cache on the async worker, without a handoff
+    /// to the blocking pool, when what they read is cached; on unless
+    /// switched off. Linux only: elsewhere every hit is served from the
+    /// pool. A lookup opens the record with `openat2` and `RESOLVE_CACHED`
+    /// (Linux 5.12), and reads it with `preadv2` and `RWF_NOWAIT`, which
+    /// fail rather than wait for the device; whatever would wait goes to the
+    /// pool (FDS-STORAGE.EXECUTOR-02).
     ///
     /// The kernel and the cache's file system must support both calls:
     /// ext4, XFS and btrfs do; as of Linux 6.12, tmpfs and overlayfs, the
@@ -128,18 +128,19 @@ impl FsCacheConfig {
     /// boot, and [`crate::FsCache::flush`] removes it once everything is on
     /// the device. A backend constructed under another boot that finds a
     /// marker starts empty (FDS-PERSISTENCE.CRASHDISCARD-01). That keeps a
-    /// host crash from making the cache serve content that differs from
-    /// what was stored, on any file system (HLR-PERSISTENCE.CRASHSAFE-02),
-    /// at the cost of the whole cache after a host crash, or after any host
-    /// restart that the integrator did not prepare by calling `flush` once
-    /// its server had stopped.
+    /// host crash from making the cache serve content that differs from what
+    /// was stored, on any file system (HLR-PERSISTENCE.CRASHSAFE-02), at the
+    /// cost of the whole cache after a host crash, or after any host restart
+    /// that the integrator did not prepare by calling `flush` once its
+    /// server had stopped.
     ///
     /// Without it, a host crash keeps every record the file system
-    /// recovered, and the read validation reports one left short or empty
-    /// as a miss. That suffices on file systems that record a file's length
+    /// recovered, and the read validation reports one left short or empty as
+    /// a miss. That suffices on file systems that record a file's length
     /// only once its data is written: ext4 in its default `data=ordered`
     /// mode, XFS, btrfs. With the option on, [`crate::FsCache::new`] fails
-    /// if it cannot read the boot identity (`/proc/sys/kernel/random/boot_id`).
+    /// if it cannot read the boot identity
+    /// (`/proc/sys/kernel/random/boot_id`).
     #[cfg(target_os = "linux")]
     pub fn with_discard_after_host_restart(mut self, enabled: bool) -> Self {
         self.discard_after_host_restart = enabled;
@@ -150,7 +151,8 @@ impl FsCacheConfig {
     /// on. When on, a read that delivers a whole body from its start
     /// compares it with the CRC-32C stored with it, and on a mismatch logs
     /// an error naming the file; the response still ends normally, since
-    /// every byte has already been delivered (ADR-PERSISTENCE.DURABILITY-02).
+    /// every byte has already been delivered
+    /// (ADR-PERSISTENCE.DURABILITY-02).
     #[cfg(feature = "body-crc-verify")]
     pub fn with_body_crc_verification(mut self, enabled: bool) -> Self {
         self.body_crc_verification = enabled;
@@ -164,8 +166,8 @@ impl FsCacheConfig {
     }
 
     /// Growth headroom reserved in the metadata region, in bytes
-    /// (FDS-STORAGE.METAUPDATE-01). Zero makes any metadata change that grows
-    /// the metadata withdraw the record, to be fetched again.
+    /// (FDS-STORAGE.METAUPDATE-01). Zero makes any metadata change that
+    /// grows the metadata withdraw the record, to be fetched again.
     #[inline]
     pub fn meta_headroom(&self) -> u32 {
         self.meta_headroom

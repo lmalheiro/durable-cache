@@ -351,9 +351,9 @@ fn sync_copy(root: &Path, copy: &Path) -> Result<()> {
 
 /// The copy's text of the file at `path`, if it differs from the working
 /// tree's: durable-cache's sources and tests with their Linux gates turned
-/// off by [`AS_IF_NOT_LINUX`], and its manifest declaring that feature,
-/// with its Linux-only tables (dependencies, dev- and build-dependencies)
-/// for no target.
+/// off by [`AS_IF_NOT_LINUX`], and its manifest declaring that feature, with
+/// its Linux-only tables (dependencies, dev- and build-dependencies) for no
+/// target.
 fn rewrite(path: &str, content: &[u8]) -> Result<Option<String>> {
     let source = (path.starts_with("durable-cache/src/")
         || path.starts_with("durable-cache/tests/"))

@@ -23,9 +23,8 @@ pub const META_READ_ATTEMPTS: u32 = 4;
 
 /// How many of a published record's first bytes a lookup reads at once:
 /// the header, key and metadata region of an ordinary record, and the start
-/// of its body, which the hit then serves without reading it again. A
-/// record whose metadata region reaches further has the rest read part by
-/// part.
+/// of its body, which the hit then serves without reading it again. A record
+/// whose metadata region reaches further has the rest read part by part.
 pub const LOOKUP_READ_LEN: u64 = 16 * 1024;
 
 /// Why a record read was rejected. Every variant is reported as a miss; the
@@ -56,9 +55,9 @@ impl RecordError {
     }
 }
 
-/// Whether the record being read is published (its length must be exact)
-/// or a store's still-growing temporary (its `body_len` is not patched in
-/// until `finish`, so only the header, key, and metadata are checked).
+/// Whether the record being read is published (its length must be exact) or
+/// a store's still-growing temporary (its `body_len` is not patched in until
+/// `finish`, so only the header, key, and metadata are checked).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordKind {
     Published,
@@ -93,14 +92,14 @@ impl FileIdentity {
     }
 }
 
-/// How a record's bytes are read: waiting for the device if need be, or
-/// from the page cache only (`crate::nowait`).
+/// How a record's bytes are read: waiting for the device if need be, or from
+/// the page cache only (`crate::nowait`).
 #[derive(Clone, Copy)]
 struct Reads {
     /// Fill the buffer, or fail.
     exact: fn(&File, &mut [u8], u64) -> io::Result<()>,
-    /// Fill as much of the buffer as can be read without waiting, if
-    /// waiting is not allowed: how many bytes, at least one.
+    /// Fill as much of the buffer as can be read without waiting, if waiting
+    /// is not allowed: how many bytes, at least one.
     prefix: fn(&File, &mut [u8], u64) -> io::Result<usize>,
 }
 
@@ -127,10 +126,10 @@ pub enum ReadError {
     Io(#[from] io::Error),
 }
 
-/// Read and validate one record, once, in the order
-/// SDS-LAYOUT.OBJECTFILE-02 specifies: magic and version, `header_crc`,
-/// `meta_crc`, the stored key (when `expected_key` is given), and, for a
-/// published record, the exact length.
+/// Read and validate one record, once, in the order SDS-LAYOUT.OBJECTFILE-02
+/// specifies: magic and version, `header_crc`, `meta_crc`, the stored key
+/// (when `expected_key` is given), and, for a published record, the exact
+/// length.
 ///
 /// The header is checked before any length it carries is trusted, so a
 /// damaged header can never make this allocate or read an arbitrary size.
@@ -144,8 +143,8 @@ pub fn read_record_once(
 
 /// [`read_record_once`] for a lookup of the published record of
 /// `expected_key`. One read of the file's first [`LOOKUP_READ_LEN`] bytes
-/// yields the header, key and metadata region of an ordinary record, and
-/// the start of its body, returned in [`ParsedRecord::body_prefix`].
+/// yields the header, key and metadata region of an ordinary record, and the
+/// start of its body, returned in [`ParsedRecord::body_prefix`].
 pub fn read_published_once(file: &File, expected_key: &[u8]) -> Result<ParsedRecord, ReadError> {
     read_record_with(
         file,
@@ -263,8 +262,8 @@ fn read_record_with(
         }
         .into());
     }
-    // A published record's length is exact, so whatever the first read
-    // holds past the body offset is the body's start.
+    // A published record's length is exact, so whatever the first read holds
+    // past the body offset is the body's start.
     let body_offset = header.body_offset();
     let body_prefix = if kind == RecordKind::Published && first.len() > body_offset {
         Bytes::from(first).slice(body_offset..)
@@ -321,13 +320,13 @@ fn retried(
     }
 }
 
-/// Read one part of a record (the header, the key, or a metadata segment)
-/// at `offset`, filling `buf`. A part the file does not reach means the
-/// record is truncated, which is reported as damage,
-/// [`RecordError::Truncated`], not as an I/O failure. Past the header, the
-/// checks before each read keep it inside the length the file had when the
-/// read began, so only a file shrinking meanwhile reaches the error, and
-/// nothing in this backend shrinks a record.
+/// Read one part of a record (the header, the key, or a metadata segment) at
+/// `offset`, filling `buf`. A part the file does not reach means the record
+/// is truncated, which is reported as damage, [`RecordError::Truncated`],
+/// not as an I/O failure. Past the header, the checks before each read keep
+/// it inside the length the file had when the read began, so only a file
+/// shrinking meanwhile reaches the error, and nothing in this backend
+/// shrinks a record.
 fn read_record_part(
     read: fn(&File, &mut [u8], u64) -> io::Result<()>,
     file: &File,
@@ -490,8 +489,8 @@ mod tests {
         bytes
     }
 
-    /// A `key_len` that puts the key and the body past the end of the file is
-    /// rejected by the body-offset bound, before the key's buffer is
+    /// A `key_len` that puts the key and the body past the end of the file
+    /// is rejected by the body-offset bound, before the key's buffer is
     /// allocated. Without the bound, the reader would allocate a 4 GiB
     /// buffer and fail only when the read ran out of file, as `Truncated`.
     #[test]
@@ -632,8 +631,8 @@ mod tests {
         );
     }
 
-    /// The lookup's read rejects every record the part-by-part read
-    /// rejects, for the same reason.
+    /// The lookup's read rejects every record the part-by-part read rejects,
+    /// for the same reason.
     #[test]
     fn a_lookup_read_rejects_what_a_part_by_part_read_rejects() {
         let bytes = record_bytes();

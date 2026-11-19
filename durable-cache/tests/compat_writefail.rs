@@ -8,11 +8,11 @@
 //!
 //! The test case's setup names a device-mapper `flakey` target for the
 //! failing writes. Injecting the failure at the backend's own write,
-//! synchronisation, and rename points covers the same contract without
-//! root, and a real out-of-space run over such a device is kept as the
-//! privileged test `test/compat/tests/writefail_device.rs`. Steps 3 and 4
-//! (a shard directory removed behind the backend's back) need no special
-//! device and are exercised here directly.
+//! synchronisation, and rename points covers the same contract without root,
+//! and a real out-of-space run over such a device is kept as the privileged
+//! test `test/compat/tests/writefail_device.rs`. Steps 3 and 4 (a shard
+//! directory removed behind the backend's back) need no special device and
+//! are exercised here directly.
 
 use std::os::unix::fs::PermissionsExt;
 
@@ -138,8 +138,8 @@ async fn tc_compat_writefail_01_unrecreatable_shard_directory_fails_the_store() 
     let trace = support::inactive_trace();
     let result = cache.get_miss_handler(&key, &meta, &trace).await;
 
-    // Restore before asserting, so a failure here cannot leave the
-    // directory unwritable for the temp dir's own cleanup.
+    // Restore before asserting, so a failure here cannot leave the directory
+    // unwritable for the temp dir's own cleanup.
     std::fs::set_permissions(&parent, original).unwrap();
 
     assert!(

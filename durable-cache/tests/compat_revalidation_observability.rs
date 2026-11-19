@@ -131,8 +131,8 @@ async fn tc_compliance_revalidation_01_a_failed_withdrawal_is_neither_logged_nor
 }
 
 /// Steps 11 and 12, before any update: once the backend is built, the
-/// counter is served at zero, rather than from the first withdrawal;
-/// without the `metrics` feature it is not registered.
+/// counter is served at zero, rather than from the first withdrawal; without
+/// the `metrics` feature it is not registered.
 #[test]
 fn tc_compliance_revalidation_01_the_counter_reads_zero_once_the_backend_is_built() {
     if !support::in_own_process(

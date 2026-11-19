@@ -3,9 +3,9 @@
 
 //! TC-EVICTION.RECONSTRUCT-01 — Reconstruction converges exactly.
 //!
-//! When `recover()` returns, the manager reflects the published set
-//! exactly, with record sizes — whether serving waited for it or ran
-//! alongside it — with no snapshot or delta log involved.
+//! When `recover()` returns, the manager reflects the published set exactly,
+//! with record sizes — whether serving waited for it or ran alongside it —
+//! with no snapshot or delta log involved.
 
 use std::time::Duration;
 
@@ -126,10 +126,10 @@ async fn tc_eviction_reconstruct_01_skips_a_record_replaced_before_admission() {
     );
 }
 
-/// Step 2, continued: a record removed after the scan admitted it is
-/// dropped again by the ghost pass, so no entry survives for a file that is
-/// gone. That is what a live eviction leaves when its purge lands after the
-/// scan admitted its victim again; the purge here, made directly through
+/// Step 2, continued: a record removed after the scan admitted it is dropped
+/// again by the ghost pass, so no entry survives for a file that is gone.
+/// That is what a live eviction leaves when its purge lands after the scan
+/// admitted its victim again; the purge here, made directly through
 /// `Storage`, leaves the manager alone as that one does.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tc_eviction_reconstruct_01_ghost_pass_drops_purged_entries() {
@@ -164,8 +164,8 @@ async fn tc_eviction_reconstruct_01_ghost_pass_drops_purged_entries() {
 }
 
 /// Step 2, continued: objects the scan never reaches — stored after it has
-/// passed their shard — are admitted by the live path, and a key
-/// republished after the ghost check stays admitted.
+/// passed their shard — are admitted by the live path, and a key republished
+/// after the ghost check stays admitted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tc_eviction_reconstruct_01_converges_with_stores_the_scan_never_saw() {
     let (cache, _tmp) = support::leaked_cache();
@@ -185,9 +185,9 @@ async fn tc_eviction_reconstruct_01_converges_with_stores_the_scan_never_saw() {
     assert_matches_disk(cache, &manager, &[&seen, &after]);
 }
 
-/// Step 4: no snapshot file and no append-only log is read or written at
-/// any point — the tree holds records, and besides them only this
-/// instance's lease, an empty file whose lock is all it carries
+/// Step 4: no snapshot file and no append-only log is read or written at any
+/// point — the tree holds records, and besides them only this instance's
+/// lease, an empty file whose lock is all it carries
 /// (ADR-STORAGE.WRITERID-01).
 #[tokio::test]
 async fn tc_eviction_reconstruct_01_uses_no_snapshot_or_log() {
@@ -226,8 +226,8 @@ async fn tc_eviction_reconstruct_01_uses_no_snapshot_or_log() {
     );
 }
 
-/// Step 5: once the backend is read-only, the restart scan stops at once.
-/// It reads no record, admits nothing and changes nothing
+/// Step 5: once the backend is read-only, the restart scan stops at once. It
+/// reads no record, admits nothing and changes nothing
 /// (FDS-COMPAT.READONLY-02): the eviction manager it would update is
 /// discarded when the process exits, and the records stay on disk for the
 /// process that takes over. Were a record read, the scan would stop at the

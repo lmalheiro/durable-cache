@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `Storage::lookup` / `HandleHit` — the read side (SDS-LAYOUT.OBJECTFILE-02,
-//! FDS-STORAGE.PARTIAL-01).
+//! `Storage::lookup` / `HandleHit` — the read side
+//! (SDS-LAYOUT.OBJECTFILE-02, FDS-STORAGE.PARTIAL-01).
 //!
-//! A store in flight takes precedence over the published record: a lookup
-//! is answered with a partial hit of the most recently opened store of the
-//! key that no invalidating purge has ended. A lookup carrying
-//! the `pingora-cache` streaming write tag is answered with the store the tag
+//! A store in flight takes precedence over the published record: a lookup is
+//! answered with a partial hit of the most recently opened store of the key
+//! that no invalidating purge has ended. A lookup carrying the
+//! `pingora-cache` streaming write tag is answered with the store the tag
 //! names, even an ended one, or with nothing. A damaged, foreign, or
 //! wrong-key record is a miss, never a corrupt read, and the file is left
-//! where it is: a later store replaces it and the restart-time scan
-//! reclaims it. The exception is a damaged temporary that a tagged lookup
-//! names, which is an error (see `lookup`).
+//! where it is: a later store replaces it and the restart-time scan reclaims
+//! it. The exception is a damaged temporary that a tagged lookup names,
+//! which is an error (see `lookup`).
 //!
-//! On Linux, unless `FsCacheConfig::with_page_cache_reads` turns them off,
-//! a lookup and each read of a hit's body first try the page cache on the
+//! On Linux, unless `FsCacheConfig::with_page_cache_reads` turns them off, a
+//! lookup and each read of a hit's body first try the page cache on the
 //! async worker (`page_cache`, FDS-STORAGE.PAGECACHE-01). The worker answers
 //! a hit, a missing file, and a call the system lacks. The blocking pool
 //! does the rest: a lookup again from the start, with the file if the worker
@@ -112,11 +112,11 @@ enum ReadSource {
 }
 
 pub struct FsHitHandler {
-    /// Shared so a blocking read can own a handle without reopening the
-    /// file (FDS-STORAGE.EXECUTOR-02). `read_exact_at` takes `&self`, so a
-    /// shared descriptor is all a reader ever needs. Taken only as the
-    /// handler is dropped, to close it where its close cannot stall an async
-    /// worker (see `Drop`).
+    /// Shared so a blocking read can own a handle without reopening the file
+    /// (FDS-STORAGE.EXECUTOR-02). `read_exact_at` takes `&self`, so a shared
+    /// descriptor is all a reader ever needs. Taken only as the handler is
+    /// dropped, to close it where its close cannot stall an async worker
+    /// (see `Drop`).
     file: Option<Arc<File>>,
     /// Where the body comes from, and how far it has been read.
     source: ReadSource,
@@ -174,9 +174,9 @@ pub(crate) async fn lookup(
             InFlightTemp::Hit(meta, hit) => return Ok(Some((meta, hit))),
             // The store wrote this fixed part in full before registering,
             // and a read torn by its header update is retried, so this is
-            // damage or a bug. With a tag it is an error rather than a
-            // miss: `pingora-cache` panics when this lookup finds nothing,
-            // and an error fails only this request.
+            // damage or a bug. With a tag it is an error rather than a miss:
+            // `pingora-cache` panics when this lookup finds nothing, and an
+            // error fails only this request.
             InFlightTemp::Unreadable(e) if tag.is_some() => {
                 return Error::e_because(
                     ErrorType::FileReadError,
@@ -191,8 +191,8 @@ pub(crate) async fn lookup(
         }
     }
     // A tagged lookup is answered with the store its tag names or with
-    // nothing, as `Storage::lookup_streaming_write`'s doc asks. Never
-    // from the published record, even once the named store has published:
+    // nothing, as `Storage::lookup_streaming_write`'s doc asks. Never from
+    // the published record, even once the named store has published:
     // the record there may be a newer store's.
     if tag.is_some() {
         return Ok(None);
@@ -304,8 +304,8 @@ enum InFlightTemp {
 }
 
 /// Open a partial hit on `writer`'s temporary: on Linux from the page cache
-/// on this worker first, as the store has just written it (`page_cache`);
-/// on the blocking pool otherwise, with the file the worker opened, if any.
+/// on this worker first, as the store has just written it (`page_cache`); on
+/// the blocking pool otherwise, with the file the worker opened, if any.
 async fn open_in_flight(
     cache: &'static FsCache,
     writer: &Arc<InFlightWriter>,
@@ -321,8 +321,8 @@ async fn open_in_flight(
     blocking::run(move || open_partial_hit(cache, writer, &key_bytes, opened)).await
 }
 
-/// Open a partial hit on `writer`'s temporary; `opened` is the temporary,
-/// if the worker opened it already.
+/// Open a partial hit on `writer`'s temporary; `opened` is the temporary, if
+/// the worker opened it already.
 fn open_partial_hit(
     cache: &'static FsCache,
     writer: Arc<InFlightWriter>,
@@ -491,13 +491,12 @@ impl FsHitHandler {
                     Some(WriteOutcome::Completed { body_len }) => {
                         if *read_so_far >= body_len {
                             // The store completed, published or discarded
-                            // alike: end normally
-                            // (FRE-COMPAT.STREAMEND-01). This descriptor
-                            // stays valid either way.
+                            // alike: end normally (FRE-COMPAT.STREAMEND-01).
+                            // This descriptor stays valid either way.
                             return Ok(None);
                         }
-                        // `valid_len` has not caught up with `body_len` in this
-                        // load yet (a benign race right at completion);
+                        // `valid_len` has not caught up with `body_len` in
+                        // this load yet (a benign race right at completion);
                         // loop rather than trust a stale value.
                     }
                     // FRE-COMPLIANCE.PARTIALABORT-01: never a clean end.
@@ -541,9 +540,9 @@ impl HandleHit for FsHitHandler {
     }
 
     /// Read `start..end` of the body next. As in `MemCache`, the in-memory
-    /// backend of `pingora-cache`, `start` must fall inside the
-    /// body, so an empty body cannot be sought at all, while an `end` past
-    /// the last byte reads to the end.
+    /// backend of `pingora-cache`, `start` must fall inside the body, so an
+    /// empty body cannot be sought at all, while an `end` past the last byte
+    /// reads to the end.
     fn seek(&mut self, start: usize, end: Option<usize>) -> Result<()> {
         match &mut self.source {
             ReadSource::Complete {
@@ -566,8 +565,8 @@ impl HandleHit for FsHitHandler {
                 // An end past the last byte is allowed: deliver what is
                 // there.
                 *read_end = end.map_or(*body_len, |e| (e as u64).min(*body_len));
-                // A sought read is not checked: the stored checksum covers
-                // a whole body only.
+                // A sought read is not checked: the stored checksum covers a
+                // whole body only.
                 self.check.abandon();
                 Ok(())
             }

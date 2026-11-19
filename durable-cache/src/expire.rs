@@ -102,8 +102,7 @@ pub(crate) fn expire_key(cache: &'static FsCache, key: &CompactCacheKey) -> Resu
     Ok(PurgeOutcome::Expired)
 }
 
-/// Read the record, or `None` when nothing readable is stored under the
-/// key.
+/// Read the record, or `None` when nothing readable is stored under the key.
 ///
 /// A record that fails the read-time validation SDS-LAYOUT.OBJECTFILE-02
 /// specifies — damaged, truncated, written under another format version, or
@@ -143,9 +142,9 @@ fn expired(cache: &FsCache, internal: &[u8], header: &[u8]) -> Result<Vec<u8>> {
     // windows the response set are measured from here; this backend only
     // stores the result. It expires at the start of the current second, not
     // at the current instant, so that the expired metadata is never longer
-    // than the stored metadata. MessagePack writes the deadline's seconds and
-    // nanoseconds each in as few bytes as its value allows; `expire_at` only
-    // ever lowers the deadline, so its seconds take no more bytes than
+    // than the stored metadata. MessagePack writes the deadline's seconds
+    // and nanoseconds each in as few bytes as its value allows; `expire_at`
+    // only ever lowers the deadline, so its seconds take no more bytes than
     // before, and zero nanoseconds take the fewest. The serve-stale windows
     // close up to a second earlier, below HTTP's one-second resolution. The
     // unit tests below check this for every width the encoding gives a

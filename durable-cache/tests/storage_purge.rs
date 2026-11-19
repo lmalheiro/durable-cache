@@ -23,8 +23,8 @@ use super::support;
 
 // IMP-TC.STORAGE.PURGE-01: satisfy TC-STORAGE.PURGE-01
 
-/// Purge as `HttpCache` issues an invalidation, reducing the outcome to
-/// "was anything removed" for the steps that only care about that.
+/// Purge as `HttpCache` issues an invalidation, reducing the outcome to "was
+/// anything removed" for the steps that only care about that.
 async fn purge(cache: &'static durable_cache::FsCache, key: &pingora_cache::CacheKey) -> bool {
     match support::purge_active(cache, key).await {
         PurgeOutcome::Purged(None) => true,
@@ -107,12 +107,11 @@ async fn tc_storage_purge_01_absent_and_repeated_purges_are_harmless_no_ops() {
     );
 }
 
-/// Step 4: the two target kinds `HttpCache` issues. An `Active`
-/// target (an invalidation) and a key-only `Exact` target (an eviction
-/// victim) resolve to the same file and report `Purged(None)` — `None`
-/// because this backend assigns no entry identifier, which is what makes the
-/// caller's `eviction.remove` address the entry it admitted
-/// (ADR-COMPAT.ENTRYID-01).
+/// Step 4: the two target kinds `HttpCache` issues. An `Active` target (an
+/// invalidation) and a key-only `Exact` target (an eviction victim) resolve
+/// to the same file and report `Purged(None)` — `None` because this backend
+/// assigns no entry identifier, which is what makes the caller's
+/// `eviction.remove` address the entry it admitted (ADR-COMPAT.ENTRYID-01).
 #[tokio::test]
 async fn tc_storage_purge_01_active_and_key_only_exact_targets_agree() {
     let (cache, _tmp) = support::leaked_cache();
@@ -169,9 +168,9 @@ async fn tc_storage_purge_01_an_identified_exact_target_is_not_found() {
 /// Step 6: an invalidation ends a same-key store in flight
 /// (FRE-COMPLIANCE.PURGE-01). It leaves the writer's temporary to the
 /// writer; an untagged lookup no longer finds the store, while the request
-/// writing it still reads it back by its tag, and a reader already
-/// streaming it gets the whole body. Finishing, the store publishes nothing
-/// and reports the purge; a store begun after the purge publishes as usual.
+/// writing it still reads it back by its tag, and a reader already streaming
+/// it gets the whole body. Finishing, the store publishes nothing and
+/// reports the purge; a store begun after the purge publishes as usual.
 #[tokio::test]
 async fn tc_storage_purge_01_an_invalidation_ends_a_store_in_flight() {
     let (cache, _tmp) = support::leaked_cache();
@@ -566,9 +565,9 @@ async fn tc_storage_purge_01_a_failed_unlink_fails_the_purge() {
     assert!(path.is_dir(), "the path is left as it was");
 }
 
-/// A purge frees the record only after releasing the key's publication
-/// lock. Paused just before the record is closed, the purge has unlinked it,
-/// a store of the key goes through, so the lock is free, and the record is
+/// A purge frees the record only after releasing the key's publication lock.
+/// Paused just before the record is closed, the purge has unlinked it, a
+/// store of the key goes through, so the lock is free, and the record is
 /// still open, so the kernel has not freed it. Once the purge completes, the
 /// record is closed.
 #[cfg(target_os = "linux")]

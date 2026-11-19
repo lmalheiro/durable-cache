@@ -35,8 +35,8 @@ async fn tc_compat_concurrent_01_lookups_during_concurrent_writes_never_see_a_to
 
     // While both stores are still in flight, issue several lookups: each
     // must resolve to a whole, uncorrupted read of exactly one writer's
-    // bytes — necessarily the most recently opened one, `b` — never a
-    // miss (an in-flight writer always exists here) and never a mixture.
+    // bytes — necessarily the most recently opened one, `b` — never a miss
+    // (an in-flight writer always exists here) and never a mixture.
     for _ in 0..5 {
         let (_meta, mut hit) = cache
             .lookup(&key, &trace)

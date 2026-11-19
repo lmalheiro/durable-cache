@@ -55,8 +55,8 @@ async fn tc_compliance_trailers_01_no_section_exists_beyond_the_body() {
          no trailer section, or anything else, follows it"
     );
 
-    // The returned header set is exactly what was stored — nothing a
-    // trailer could have been folded into appears that was not given.
+    // The returned header set is exactly what was stored — nothing a trailer
+    // could have been folded into appears that was not given.
     let (found_meta, mut hit) = cache.lookup(&key, &trace).await.unwrap().unwrap();
     assert_eq!(
         found_meta.response_header().headers.len(),

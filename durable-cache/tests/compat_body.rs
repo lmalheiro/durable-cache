@@ -3,8 +3,8 @@
 
 //! TC-COMPLIANCE.BODY-01 — Body round-trips byte for byte.
 //!
-//! Steps 1-2 (full-read fidelity at boundary sizes, including a restart)
-//! and step 3 (reads after a seek, which a published record supports per
+//! Steps 1-2 (full-read fidelity at boundary sizes, including a restart) and
+//! step 3 (reads after a seek, which a published record supports per
 //! SDS-LAYOUT.OBJECTFILE-02) are covered directly against
 //! `Storage::get_miss_handler`/`lookup` — no HTTP needed.
 
@@ -23,8 +23,8 @@ async fn store_and_read_back(cache: &'static FsCache, name: &str, body: &[u8]) -
     let trace = support::inactive_trace();
 
     let mut handler = cache.get_miss_handler(&key, &meta, &trace).await.unwrap();
-    // Split into a couple of writes to also exercise the growing-write
-    // path, not just a single one-shot body.
+    // Split into a couple of writes to also exercise the growing-write path,
+    // not just a single one-shot body.
     if body.len() > 1 {
         let mid = body.len() / 2;
         handler
@@ -53,8 +53,8 @@ async fn store_and_read_back(cache: &'static FsCache, name: &str, body: &[u8]) -
 
 fn random_body(len: usize, seed: u64) -> Vec<u8> {
     // A small xorshift PRNG — deterministic, no extra dev-dependency, and
-    // exercises genuinely non-repeating binary content rather than a
-    // pattern that could mask an off-by-one against itself.
+    // exercises genuinely non-repeating binary content rather than a pattern
+    // that could mask an off-by-one against itself.
     let mut state = seed | 1;
     (0..len)
         .map(|_| {
@@ -137,8 +137,8 @@ async fn tc_compliance_body_01_survives_a_restart() {
     assert_eq!(read, body);
 }
 
-/// Step 3: a published record advertises seek support, and each read
-/// after a seek delivers exactly the requested slice, so range responses built from
+/// Step 3: a published record advertises seek support, and each read after a
+/// seek delivers exactly the requested slice, so range responses built from
 /// the reader carry precisely the stored bytes.
 #[tokio::test]
 async fn tc_compliance_body_01_seeked_reads_deliver_exactly_the_requested_slice() {
@@ -187,11 +187,11 @@ async fn seeked_reads_deliver_exactly_the_requested_slice(cache: &'static FsCach
 }
 
 /// A lookup reads the body's start along with the metadata, in one read of
-/// the record's first `record::LOOKUP_READ_LEN` bytes, and the hit serves
-/// it from there. Bodies whose record ends just before, at, and just after
-/// the end of that read round-trip whole, and from a seek that starts in
-/// the bytes it holds and ends past them; a multi-chunk body continues from
-/// the file.
+/// the record's first `record::LOOKUP_READ_LEN` bytes, and the hit serves it
+/// from there. Bodies whose record ends just before, at, and just after the
+/// end of that read round-trip whole, and from a seek that starts in the
+/// bytes it holds and ends past them; a multi-chunk body continues from the
+/// file.
 #[tokio::test]
 async fn tc_compliance_body_01_bodies_around_the_end_of_the_lookups_first_read() {
     let (cache, _tmp) = support::leaked_cache();

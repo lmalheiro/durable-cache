@@ -3,10 +3,9 @@
 
 //! Shared fixtures for the integration tests in this directory: cache
 //! builders (including a "restart" over the same directory), store and
-//! lookup helpers driving the real `Storage` trait, a raw record reader
-//! that independently re-derives a published file's layout rather than
-//! trusting the code under test, tamper helpers, log capture, and counter
-//! reading.
+//! lookup helpers driving the real `Storage` trait, a raw record reader that
+//! independently re-derives a published file's layout rather than trusting
+//! the code under test, tamper helpers, log capture, and counter reading.
 //!
 //! Every file in this directory is a module of the crate's own test binary
 //! (see `integration_tests` in `src/lib.rs`), and they all share this one
@@ -31,7 +30,8 @@ use pingora_cache::trace::{Span, SpanHandle};
 use pingora_cache::CacheMeta;
 use pingora_http::ResponseHeader;
 
-// --- process isolation ------------------------------------------------------
+// --- process isolation
+// ------------------------------------------------------
 
 /// Set in a child process to the name of the one test it runs in full.
 const OWN_PROCESS: &str = "DURABLE_CACHE_TEST_OWN_PROCESS";
@@ -39,8 +39,8 @@ const OWN_PROCESS: &str = "DURABLE_CACHE_TEST_OWN_PROCESS";
 /// Give the calling test a process of its own. The whole suite is one test
 /// binary, so the `prometheus` default registry, the logger and the
 /// process's memory figures are shared by every test running at the same
-/// time. A test that asserts an exact change in any of them would also
-/// count other tests' events.
+/// time. A test that asserts an exact change in any of them would also count
+/// other tests' events.
 ///
 /// Returns `true` in the child process, where the test's body runs. In the
 /// parent it re-runs this test binary on this one test, fails if the child
@@ -89,8 +89,8 @@ pub fn tagged_key(primary: &str, user_tag: &str) -> CacheKey {
     CacheKey::new(primary, user_tag)
 }
 
-/// The same key with a `Vary` variance folded in, as `pingora-cache` hands
-/// a variant to the backend.
+/// The same key with a `Vary` variance folded in, as `pingora-cache` hands a
+/// variant to the backend.
 pub fn variant(base: &CacheKey, variance: [u8; 16]) -> CacheKey {
     let mut k = base.clone();
     k.set_variance_key(variance);
@@ -158,9 +158,9 @@ pub fn meta_created(created: SystemTime) -> CacheMeta {
     )
 }
 
-/// Metadata whose header set carries roughly `filler` bytes of incompressible
-/// value, for exercising the metadata region's capacity and what happens
-/// when an update outgrows it.
+/// Metadata whose header set carries roughly `filler` bytes of
+/// incompressible value, for exercising the metadata region's capacity and
+/// what happens when an update outgrows it.
 ///
 /// `pingora-cache` compresses the header segment, so a repetitive filler
 /// would shrink to nothing and never grow the region: the value here is a
@@ -228,7 +228,8 @@ pub fn inactive_trace() -> SpanHandle {
 /// A fresh temporary directory for a cache. It lies under the build's target
 /// directory, on disk, rather than in the system's temporary directory:
 /// page-cache reads, on by default on Linux, need a file system with
-/// non-blocking reads, which tmpfs lacks (`FsCacheConfig::with_page_cache_reads`).
+/// non-blocking reads, which tmpfs lacks
+/// (`FsCacheConfig::with_page_cache_reads`).
 pub fn tempdir() -> tempfile::TempDir {
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -492,8 +493,8 @@ pub fn flip_byte_at(path: &Path, offset: u64) {
     file.write_all(&byte).unwrap();
 }
 
-/// Flip one byte of a published record's `magic` field — the cheapest way
-/// to make a record fail validation.
+/// Flip one byte of a published record's `magic` field — the cheapest way to
+/// make a record fail validation.
 pub fn flip_magic_byte(path: &Path) {
     flip_byte_at(path, format::MAGIC_OFFSET as u64);
 }
@@ -685,9 +686,9 @@ impl log::Log for LogCapture {
     fn flush(&self) {}
 }
 
-/// The value of a counter in the `prometheus` default registry, or `None`
-/// if no such metric is registered (which is what a build without the
-/// `metrics` feature must show).
+/// The value of a counter in the `prometheus` default registry, or `None` if
+/// no such metric is registered (which is what a build without the `metrics`
+/// feature must show).
 pub fn counter_value(name: &str, labels: &[(&str, &str)]) -> Option<f64> {
     // `prometheus` 0.14 regenerated its protobuf model; the `get_*`
     // accessors are deprecated shims over these.

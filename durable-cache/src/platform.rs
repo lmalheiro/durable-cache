@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The backend's calls that differ between Linux and the other Unix
-//! systems, for the code that calls them the same way on every platform.
-//! Each is one declaration with a `#[cfg]` block per platform. What only
-//! Linux does at all, reading from the page cache on the async worker, is
-//! in `crate::nowait` and `crate::lookup::page_cache`, and the latter has a
+//! The backend's calls that differ between Linux and the other Unix systems,
+//! for the code that calls them the same way on every platform. Each is one
+//! declaration with a `#[cfg]` block per platform. What only Linux does at
+//! all, reading from the page cache on the async worker, is in
+//! `crate::nowait` and `crate::lookup::page_cache`, and the latter has a
 //! stand-in elsewhere that leaves every read to the blocking pool.
 
 use std::fs::File;
@@ -19,8 +19,8 @@ use crate::FsCacheConfig;
 /// How records and temporaries are opened to read. On Linux, with
 /// `O_NOATIME` if the configuration asks (`FsCacheConfig::with_noatime`),
 /// which [`Opener::new`] has checked the kernel allows; the worker's open
-/// (`crate::nowait`) and the pool's take their flags from the same value,
-/// so they cannot drift apart. Elsewhere, as `File::open` opens them.
+/// (`crate::nowait`) and the pool's take their flags from the same value, so
+/// they cannot drift apart. Elsewhere, as `File::open` opens them.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Opener {
     #[cfg(target_os = "linux")]

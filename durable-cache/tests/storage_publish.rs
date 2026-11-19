@@ -24,8 +24,8 @@ use super::support;
 // IMP-TC.STORAGE.PUBLISH-02: satisfy TC-STORAGE.PUBLISH-02
 
 /// Step 1: each writer writes its own temporary, named with this process's
-/// writer identity and a distinct counter, and the bytes of neither appear in
-/// the other's file.
+/// writer identity and a distinct counter, and the bytes of neither appear
+/// in the other's file.
 #[tokio::test]
 async fn tc_storage_publish_02_concurrent_writers_use_their_own_temporaries() {
     let (cache, _tmp) = support::leaked_cache();
@@ -36,8 +36,8 @@ async fn tc_storage_publish_02_concurrent_writers_use_their_own_temporaries() {
     let mut a = cache.get_miss_handler(&key, &meta, &trace).await.unwrap();
     let mut b = cache.get_miss_handler(&key, &meta, &trace).await.unwrap();
 
-    // Interleave the writes across both handlers to provoke any shared
-    // state before either completes.
+    // Interleave the writes across both handlers to provoke any shared state
+    // before either completes.
     a.write_body(Bytes::from_static(b"AAAA"), false)
         .await
         .unwrap();
@@ -81,8 +81,8 @@ async fn tc_storage_publish_02_concurrent_writers_use_their_own_temporaries() {
     );
 }
 
-/// Step 2: a file already at the name the next counter would produce is
-/// left untouched, and the store takes the following counter value.
+/// Step 2: a file already at the name the next counter would produce is left
+/// untouched, and the store takes the following counter value.
 #[tokio::test]
 async fn tc_storage_publish_02_name_collision_advances_the_counter() {
     let (cache, _tmp) = support::leaked_cache();
@@ -223,8 +223,8 @@ async fn tc_storage_publish_02_no_store_sync_publishes_without_synchronising() {
     assert_eq!(body, b"body", "the record is published whole");
 }
 
-/// Step 6: a store completing once the backend is read-only reports
-/// success, publishes nothing, and leaves no temporary behind
+/// Step 6: a store completing once the backend is read-only reports success,
+/// publishes nothing, and leaves no temporary behind
 /// (FDS-COMPAT.READONLY-02).
 #[tokio::test]
 async fn tc_storage_publish_02_store_completing_once_read_only_publishes_nothing() {
@@ -265,9 +265,9 @@ async fn tc_storage_publish_02_store_completing_once_read_only_publishes_nothing
 }
 
 /// Step 7 (inspection), the part a test can check: a store's temporary is
-/// created in the directory of its canonical name, so the publishing
-/// rename is atomic by construction. That no path publishes by copying is
-/// left to inspection.
+/// created in the directory of its canonical name, so the publishing rename
+/// is atomic by construction. That no path publishes by copying is left to
+/// inspection.
 #[tokio::test]
 async fn tc_storage_publish_02_temporary_shares_the_canonical_directory() {
     let (cache, _tmp) = support::leaked_cache();
@@ -293,9 +293,9 @@ async fn tc_storage_publish_02_temporary_shares_the_canonical_directory() {
     drop(handler);
 }
 
-/// A store that replaces a record frees the old one only after releasing
-/// the key's publication lock. Paused just before the old record is closed,
-/// the store has published, a purge of the key goes through, so the lock is
+/// A store that replaces a record frees the old one only after releasing the
+/// key's publication lock. Paused just before the old record is closed, the
+/// store has published, a purge of the key goes through, so the lock is
 /// free, and the old record is still open, so the kernel has not freed it.
 /// Once the store completes, the old record is closed.
 #[cfg(target_os = "linux")]
@@ -347,9 +347,9 @@ async fn a_replacing_store_frees_the_old_record_after_releasing_the_lock() {
 /// A store that has published drops its handler on the blocking pool, as
 /// part of `finish`, not on the async worker that awaited it. Closing the
 /// handler's handle on the record frees the record if another store has
-/// replaced it, or a purge removed it, in the meantime, which must not
-/// stall a worker. Held as its handler is dropped, the store leaves the
-/// runtime's only worker free to run other tasks.
+/// replaced it, or a purge removed it, in the meantime, which must not stall
+/// a worker. Held as its handler is dropped, the store leaves the runtime's
+/// only worker free to run other tasks.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn a_store_drops_its_handler_off_the_worker() {
     use std::time::Duration;
@@ -418,8 +418,8 @@ fn a_poisoned_publication_lock_is_reported_once() {
 }
 
 /// Discarding a temporary that is already gone is not an error and logs
-/// nothing. One that cannot be removed is logged as a warning naming it,
-/// and stays for the restart-time scan (FDS-STORAGE.RECLAIM-01).
+/// nothing. One that cannot be removed is logged as a warning naming it, and
+/// stays for the restart-time scan (FDS-STORAGE.RECLAIM-01).
 #[test]
 fn discarding_a_temporary_warns_only_when_it_cannot_be_removed() {
     use durable_cache::publish::discard_temp;
@@ -445,11 +445,10 @@ fn discarding_a_temporary_warns_only_when_it_cannot_be_removed() {
     assert!(stuck.exists(), "and left for the restart-time scan");
 }
 
-/// Holding open a record that is not there is not an error and logs
-/// nothing: a key's first store has nothing to replace. A record that is
-/// there is held. One that cannot be opened is logged as a warning naming
-/// it, and nothing is held, so the rename or unlink frees it under the
-/// lock.
+/// Holding open a record that is not there is not an error and logs nothing:
+/// a key's first store has nothing to replace. A record that is there is
+/// held. One that cannot be opened is logged as a warning naming it, and
+/// nothing is held, so the rename or unlink frees it under the lock.
 #[test]
 fn holding_a_record_open_warns_only_when_it_cannot_be_opened() {
     use durable_cache::publish::hold_open;
@@ -509,12 +508,12 @@ fn non_blocking_reads(dir: &std::path::Path) -> bool {
     !matches!(read, Err(e) if read_lacks(e)) && !matches!(open, Err(e) if open_lacks(e))
 }
 
-/// With page-cache reads on, the default on Linux, a cache whose file
-/// system lacks non-blocking reads fails to start, naming the option that
-/// switches them off, rather than serve every hit from the blocking pool
-/// unnoticed; with the option off, it starts. `/dev/shm` is a tmpfs, which
-/// lacks them as of Linux 6.12; probed first, it tells the test which
-/// outcome to expect.
+/// With page-cache reads on, the default on Linux, a cache whose file system
+/// lacks non-blocking reads fails to start, naming the option that switches
+/// them off, rather than serve every hit from the blocking pool unnoticed;
+/// with the option off, it starts. `/dev/shm` is a tmpfs, which lacks them
+/// as of Linux 6.12; probed first, it tells the test which outcome to
+/// expect.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_cache_on_a_file_system_without_non_blocking_reads_fails_to_start() {

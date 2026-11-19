@@ -6,8 +6,8 @@
 //! A cache that published stores without synchronising them keeps its
 //! records after a host crash, and reports one left short as a miss; with
 //! the discard on, it serves none of them after a host restart it was not
-//! flushed for, and all of them after a process restart or a host restart
-//! it was flushed for (FDS-PERSISTENCE.CRASHDISCARD-01).
+//! flushed for, and all of them after a process restart or a host restart it
+//! was flushed for (FDS-PERSISTENCE.CRASHDISCARD-01).
 //!
 //! A host restart is a backend constructed with a boot identity other than
 //! the one the stores ran under: the test hook `HookConfig::boot_id_path`
@@ -266,8 +266,8 @@ async fn tc_persistence_crashdiscard_01_the_helper_flushes_on_upgrade_and_shutdo
     }
 }
 
-/// The marker is written once, however many unsynchronised stores reach
-/// it together (FDS-PERSISTENCE.CRASHDISCARD-01, "The marker").
+/// The marker is written once, however many unsynchronised stores reach it
+/// together (FDS-PERSISTENCE.CRASHDISCARD-01, "The marker").
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn tc_persistence_crashdiscard_01_concurrent_stores_write_the_marker_once() {
     let tmp = support::tempdir();
@@ -399,11 +399,10 @@ async fn tc_persistence_crashdiscard_01_a_flush_keeps_a_running_instances_marker
     );
 }
 
-/// A discard at construction removes the markers of instances that
-/// stopped, and keeps those of instances still running: such an instance
-/// believes its marker in place, and without it would publish stores no
-/// later start could tell lost (FDS-PERSISTENCE.CRASHDISCARD-01, "At
-/// construction").
+/// A discard at construction removes the markers of instances that stopped,
+/// and keeps those of instances still running: such an instance believes its
+/// marker in place, and without it would publish stores no later start could
+/// tell lost (FDS-PERSISTENCE.CRASHDISCARD-01, "At construction").
 #[tokio::test]
 async fn tc_persistence_crashdiscard_01_a_discard_keeps_a_running_instances_marker() {
     let tmp = support::tempdir();
@@ -412,8 +411,8 @@ async fn tc_persistence_crashdiscard_01_a_discard_keeps_a_running_instances_mark
     let running = unsynced(tmp.path(), true, &boot_id);
     let stored = store_some(running, "discard-running", 1).await;
     // A marker of another boot, from an instance that has stopped, beside a
-    // running instance's: what two instances starting together after a
-    // host restart can leave the later one to find.
+    // running instance's: what two instances starting together after a host
+    // restart can leave the later one to find.
     let stopped = unsynced(tmp.path(), true, &boot(boots.path(), "boot-q"));
     store_some(stopped, "discard-stopped", 1).await;
     stop(stopped);

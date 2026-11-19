@@ -9,8 +9,8 @@
 //! leaves the operation to the blocking pool (FDS-STORAGE.PAGECACHE-01). A
 //! read the page cache misses still starts the device's work: the kernel
 //! submits its readahead on the calling thread before it reports `EAGAIN`,
-//! so the worker pays for the submission, and the pool's read finds the
-//! data on its way.
+//! so the worker pays for the submission, and the pool's read finds the data
+//! on its way.
 //!
 //! `FsCache::new` checks once that the kernel and the cache's file system
 //! support both calls ([`check_support`]). Should one still report itself
@@ -22,10 +22,10 @@
 //! read that updates a file's access time dirties its inode, and on ext4
 //! that starts a journal transaction, which can wait: even a read that
 //! `RWF_NOWAIT` keeps from waiting for the device updates it. With the
-//! default `relatime`, it happens on the first read of every record after
-//! it was written, as its writes leave its access time behind its
-//! modification time. The kernel refuses `O_NOATIME` on a file of another
-//! owner, and the open then fails.
+//! default `relatime`, it happens on the first read of every record after it
+//! was written, as its writes leave its access time behind its modification
+//! time. The kernel refuses `O_NOATIME` on a file of another owner, and the
+//! open then fails.
 
 use std::fs::File;
 use std::io::{self, IoSliceMut};
@@ -302,8 +302,8 @@ unsafe fn pread_nowait(
 }
 
 /// Fill `buf` from the page cache, up to the first byte that would wait for
-/// the device: how many bytes it read. The file ending first is an error
-/// of kind `UnexpectedEof`.
+/// the device: how many bytes it read. The file ending first is an error of
+/// kind `UnexpectedEof`.
 fn read_cached(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     let mut read = 0;
     while read < buf.len() {
@@ -372,11 +372,11 @@ mod tests {
     /// Drop `file`'s pages from `offset` on out of the page cache: written,
     /// synchronised and so clean, they go, and a read of them with
     /// `RWF_NOWAIT` usually fails with `EAGAIN`. Not always: a read that
-    /// misses starts the device's work, and a device that answers within
-    /// the call, as a virtual machine's disk can, lets the read go on; so
-    /// does a page cache that keeps the file in units larger than a page.
-    /// The tests that use it hold to what is true either way, and drop the
-    /// pages again before each read.
+    /// misses starts the device's work, and a device that answers within the
+    /// call, as a virtual machine's disk can, lets the read go on; so does a
+    /// page cache that keeps the file in units larger than a page. The tests
+    /// that use it hold to what is true either way, and drop the pages again
+    /// before each read.
     fn uncache_from(file: &File, offset: u64) {
         file.sync_data().expect("the file is synchronised");
         rustix::fs::fadvise(file, offset, None, rustix::fs::Advice::DontNeed)
@@ -425,8 +425,8 @@ mod tests {
     /// The reads of a record on the worker read what the page cache holds:
     /// `read_at_most` at least the cached prefix; with nothing cached,
     /// `read_at_most` and `read_exact_at` fail with `WouldBlock`, unless the
-    /// device answers within the call (see [`uncache_from`]). What they
-    /// read is the file's bytes.
+    /// device answers within the call (see [`uncache_from`]). What they read
+    /// is the file's bytes.
     #[test]
     fn record_reads_on_the_worker_read_what_the_page_cache_holds() {
         let dir = crate::integration_tests::support::tempdir();
@@ -477,8 +477,8 @@ mod tests {
     /// On a file system without non-blocking reads, each read on the worker
     /// fails with an error of kind `Unsupported` naming the call, whichever
     /// kind the standard library gives `EOPNOTSUPP` (`Uncategorized` in Rust
-    /// 1.85). `/dev/shm` is a tmpfs, which lacks them as of Linux 6.12; where
-    /// it has them, or there is no `/dev/shm`, nothing can tell.
+    /// 1.85). `/dev/shm` is a tmpfs, which lacks them as of Linux 6.12;
+    /// where it has them, or there is no `/dev/shm`, nothing can tell.
     #[test]
     fn reads_the_file_system_lacks_are_unsupported() {
         let Ok(dir) = tempfile::tempdir_in("/dev/shm") else {
@@ -565,8 +565,8 @@ mod tests {
         }
     }
 
-    /// The file ending before the range is an error of kind
-    /// `UnexpectedEof`, and the bytes read until then stay in the buffer.
+    /// The file ending before the range is an error of kind `UnexpectedEof`,
+    /// and the bytes read until then stay in the buffer.
     #[test]
     fn fill_past_the_end_of_the_file_is_unexpected_eof() {
         let dir = crate::integration_tests::support::tempdir();

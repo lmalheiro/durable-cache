@@ -66,10 +66,11 @@ async fn tc_compat_unsized_01_empty_body() {
     store_and_verify("/unsized-empty", &[b""]).await;
 }
 
-/// Steps 2 and 4: whatever the body's size and however it is chunked,
-/// every chunk is in the store's temporary before its `write_body` returns:
+/// Steps 2 and 4: whatever the body's size and however it is chunked, every
+/// chunk is in the store's temporary before its `write_body` returns:
 /// after each call the file holds the header, key, and metadata region plus
-/// exactly the body bytes accepted so far, so nothing is held back in memory.
+/// exactly the body bytes accepted so far, so nothing is held back in
+/// memory.
 #[tokio::test]
 async fn tc_compat_unsized_01_every_chunk_is_written_before_write_body_returns() {
     let (cache, _tmp) = support::leaked_cache();
