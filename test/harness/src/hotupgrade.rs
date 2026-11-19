@@ -24,7 +24,9 @@
 //!
 //! `fixture-proxy`'s `main.rs` derives `upgrade_sock` (and `pid_file`) from
 //! `--cache-dir`, so two processes given the same cache directory already
-//! agree on the handoff path with no extra flag needed.
+//! agree on the handoff path with no extra flag needed. The socket itself is
+//! in the temporary directory, named after a hash of the cache directory,
+//! since a Unix socket's path holds at most 108 bytes.
 
 use std::net::SocketAddr;
 use std::path::Path;
