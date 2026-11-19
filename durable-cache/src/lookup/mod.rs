@@ -22,6 +22,7 @@
 //! opened it, and the rest of a body read, from where the worker stopped.
 //! Elsewhere, `page_cache` is a stand-in that leaves it all to the pool.
 
+mod body_check;
 #[cfg(target_os = "linux")]
 mod page_cache;
 /// Elsewhere than on Linux, which alone has calls that fail rather than wait
@@ -87,6 +88,7 @@ use pingora_cache::trace::SpanHandle;
 use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
+use self::body_check::BodyCheck;
 use crate::inflight::{InFlightWriter, WriteOutcome};
 use crate::record::{self, ReadError, RecordError, RecordKind};
 use crate::{blocking, key_codec, platform, FsCache};
@@ -166,47 +168,9 @@ pub struct FsHitHandler {
     /// The backend: its configuration, for the body reads (`fill`), and in
     /// the test build its hooks, for `Drop`.
     cache: &'static FsCache,
-    /// The read-time body check, while one runs: switched on in the
-    /// configuration, for a published record that carries a checksum, until
-    /// the read seeks (ADR-PERSISTENCE.DURABILITY-02).
-    #[cfg(feature = "body-crc-verify")]
-    check: Option<BodyCheck>,
-}
-
-/// A body check in progress (ADR-PERSISTENCE.DURABILITY-02).
-#[cfg(feature = "body-crc-verify")]
-struct BodyCheck {
-    /// CRC-32C over the bytes delivered so far.
-    running: u32,
-    /// The record's `body_crc`.
-    stored: u32,
-}
-
-#[cfg(feature = "body-crc-verify")]
-impl BodyCheck {
-    /// A check of a record whose header stores `stored`, if `cache` has
-    /// checking switched on. A stored zero is not checked: it is what a
-    /// build without the `body-crc` feature records, and the checksum of an
-    /// empty body.
-    fn start(cache: &FsCache, stored: u32) -> Option<BodyCheck> {
-        (cache.config.body_crc_verification() && stored != 0)
-            .then_some(BodyCheck { running: 0, stored })
-    }
-
-    /// Log a mismatch once the whole body has been delivered. The response
-    /// still ends normally: its bytes are already on their way to the
-    /// client, and an error now could only cut the connection.
-    fn finish(self, path: &Path) {
-        if self.running != self.stored {
-            log::error!(
-                "the body of {} does not match its stored checksum \
-                 (stored {:#010x}, computed {:#010x}); it was served as read",
-                path.display(),
-                self.stored,
-                self.running
-            );
-        }
-    }
+    /// The read-time body check, with the `body-crc-verify` feature
+    /// (ADR-PERSISTENCE.DURABILITY-02).
+    check: BodyCheck,
 }
 
 /// Answer a lookup. A `streaming_write_tag` names a store in flight:
@@ -366,7 +330,6 @@ fn published_hit(
         },
         path,
         cache,
-        #[cfg(feature = "body-crc-verify")]
         check: BodyCheck::start(cache, parsed.header.body_crc()),
     }
 }
@@ -461,8 +424,7 @@ fn partial_hit(
             },
             path,
             cache,
-            #[cfg(feature = "body-crc-verify")]
-            check: None,
+            check: BodyCheck::none(),
         },
     )
 }
@@ -512,10 +474,7 @@ impl FsHitHandler {
                 ..
             } => {
                 if *pos >= *end {
-                    #[cfg(feature = "body-crc-verify")]
-                    if let Some(check) = self.check.take() {
-                        check.finish(&self.path);
-                    }
+                    self.check.finish(&self.path);
                     return Ok(None);
                 }
                 let len = (*end - *pos).min(CHUNK_SIZE) as usize;
@@ -538,10 +497,7 @@ impl FsHitHandler {
                     let base = *body_offset + *pos;
                     Bytes::from(fill(self.cache, &file, buf, len, base, &self.path).await?)
                 };
-                #[cfg(feature = "body-crc-verify")]
-                if let Some(check) = &mut self.check {
-                    check.running = crc32c::crc32c_append(check.running, &buf);
-                }
+                self.check.update(&buf);
                 *pos += len as u64;
                 if *pos >= prefetched.len() as u64 {
                     // Passed: release the lookup's read.
@@ -654,10 +610,7 @@ impl HandleHit for FsHitHandler {
                 *read_end = end.map_or(*body_len, |e| (e as u64).min(*body_len));
                 // A sought read is not checked: the stored checksum covers
                 // a whole body only.
-                #[cfg(feature = "body-crc-verify")]
-                {
-                    self.check = None;
-                }
+                self.check.abandon();
                 Ok(())
             }
             ReadSource::Partial { .. } => Error::e_explain(

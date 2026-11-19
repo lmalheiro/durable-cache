@@ -242,6 +242,7 @@ test scaffolding, or tooling.
 │   │   ├── miss.rs              write path: get_miss_handler / HandleMiss
 │   │   ├── lookup/
 │   │   │   ├── mod.rs           read path: lookup / HandleHit, incl. partial hits
+│   │   │   ├── body_check.rs    the read-time body check (feature `body-crc-verify`)
 │   │   │   └── page_cache.rs    Linux: lookups and body reads tried first on
 │   │   │                        the worker, from the page cache
 │   │   ├── publish.rs           sync, atomic rename, discard; holds the old record open

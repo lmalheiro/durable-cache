@@ -250,8 +250,7 @@ impl RecordHeader {
         self.meta_crc.get()
     }
 
-    // Read only by the read-time body check and the tests.
-    #[cfg(any(test, feature = "body-crc-verify"))]
+    /// The body's CRC-32C, zero if it was not computed.
     pub fn body_crc(&self) -> u32 {
         self.body_crc.get()
     }
