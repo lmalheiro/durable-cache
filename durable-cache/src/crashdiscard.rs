@@ -92,6 +92,12 @@ impl Marker {
         self.written.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Whether no marker is ever written: the discard after a host restart
+    /// is off.
+    pub(crate) fn is_off(&self) -> bool {
+        self.boot_id.is_none()
+    }
+
     /// Before a store published without synchronisation is renamed into
     /// place, with all its data written: make sure the marker of instance
     /// `id` is in place under `root`, writing it if not. Nothing with the

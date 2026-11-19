@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Running the backend's file I/O off the async executor
-//! (FDS-STORAGE.EXECUTOR-03).
+//! (FDS-STORAGE.EXECUTOR-04).
 //!
 //! Every operation this crate performs is an ordinary blocking syscall —
 //! `open`, `pread`, `pwrite`, `fdatasync`, `rename`, `unlink`. Pingora gives
@@ -28,12 +28,13 @@
 
 use std::fs::File;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use pingora_error::{Error, ErrorType, Result};
 
 use crate::FsCache;
 
-// IMP-STORAGE.EXECUTOR-03: satisfy FDS-STORAGE.EXECUTOR-03
+// IMP-STORAGE.EXECUTOR-04: satisfy FDS-STORAGE.EXECUTOR-04
 
 /// Run one storage operation's blocking work on Tokio's blocking pool.
 ///
@@ -77,8 +78,100 @@ where
     }
 }
 
+// IMP-STORAGE.INLINEWRITES-01: satisfy FDS-STORAGE.INLINEWRITES-01
+
+/// The inline slots (ADR-STORAGE.INLINEWRITES-01): at most this many of the
+/// operations of unsynchronised stores run on the async workers that poll
+/// them at once, rather than on the blocking pool.
+///
+/// Those operations create a store's temporary, write it, and rename it, so
+/// they wait for no device unless the kernel throttles writers, as it does
+/// once the host's dirty data passes its limit. A worker inside one then
+/// stalls every task it holds, so fewer of them than the runtime has workers
+/// may run at once: at most the runtime's workers less one, read from Tokio
+/// at each call, whatever the configuration asks. A runtime of one worker,
+/// Pingora's default, or one with work stealing off, which runs a runtime
+/// per worker, therefore runs none inline.
+pub(crate) struct InlineSlots {
+    /// The slots the configuration asks for.
+    limit: usize,
+    /// The slots taken now.
+    taken: AtomicUsize,
+    /// Whether the cut to the runtime's workers has been logged.
+    cut_logged: AtomicBool,
+}
+
+impl InlineSlots {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            taken: AtomicUsize::new(0),
+            cut_logged: AtomicBool::new(false),
+        }
+    }
+
+    /// Take a slot, if one is free on the runtime that polls the caller.
+    fn try_take(&self) -> Option<InlineSlot<'_>> {
+        if self.limit == 0 {
+            return None;
+        }
+        let workers = tokio::runtime::Handle::try_current()
+            .ok()?
+            .metrics()
+            .num_workers();
+        let usable = self.limit.min(workers.saturating_sub(1));
+        if usable < self.limit && !self.cut_logged.swap(true, Ordering::Relaxed) {
+            log::info!(
+                "{} inline write slots asked for, {usable} used: the runtime has {workers} \
+                 worker(s), and one must always stay free",
+                self.limit
+            );
+        }
+        self.taken
+            .fetch_update(Ordering::Acquire, Ordering::Relaxed, |taken| {
+                (taken < usable).then_some(taken + 1)
+            })
+            .ok()?;
+        Some(InlineSlot(self))
+    }
+}
+
+/// A taken inline slot, given back when dropped.
+struct InlineSlot<'a>(&'a InlineSlots);
+
+impl Drop for InlineSlot<'_> {
+    fn drop(&mut self) {
+        self.0.taken.fetch_sub(1, Ordering::Release);
+    }
+}
+
+/// Run a store's operation on the worker that polls it, in an inline slot,
+/// if `may_run_inline` and a slot is free, and on the blocking pool as
+/// [`run`] does otherwise (ADR-STORAGE.INLINEWRITES-01). `f` learns where it
+/// runs: `true` on the worker.
+///
+/// The caller decides that the operation may run on a worker: one that
+/// waits for no device by nature, of a store that is not synchronised.
+pub(crate) async fn run_store_op<T, F>(
+    cache: &'static FsCache,
+    may_run_inline: bool,
+    f: F,
+) -> Result<T>
+where
+    F: FnOnce(bool) -> Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    if may_run_inline {
+        if let Some(_slot) = cache.inline_slots.try_take() {
+            test_hook! { cache.hooks.count_inline_op(); }
+            return f(true);
+        }
+    }
+    run(move || f(false)).await
+}
+
 /// Close a file that may have no name left, without making the caller wait
-/// (FDS-STORAGE.EXECUTOR-03).
+/// (FDS-STORAGE.EXECUTOR-04).
 ///
 /// Closing such a file frees its storage, and for a large file that can take
 /// a long time. The callers cannot wait: `Drop` implementations, and the

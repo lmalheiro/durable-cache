@@ -17,7 +17,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::FileExt;
+use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -59,7 +59,8 @@ pub struct FsMissHandler {
     cache: &'static FsCache,
     /// The temporary. Shared so each body write can run on the blocking
     /// pool; only this handler ever writes to it. Taken only as the handler
-    /// is dropped, to be closed off the dropping thread (see `Drop`).
+    /// is dropped, to be closed off the dropping thread (see `Drop`), or as
+    /// a store finished on a worker closes its record.
     file: Option<Arc<File>>,
     temp_path: PathBuf,
     canonical_path: PathBuf,
@@ -98,7 +99,7 @@ impl FsMissHandler {
     /// The CPU-only half of opening a store for `key`: hashing the key and
     /// serialising the metadata. Split out so the borrowed
     /// `CacheKey`/`CacheMeta` stay on the caller's side and only owned bytes
-    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-03).
+    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-04).
     pub(crate) fn prepare(
         cache: &'static FsCache,
         key: &CacheKey,
@@ -191,11 +192,26 @@ impl FsMissHandler {
         })
     }
 
+    /// Close the published record's handle on the worker that finished the
+    /// store, unless the record has lost its name since, as when a purge
+    /// removed it: its close would then free its storage, so it goes to the
+    /// pool (FDS-STORAGE.EXECUTOR-04).
+    fn close_published_file(&mut self) {
+        let Some(file) = self.file.take().and_then(|f| Arc::try_unwrap(f).ok()) else {
+            return;
+        };
+        if file.metadata().is_ok_and(|meta| meta.nlink() > 0) {
+            drop(file);
+        } else {
+            blocking::close_removed_file(file, self.cache, &self.canonical_path);
+        }
+    }
+
     /// The temporary's handle.
     fn file(&self) -> &Arc<File> {
         self.file
             .as_ref()
-            .expect("the temporary is taken only as the handler is dropped")
+            .expect("the temporary is taken only once the store is done with it")
     }
 
     /// Rename the temporary over the canonical name. The caller holds the
@@ -251,8 +267,10 @@ impl FsMissHandler {
 
     /// Write the last chunk if it was kept, patch the header, synchronise,
     /// and publish. Returns the record size: the published file's full
-    /// length (FRE-COMPAT.EVICTION-01).
-    fn finish_inner(&mut self) -> Result<u64> {
+    /// length (FRE-COMPAT.EVICTION-01). `on_worker` says where it runs: on
+    /// an async worker, in an inline slot (ADR-STORAGE.INLINEWRITES-01), or
+    /// on the blocking pool.
+    fn finish_inner(&mut self, on_worker: bool) -> Result<u64> {
         if self.failed {
             return self.already_failed();
         }
@@ -345,7 +363,14 @@ impl FsMissHandler {
                 &self.canonical_path,
             );
         }
-        drop(replaced);
+        // Closing the replaced record frees its storage, which can take long
+        // for a large record: not on a worker.
+        match replaced {
+            Some(file) if on_worker => {
+                blocking::close_removed_file(file, self.cache, &self.canonical_path)
+            }
+            replaced => drop(replaced),
+        }
         if ended_by_purge {
             // An error, so that `HttpCache` admits nothing to its eviction
             // manager, and lets the requests waiting on its cache lock retry
@@ -418,7 +443,7 @@ impl HandleMiss for FsMissHandler {
         }
         // Folding the chunk into the running checksum is pure CPU, so it
         // stays here; the write behind it is a syscall and does not
-        // (FDS-STORAGE.EXECUTOR-03).
+        // (FDS-STORAGE.EXECUTOR-04).
         #[cfg(feature = "body-crc")]
         {
             self.body_crc = crc32c::crc32c_append(self.body_crc, &data);
@@ -437,10 +462,14 @@ impl HandleMiss for FsMissHandler {
         let file = Arc::clone(self.file());
         let offset = self.header.body_offset() as u64 + self.body_written;
         let len = data.len() as u64;
-        #[cfg(test)]
         let cache = self.cache;
-        let result = blocking::run(move || {
-            test_hook! { cache.hooks.fault(FaultPoint::WriteTemp)?; }
+        #[cfg(test)]
+        let temp_path = self.temp_path.clone();
+        let result = blocking::run_store_op(cache, cache.store_ops_may_run_inline(), move |_| {
+            test_hook! {
+                cache.hooks.pause(crate::hooks::PausePoint::WritingBodyChunk, &temp_path);
+                cache.hooks.fault(FaultPoint::WriteTemp)?;
+            }
             Ok(file.write_all_at(&data, offset))
         })
         .await
@@ -463,16 +492,28 @@ impl HandleMiss for FsMissHandler {
         // the header, `fdatasync`s unless the configured durability skips
         // it, and renames: up to four syscalls, one of them a flush that can
         // take milliseconds on a real device. So the whole handler moves to
-        // the blocking pool (FDS-STORAGE.EXECUTOR-03), and is dropped there
+        // the blocking pool (FDS-STORAGE.EXECUTOR-04), and is dropped there
         // as the closure ends, whether the store published or failed. A
         // failed store's `Drop` aborts it and removes its temporary
         // (FRE-COMPAT.ABORTSPACE-01). A published store's closes its handle
         // on the record, which frees the record if another store has
         // replaced it, or a purge removed it, in the meantime: a close that
         // must not stall an async worker.
-        let record_len = blocking::run(move || {
+        //
+        // An unsynchronised store does all this on this worker instead, if
+        // an inline slot is free (ADR-STORAGE.INLINEWRITES-01), but not with
+        // the discard after a host restart on, which may have to write and
+        // synchronise the marker. It then closes its record as a hit does:
+        // here, unless the record lost its name meanwhile.
+        let cache = self.cache;
+        let may_run_inline = cache.store_ops_may_run_inline() && cache.marker.is_off();
+        let record_len = blocking::run_store_op(cache, may_run_inline, move |on_worker| {
             let mut handler = self;
-            handler.finish_inner()
+            let record_len = handler.finish_inner(on_worker);
+            if on_worker && handler.finished && !handler.discarded {
+                handler.close_published_file();
+            }
+            record_len
         })
         .await?;
         // This backend always writes a brand-new per-writer temporary, even
@@ -512,7 +553,7 @@ impl Drop for FsMissHandler {
         // for FDS-STORAGE.RECLAIM-01's restart-time scan instead.
         if !self.finished {
             // One of the two syscalls this backend still makes on the
-            // caller's thread (FDS-STORAGE.EXECUTOR-03). `Drop` cannot
+            // caller's thread (FDS-STORAGE.EXECUTOR-04). `Drop` cannot
             // await, and the temporary's name must be gone when the drop
             // returns (FRE-COMPAT.ABORTSPACE-01). The unlink is cheap: this
             // handler still has the file open, so it removes only the name.

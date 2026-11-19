@@ -44,6 +44,7 @@ pub struct FsCacheConfig {
     root: PathBuf,
     meta_headroom: u32,
     durability: Durability,
+    inline_write_slots: usize,
     #[cfg(target_os = "linux")]
     noatime: bool,
     #[cfg(target_os = "linux")]
@@ -59,6 +60,10 @@ impl FsCacheConfig {
     /// (FDS-STORAGE.METAUPDATE-01).
     const DEFAULT_META_HEADROOM: u32 = 512;
 
+    /// The inline write slots unless the configuration says otherwise
+    /// (ADR-STORAGE.INLINEWRITES-01).
+    const DEFAULT_INLINE_WRITE_SLOTS: usize = 3;
+
     /// A configuration for a cache rooted at `root` that reserves
     /// `meta_headroom` bytes of growth room in each record's metadata
     /// region. Passing `None` selects the design's default, 512 bytes.
@@ -68,6 +73,7 @@ impl FsCacheConfig {
             root: root.into(),
             meta_headroom,
             durability: Durability::default(),
+            inline_write_slots: Self::DEFAULT_INLINE_WRITE_SLOTS,
             #[cfg(target_os = "linux")]
             noatime: true,
             #[cfg(target_os = "linux")]
@@ -83,6 +89,26 @@ impl FsCacheConfig {
     /// published; [`Durability::Strict`] unless chosen otherwise.
     pub fn with_durability(mut self, durability: Durability) -> Self {
         self.durability = durability;
+        self
+    }
+
+    /// Choose how many operations of unsynchronised stores
+    /// ([`Durability::NoStoreSync`]) may run at once on the async workers
+    /// that poll them, rather than on the blocking pool: creating a store's
+    /// temporary, writing it, and renaming it, each saving a handoff to the
+    /// pool. 3 unless chosen otherwise; 0 sends them all to the pool.
+    ///
+    /// Such a write waits for no device unless the kernel throttles writers,
+    /// as it does once the host's dirty data passes its limit; a worker
+    /// inside one then stalls every task it holds. So at most the runtime's
+    /// workers less one run at once, whatever this asks: a runtime of one
+    /// worker, Pingora's default, runs none, and nor does one with work
+    /// stealing off. The backend logs, once, when it uses fewer slots than
+    /// asked. With the discard after a host restart on, publishing a store
+    /// stays on the pool, since it may have to write the marker
+    /// (ADR-STORAGE.INLINEWRITES-01).
+    pub fn with_inline_write_slots(mut self, slots: usize) -> Self {
+        self.inline_write_slots = slots;
         self
     }
 
@@ -111,7 +137,7 @@ impl FsCacheConfig {
     /// pool. A lookup opens the record with `openat2` and `RESOLVE_CACHED`
     /// (Linux 5.12), and reads it with `preadv2` and `RWF_NOWAIT`, which
     /// fail rather than wait for the device; whatever would wait goes to the
-    /// pool (FDS-STORAGE.EXECUTOR-03).
+    /// pool (FDS-STORAGE.EXECUTOR-04).
     ///
     /// The kernel and the cache's file system must support both calls:
     /// ext4, XFS and btrfs do; as of Linux 6.12, tmpfs and overlayfs, the
@@ -184,6 +210,13 @@ impl FsCacheConfig {
         self.durability
     }
 
+    /// How many operations of unsynchronised stores may run on the async
+    /// workers at once; see [`Self::with_inline_write_slots`].
+    #[inline]
+    pub fn inline_write_slots(&self) -> usize {
+        self.inline_write_slots
+    }
+
     /// Whether records are opened without updating their access time; see
     /// [`Self::with_noatime`].
     #[cfg(target_os = "linux")]
@@ -228,6 +261,13 @@ impl FsCacheConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn three_inline_write_slots_unless_chosen_otherwise() {
+        let config = FsCacheConfig::new("/x", None);
+        assert_eq!(config.inline_write_slots(), 3);
+        assert_eq!(config.with_inline_write_slots(0).inline_write_slots(), 0);
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

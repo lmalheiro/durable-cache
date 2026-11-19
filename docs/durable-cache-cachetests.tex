@@ -1,7 +1,7 @@
 This appendix details
 \href{https://github.com/http-tests/cache-tests}{\texttt{http-tests/cache-tests}},
 the external test suite the compliance test-case chapter's opening note
-relies on for \reqref{TC-COMPLIANCE.RFC-01}. It covers what the suite is, how
+relies on for \reqref{TC-COMPLIANCE.RFC-02}. It covers what the suite is, how
 it is structured, and exactly which parts of it cover which
 \texttt{FRE-COMPLIANCE.*} requirement --- and which parts do not, so its
 adoption is not mistaken for retiring the hand-written test cases it
@@ -25,7 +25,7 @@ observation-only outcomes where the specification leaves room for
 implementation choice. That framing matters here: a reported failure does not,
 on its own, distinguish a deviation the file-system backend introduced from a
 pre-existing gap in the (admittedly incomplete) RFC~9111 conformance of
-\texttt{pingora-cache} itself. \reqref{TC-COMPLIANCE.RFC-01} therefore never takes the
+\texttt{pingora-cache} itself. \reqref{TC-COMPLIANCE.RFC-02} therefore never takes the
 suite's verdict on its own: it runs the suite against the same proxy with the
 stock \texttt{MemCache} as a reference, and counts only outcomes that are
 worse with the file-system backend.
