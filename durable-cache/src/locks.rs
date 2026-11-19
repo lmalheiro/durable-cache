@@ -83,7 +83,6 @@
 //! to one directory only during a hot upgrade, before the old one becomes
 //! read-only, and FDS-STORAGE.METAUPDATE-01 accepts the race there.
 
-#[cfg(debug_assertions)]
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
@@ -141,17 +140,28 @@ pub struct Change<'a> {
     _gate: RwLockReadGuard<'a, bool>,
 }
 
-#[cfg(debug_assertions)]
 thread_local! {
-    /// Whether this thread holds a [`Change`], in a debug build: the module
-    /// doc's third rule.
+    /// Whether this thread holds a [`Change`], kept in a debug build only:
+    /// the module doc's third rule, which [`assert_no_change`] checks.
     static IN_CHANGE: Cell<bool> = const { Cell::new(false) };
 }
 
-#[cfg(debug_assertions)]
+/// Record, in a debug build, whether this thread holds a change.
+fn set_in_change(held: bool) {
+    if cfg!(debug_assertions) {
+        IN_CHANGE.with(|in_change| in_change.set(held));
+    }
+}
+
+/// In a debug build, panic with `what` if this thread holds a change: the
+/// module doc's third rule.
+fn assert_no_change(what: &str) {
+    debug_assert!(!IN_CHANGE.with(Cell::get), "{what}");
+}
+
 impl Drop for Change<'_> {
     fn drop(&mut self) {
-        IN_CHANGE.with(|in_change| in_change.set(false));
+        set_in_change(false);
     }
 }
 
@@ -173,13 +183,7 @@ impl ChangeLocks {
     /// Make the backend read-only. Returns once no change that began before
     /// this call is still in progress; none can begin after it. Idempotent.
     pub fn set_read_only(&self) {
-        #[cfg(debug_assertions)]
-        IN_CHANGE.with(|in_change| {
-            assert!(
-                !in_change.get(),
-                "set_read_only called while this thread holds a change"
-            );
-        });
+        assert_no_change("set_read_only called while this thread holds a change");
         // Never poisoned today; if it is, reported and cleared as in
         // `read_gate`.
         let mut read_only = self.read_only.write().unwrap_or_else(|poisoned| {
@@ -204,8 +208,7 @@ impl ChangeLocks {
         }
         // The gate first, then the key: the module doc's first rule.
         let key = name.map(|name| self.lock_key(name));
-        #[cfg(debug_assertions)]
-        IN_CHANGE.with(|in_change| in_change.set(true));
+        set_in_change(true);
         Some(Change {
             _key: key,
             _gate: gate,
@@ -223,13 +226,7 @@ impl ChangeLocks {
     /// the stripes do. Several threads can hold the gate shared at once, so
     /// more than one of them may report it.
     fn read_gate(&self) -> RwLockReadGuard<'_, bool> {
-        #[cfg(debug_assertions)]
-        IN_CHANGE.with(|in_change| {
-            assert!(
-                !in_change.get(),
-                "entered the read-only gate while this thread holds a change"
-            );
-        });
+        assert_no_change("entered the read-only gate while this thread holds a change");
         self.read_only.read().unwrap_or_else(|poisoned| {
             log::error!("an earlier panic poisoned the read-only gate; it stays in use");
             self.read_only.clear_poison();
@@ -251,13 +248,7 @@ impl ChangeLocks {
     /// begin none until the lock is released. A debug build checks the
     /// first.
     pub fn lock_key(&self, name: &str) -> MutexGuard<'_, ()> {
-        #[cfg(debug_assertions)]
-        IN_CHANGE.with(|in_change| {
-            assert!(
-                !in_change.get(),
-                "took a key's lock while this thread holds a change"
-            );
-        });
+        assert_no_change("took a key's lock while this thread holds a change");
         // A panic while a stripe is held poisons it, and the stripe stays
         // usable anyway. What the lock protects is the key's files, not the
         // `()` it guards, and a panic leaves them as a crash at the same
