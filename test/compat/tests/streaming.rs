@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-COMPAT.STREAMING-01 — concurrent followers stream the most-recently-opened writer's bytes as they land.
+//! TC-COMPAT.STREAMING-02 — concurrent followers stream the most-recently-opened writer's bytes as they land.
 //!
 //! Steps 1-6 (partial-hit resolution to the most recently opened writer,
 //! prompt per-chunk delivery, validity across the concluding rename) are
@@ -19,10 +19,10 @@ use durable_cache_mock_origin::script::{Chunk, Scenario};
 use durable_cache_mock_origin::MockOrigin;
 use futures_util::StreamExt;
 
-// IMP-TC.COMPAT.STREAMING-01: satisfy TC-COMPAT.STREAMING-01
+// IMP-TC.COMPAT.STREAMING-02: satisfy TC-COMPAT.STREAMING-02
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tc_compat_streaming_01_followers_never_cause_a_second_upstream_fetch() {
+async fn tc_compat_streaming_02_followers_never_cause_a_second_upstream_fetch() {
     let origin = MockOrigin::spawn()
         .await
         .expect("failed to bind mock-origin");

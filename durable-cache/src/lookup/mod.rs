@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `Storage::lookup` / `HandleHit` — the read side
-//! (SDS-LAYOUT.OBJECTFILE-02, FDS-STORAGE.PARTIAL-01).
+//! (SDS-LAYOUT.OBJECTFILE-03, FDS-STORAGE.PARTIAL-02).
 //!
 //! A store in flight takes precedence over the published record: a lookup is
 //! answered with a partial hit of the most recently opened store of the key
@@ -51,10 +51,10 @@ use crate::inflight::{InFlightWriter, WriteOutcome};
 use crate::record::{self, ReadError, RecordError, RecordKind};
 use crate::{blocking, key_codec, platform, FsCache};
 
-// IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-02 -- the read
+// IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-03 -- the read
 // protocol (validation order, retry, optional body check, seek); miss.rs's
-// IMP-STORAGE.PUBLISH-02 covers the writer half.
-// IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
+// IMP-STORAGE.PUBLISH-03 covers the writer half.
+// IMP-STORAGE.PARTIAL-02: satisfy FDS-STORAGE.PARTIAL-02
 
 /// What an operation tried on the worker (`page_cache`) came to.
 #[cfg_attr(
@@ -99,7 +99,7 @@ enum ReadSource {
         prefetched: Bytes,
     },
     /// The temporary of a store still in flight: a partial hit, whose body
-    /// grows while it is read (FDS-STORAGE.PARTIAL-01).
+    /// grows while it is read (FDS-STORAGE.PARTIAL-02).
     Partial {
         /// The store, whose valid length says how much body can be read.
         writer: Arc<InFlightWriter>,
@@ -113,7 +113,7 @@ enum ReadSource {
 
 pub struct FsHitHandler {
     /// Shared so a blocking read can own a handle without reopening the file
-    /// (FDS-STORAGE.EXECUTOR-02). `read_exact_at` takes `&self`, so a shared
+    /// (FDS-STORAGE.EXECUTOR-03). `read_exact_at` takes `&self`, so a shared
     /// descriptor is all a reader ever needs. Taken only as the handler is
     /// dropped, to close it where its close cannot stall an async worker
     /// (see `Drop`).
@@ -208,7 +208,7 @@ pub(crate) async fn lookup(
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
-    // (FDS-STORAGE.EXECUTOR-02).
+    // (FDS-STORAGE.EXECUTOR-03).
     test_hook! { cache.hooks.count_handoff(); }
     blocking::run(move || open_published(cache, &name, canonical, &key_bytes, opened)).await
 }
@@ -241,7 +241,7 @@ fn open_published(
     // Every in-place update holds the key's publication lock from its first
     // write to its last, so one more read under that lock finds the record
     // whole, before or after the update, and a mismatch then is damage
-    // (SDS-LAYOUT.OBJECTFILE-02). A lookup changes nothing, so it takes the
+    // (SDS-LAYOUT.OBJECTFILE-03). A lookup changes nothing, so it takes the
     // lock alone, without entering the read-only gate, and it holds no
     // change meanwhile, as `ChangeLocks::lock_key` requires.
     if matches!(&read, Err(ReadError::Record(e)) if e.is_retryable()) {
@@ -392,7 +392,7 @@ fn partial_hit(
 /// Linux from the page cache on this worker first, when the configuration
 /// asks (`page_cache`); on the blocking pool otherwise, as a body read is a
 /// `pread` that may reach the device, which must not run on the worker
-/// driving other connections (FDS-STORAGE.EXECUTOR-02).
+/// driving other connections (FDS-STORAGE.EXECUTOR-03).
 async fn fill(
     cache: &FsCache,
     file: &Arc<File>,
@@ -534,7 +534,7 @@ impl HandleHit for FsHitHandler {
     }
 
     /// A published record supports seeking; a partial hit does not
-    /// (FDS-STORAGE.PARTIAL-01).
+    /// (FDS-STORAGE.PARTIAL-02).
     fn can_seek(&self) -> bool {
         matches!(self.source, ReadSource::Complete { .. })
     }
@@ -633,7 +633,7 @@ impl HandleHit for FsHitHandler {
 
 impl Drop for FsHitHandler {
     /// Close the file this hit read, on the blocking pool when the close
-    /// would free it (FDS-STORAGE.EXECUTOR-02).
+    /// would free it (FDS-STORAGE.EXECUTOR-03).
     ///
     /// A file's storage is freed when its last name and its last descriptor
     /// are both gone, and freeing can take a long time for a large file. A

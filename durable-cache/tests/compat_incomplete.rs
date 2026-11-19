@@ -91,7 +91,7 @@ async fn tc_compliance_incomplete_01_aborted_store_is_never_served() {
 /// A damaged record is a miss, and the lookup leaves it where it is: a later
 /// store of the same key replaces it, and the restart-time scan reclaims it,
 /// so a lookup never unlinks a path whose content may have changed since it
-/// opened it (SDS-LAYOUT.OBJECTFILE-02).
+/// opened it (SDS-LAYOUT.OBJECTFILE-03).
 #[tokio::test]
 async fn tc_compliance_incomplete_01_damaged_record_is_a_miss_and_left_for_the_scan() {
     let (cache, tmp) = support::leaked_cache();

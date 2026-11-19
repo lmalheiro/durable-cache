@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The steps that publish a record, and that clean up around it
-//! (FDS-STORAGE.PUBLISH-02, ADR-STORAGE.ATOMICPUBLISH-01,
+//! (FDS-STORAGE.PUBLISH-03, ADR-STORAGE.ATOMICPUBLISH-01,
 //! ADR-PERSISTENCE.DURABILITY-02).
 //!
 //! A store ([`crate::miss`]) writes a temporary in the canonical name's own

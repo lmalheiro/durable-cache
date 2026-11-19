@@ -32,7 +32,7 @@ use crate::{format, key_codec, metrics, FsCache};
 
 /// What [`prepare`] hands to [`update_meta`]: owned, `Send` data, so the
 /// update's file work can run on the blocking pool
-/// (FDS-STORAGE.EXECUTOR-02).
+/// (FDS-STORAGE.EXECUTOR-03).
 pub(crate) struct PreparedUpdate {
     name: String,
     key_bytes: Vec<u8>,
@@ -107,7 +107,7 @@ pub(crate) fn update_meta(cache: &'static FsCache, prepared: PreparedUpdate) -> 
     //
     // A lookup does not take the lock to read. It re-reads instead, and
     // takes the lock only for a last read when the checksums keep failing
-    // (SDS-LAYOUT.OBJECTFILE-02).
+    // (SDS-LAYOUT.OBJECTFILE-03).
     test_hook! { cache.hooks.pause(PausePoint::UpdateBeforeLock, &canonical); }
     let Some(_change) = cache.locks.begin(&name) else {
         return refuse_read_only(Op::UpdateMeta);
@@ -217,7 +217,7 @@ fn shortfall(parsed: &ParsedRecord, new_internal: &[u8], new_header: &[u8]) -> R
 /// describes the other's region, which no reader could accept
 /// (FRE-COMPLIANCE.METAATOMIC-01). A lookup that finds the record between
 /// the two writes re-reads, and at last waits for the lock
-/// (SDS-LAYOUT.OBJECTFILE-02). The segments must fit the region
+/// (SDS-LAYOUT.OBJECTFILE-03). The segments must fit the region
 /// ([`shortfall`]).
 ///
 /// Nothing is synchronised: after a host crash the region holds the old
@@ -256,7 +256,7 @@ pub(crate) fn write_in_place(
         .or_err(ErrorType::InternalError, "encoding the record header")?;
 
     // The header block is the commit point. A reader catching it mid-write
-    // sees a CRC mismatch and re-reads (SDS-LAYOUT.OBJECTFILE-02), so it
+    // sees a CRC mismatch and re-reads (SDS-LAYOUT.OBJECTFILE-03), so it
     // observes the pre- or post-update set, never a mixture.
     file.write_all_at(header.as_bytes(), 0).or_err(
         ErrorType::FileWriteError,
@@ -264,7 +264,7 @@ pub(crate) fn write_in_place(
     )
 }
 
-/// Withdraw the record (SDS-LAYOUT.OBJECTFILE-02): rewrite only its header,
+/// Withdraw the record (SDS-LAYOUT.OBJECTFILE-03): rewrite only its header,
 /// marked withdrawn, with the key's publication lock held by the caller.
 /// Every lookup then misses, so the next request fetches the object again,
 /// and its store, sized for the new metadata, replaces the file. Until then

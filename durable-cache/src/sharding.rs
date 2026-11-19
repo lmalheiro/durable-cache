@@ -117,7 +117,7 @@ pub fn shard_path(root: &Path, name: &str) -> Result<PathBuf, ShardKeyError> {
 }
 
 /// Build a per-writer temporary's path in the same shard directory as its
-/// eventual canonical name (FDS-STORAGE.PUBLISH-02): the temporary is never
+/// eventual canonical name (FDS-STORAGE.PUBLISH-03): the temporary is never
 /// staged elsewhere, so the publishing rename is atomic by construction.
 ///
 /// Built from [`shard_dir`] directly rather than from the canonical path's

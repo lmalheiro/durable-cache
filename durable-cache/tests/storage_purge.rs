@@ -617,7 +617,7 @@ async fn a_purge_frees_the_record_after_releasing_the_lock() {
 /// A hit can hold the last descriptor of a record purged while it was read,
 /// and closing that descriptor frees the record. The hit's handler, dropped
 /// on an async worker under Pingora, makes that close on the blocking pool
-/// (FDS-STORAGE.EXECUTOR-02). Held just before the close, the drop has
+/// (FDS-STORAGE.EXECUTOR-03). Held just before the close, the drop has
 /// already returned and the record is still open; released, it is closed.
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

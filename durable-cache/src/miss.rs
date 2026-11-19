@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `Storage::get_miss_handler` / `HandleMiss` — the write side
-//! (FDS-STORAGE.PUBLISH-02).
+//! (FDS-STORAGE.PUBLISH-03).
 //!
 //! A store writes its own per-writer temporary in the canonical name's own
 //! directory: the header, key, and metadata region when the miss handler
@@ -37,7 +37,7 @@ use crate::inflight::{InFlightWriter, WriteOutcome};
 use crate::{blocking, key_codec, publish, sharding, Durability, FsCache};
 
 /// How many counter values a store tries before giving up on finding a free
-/// temporary name (FDS-STORAGE.PUBLISH-02, "advance the counter and retry").
+/// temporary name (FDS-STORAGE.PUBLISH-03, "advance the counter and retry").
 /// A name carries this instance's own identity and counter, so no other
 /// store of this backend can hold it: only a file something else put there
 /// under such a name can, and each retry steps past one. Sixteen in a row
@@ -53,7 +53,7 @@ pub(crate) struct PreparedStore {
     header_bytes: Vec<u8>,
 }
 
-// IMP-STORAGE.PUBLISH-02: satisfy FDS-STORAGE.PUBLISH-02
+// IMP-STORAGE.PUBLISH-03: satisfy FDS-STORAGE.PUBLISH-03
 pub struct FsMissHandler {
     cache: &'static FsCache,
     /// The temporary. Shared so each body write can run on the blocking
@@ -69,7 +69,7 @@ pub struct FsMissHandler {
     /// `body-crc` feature.
     body_crc: u32,
     /// Body bytes written to the temporary so far. Every chunk is written
-    /// before its `write_body` returns (FRE-COMPAT.UNSIZED-01).
+    /// before its `write_body` returns (FRE-COMPAT.UNSIZED-02).
     body_written: u64,
     writer: Arc<InFlightWriter>,
     /// The tag `pingora-cache` passes back when the request that opened this
@@ -91,7 +91,7 @@ impl FsMissHandler {
     /// The CPU-only half of opening a store for `key`: hashing the key and
     /// serialising the metadata. Split out so the borrowed
     /// `CacheKey`/`CacheMeta` stay on the caller's side and only owned bytes
-    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-02).
+    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-03).
     pub(crate) fn prepare(
         cache: &'static FsCache,
         key: &CacheKey,
@@ -371,15 +371,15 @@ impl HandleMiss for FsMissHandler {
         }
         // Folding the chunk into the running checksum is pure CPU, so it
         // stays here; the write behind it is a syscall and does not
-        // (FDS-STORAGE.EXECUTOR-02).
+        // (FDS-STORAGE.EXECUTOR-03).
         #[cfg(feature = "body-crc")]
         {
             self.body_crc = crc32c::crc32c_append(self.body_crc, &data);
         }
         // Every chunk is written before this call returns, and only then
         // made readable: the store holds no body bytes beyond the chunk in
-        // hand (FRE-COMPAT.UNSIZED-01), and a partial-hit reader sees each
-        // one as soon as it is in the file (FDS-STORAGE.PARTIAL-01).
+        // hand (FRE-COMPAT.UNSIZED-02), and a partial-hit reader sees each
+        // one as soon as it is in the file (FDS-STORAGE.PARTIAL-02).
         let file = Arc::clone(self.file());
         let offset = self.header.body_offset() as u64 + self.body_written;
         let len = data.len() as u64;
@@ -409,7 +409,7 @@ impl HandleMiss for FsMissHandler {
         // durability skips it, and renames: up to three syscalls, one of
         // them a flush that can take milliseconds on a real device. So the
         // whole handler moves to the blocking pool
-        // (FDS-STORAGE.EXECUTOR-02), and is dropped there as the closure
+        // (FDS-STORAGE.EXECUTOR-03), and is dropped there as the closure
         // ends, whether the store published or failed. A failed store's
         // `Drop` aborts it and removes its temporary
         // (FRE-COMPAT.ABORTSPACE-01). A published store's closes its handle
@@ -458,7 +458,7 @@ impl Drop for FsMissHandler {
         // for FDS-STORAGE.RECLAIM-01's restart-time scan instead.
         if !self.finished {
             // One of the two syscalls this backend still makes on the
-            // caller's thread (FDS-STORAGE.EXECUTOR-02). `Drop` cannot
+            // caller's thread (FDS-STORAGE.EXECUTOR-03). `Drop` cannot
             // await, and the temporary's name must be gone when the drop
             // returns (FRE-COMPAT.ABORTSPACE-01). The unlink is cheap: this
             // handler still has the file open, so it removes only the name.

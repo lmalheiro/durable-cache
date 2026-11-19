@@ -113,7 +113,7 @@ struct Cli {
 
     /// `ServerConf::max_blocking_threads`: the most threads the proxy
     /// service's blocking pool may run, where the backend does its file
-    /// I/O (FDS-STORAGE.EXECUTOR-02). Unset keeps Tokio's 512; a benchmark
+    /// I/O (FDS-STORAGE.EXECUTOR-03). Unset keeps Tokio's 512; a benchmark
     /// varies it to see what the pool's size costs.
     #[arg(long)]
     max_blocking_threads: Option<usize>,

@@ -2,7 +2,7 @@
 % Stage 2 -- High-Level Refinement.
 % =====================================================================
 
-\begin{requirement}{FRE-COMPAT.UNSIZED-01}[draft][functionalRequirement]{Bodies of unknown length}
+\begin{requirement}{FRE-COMPAT.UNSIZED-02}[draft][functionalRequirement]{Bodies of unknown length}
 
   \localreqdiagram*{rfrunsized01}{\reqid}{\reqdesc}
 
@@ -282,7 +282,7 @@
   download for every concurrent client. Advertising the flag is what lets
   followers reach the partial hits of \reqref{FRE-COMPAT.STREAMING-01} at all,
   so the flag is only truthful together with that requirement,
-  \reqref{FRE-COMPAT.STREAMDELIVERY-01}, and \reqref{FRE-COMPAT.STREAMEND-01}.
+  \reqref{FRE-COMPAT.STREAMDELIVERY-02}, and \reqref{FRE-COMPAT.STREAMEND-01}.
 
   \textit{Basis: the \texttt{Storage} trait's
   \texttt{support\_streaming\_partial\_write}
@@ -320,7 +320,7 @@
   \texttt{pingora-cache} permits several stores of one key to be in flight at
   once; resolving to the most recently opened one gives a follower the
   freshest response the cache is fetching. What the partial hit's reader
-  delivers, and when, is stated in \reqref{FRE-COMPAT.STREAMDELIVERY-01} and
+  delivers, and when, is stated in \reqref{FRE-COMPAT.STREAMDELIVERY-02} and
   \reqref{FRE-COMPAT.STREAMEND-01}; what it owes when the store aborts, in
   \reqref{FRE-COMPLIANCE.PARTIALABORT-01}.
 
@@ -335,14 +335,14 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
-  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify the in-flight write
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify the in-flight write
   registry, the lookup order (in-flight write before the published record),
   and the most-recently-opened tie-break.}
 
   \deriveReqt{HLR-COMPAT.PINGORA-01}
 \end{requirement}
 
-\begin{requirement}{FRE-COMPAT.STREAMDELIVERY-01}[draft][performanceRequirement]{Partial-hit chunk delivery}
+\begin{requirement}{FRE-COMPAT.STREAMDELIVERY-02}[draft][performanceRequirement]{Partial-hit chunk delivery}
 
   \localreqdiagram*{rfrstreamdelivery01}{\reqid}{\reqdesc}
 
@@ -357,7 +357,7 @@
   the bound applies on a host that is not CPU-saturated. The follower thus
   streams the body as the leader writes it, without waiting for the store to
   finish. The last chunk is the exception: the backend may keep it until
-  \texttt{finish} writes it (\reqref{FRE-COMPAT.UNSIZED-01}), and
+  \texttt{finish} writes it (\reqref{FRE-COMPAT.UNSIZED-02}), and
   \texttt{pingora-cache} calls \texttt{finish} as soon as the
   \texttt{write\_body} call that ends the body
   returns.\footnote{\pgsrc{pingora-proxy/src/proxy_cache.rs}{585}{\texttt{HttpProxy::cache\_http\_task}}
@@ -372,7 +372,7 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
-  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify how a reader learns of
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify how a reader learns of
   each appended chunk so that it can deliver the chunk within the latency
   bound.}
 
@@ -399,7 +399,7 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqcover{verify}{TC}
-  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-01}{Specify how each reader
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify how each reader
   delivers the remainder and ends normally on completion, and why its
   reader stays valid across the object's durable publication.}
 
@@ -453,7 +453,7 @@
 
   The backend meets this without tying its records to any Pingora release.
   Each record carries the backend's \emph{own} format version
-  (\reqref{SDS-LAYOUT.OBJECTFILE-02}), which the backend changes whenever
+  (\reqref{SDS-LAYOUT.OBJECTFILE-03}), which the backend changes whenever
   records written before would no longer be read back exactly: a change to
   its own layout, or a \texttt{pingora-cache} release whose encoding of the
   metadata differs. A record of another version is reported as a miss. A
@@ -502,7 +502,7 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-02}{Specify how a failed write or
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify how a failed write or
   sync during a store is detected and surfaced as an error from the call in
   progress, and that the store is then treated as aborted.}
   \reqcover{verify}{TC}
@@ -529,7 +529,7 @@
   large file's storage can take a long time, so it may complete
   shortly after the drop, away from the thread that dropped the handler; a
   reader still streaming the store keeps the storage until it finishes
-  (\reqref{FDS-STORAGE.PARTIAL-01}). The stock
+  (\reqref{FDS-STORAGE.PARTIAL-02}). The stock
   backend releases an unfinished write the same
   way.\footnote{\pgsrc{pingora-cache/src/memory.rs}{291}{\texttt{Drop for MemMissHandler}}
   removes the handler's in-flight write.} A process crash is different ---
@@ -538,7 +538,7 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-02}{Specify that an unpublished
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify that an unpublished
   store's per-writer temporary is unlinked when the store ends, including on
   abort and on write failure, and how attached partial-hit readers are
   unaffected by that unlink.}
@@ -651,7 +651,7 @@
   durably (\reqref{HLR-PERSISTENCE.DURABLE-01}), this is a first version
   that favours the simplest adequate design (\reqref{HLR-SCOPE.V1-02}),
   and a body arrives as a stream whose total length is unknown when
-  writing begins (\reqref{FRE-COMPAT.UNSIZED-01}). The choice is
+  writing begins (\reqref{FRE-COMPAT.UNSIZED-02}). The choice is
   twofold: which storage substrate to build on, and whether to adopt an
   established storage engine or write the storage layer ourselves.
 
@@ -728,7 +728,7 @@
       record packing and crash consistency come built in, and the pure-Rust
       engines remove the FFI cost as well, but their unit of storage is the
       record --- a body streaming in with unknown length
-      (\reqref{FRE-COMPAT.UNSIZED-01}) must be chunked into records by the
+      (\reqref{FRE-COMPAT.UNSIZED-02}) must be chunked into records by the
       application --- and streaming partial hits
       (\reqref{FRE-COMPAT.STREAMING-01}) need the same in-memory
       coordination beside the store anyway. Cross-process use during a hot
@@ -800,7 +800,7 @@
   \satisfy{HLR-PERSISTENCE.DURABLE-01}
   \satisfy{HLR-PERSISTENCE.CAPACITY-01}
   \satisfy{HLR-SCOPE.V1-02}
-  \satisfy{FRE-COMPAT.UNSIZED-01}
+  \satisfy{FRE-COMPAT.UNSIZED-02}
   \trace{FRE-COMPAT.HOTUPGRADE-01}
   \trace{FRE-COMPAT.EVICTION-01}
   \trace{FRE-COMPLIANCE.INCOMPLETE-02}

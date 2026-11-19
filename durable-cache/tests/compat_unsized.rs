@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-COMPAT.UNSIZED-01 — Unsized body accepted and persisted.
+//! TC-COMPAT.UNSIZED-02 — Unsized body accepted and persisted.
 //!
 //! Every clause of this TC's expected result — no size declared, reserved,
 //! or bounded ahead of the bytes; persisted length exactly equal to the
@@ -20,7 +20,7 @@ use pingora_cache::storage::Storage;
 
 use super::support;
 
-// IMP-TC.COMPAT.UNSIZED-01: satisfy TC-COMPAT.UNSIZED-01
+// IMP-TC.COMPAT.UNSIZED-02: satisfy TC-COMPAT.UNSIZED-02
 
 async fn store_and_verify(name: &str, chunks: &[&[u8]]) {
     let (cache, _tmp) = support::leaked_cache();
@@ -34,7 +34,7 @@ async fn store_and_verify(name: &str, chunks: &[&[u8]]) {
         let eof = i == chunks.len() - 1;
         // No Content-Length is ever passed to get_miss_handler or write_body
         // — the total length is learned only once the last chunk lands,
-        // exactly as FRE-COMPAT.UNSIZED-01 requires.
+        // exactly as FRE-COMPAT.UNSIZED-02 requires.
         handler
             .write_body(Bytes::copy_from_slice(chunk), eof)
             .await
@@ -50,7 +50,7 @@ async fn store_and_verify(name: &str, chunks: &[&[u8]]) {
 }
 
 #[tokio::test]
-async fn tc_compat_unsized_01_irregular_chunk_sizes() {
+async fn tc_compat_unsized_02_irregular_chunk_sizes() {
     store_and_verify(
         "/unsized-irregular",
         &[b"a", b"", b"bcdefg", b"h", b"ijklmnopqrstuvwxyz"],
@@ -59,7 +59,7 @@ async fn tc_compat_unsized_01_irregular_chunk_sizes() {
 }
 
 #[tokio::test]
-async fn tc_compat_unsized_01_empty_body() {
+async fn tc_compat_unsized_02_empty_body() {
     // A single empty final chunk — `pingora-cache` always calls `write_body`
     // at least once, with `eof` set on the last (here, only) call, even for
     // a zero-length body.
@@ -72,7 +72,7 @@ async fn tc_compat_unsized_01_empty_body() {
 /// exactly the body bytes accepted so far, so nothing is held back in
 /// memory.
 #[tokio::test]
-async fn tc_compat_unsized_01_every_chunk_is_written_before_write_body_returns() {
+async fn tc_compat_unsized_02_every_chunk_is_written_before_write_body_returns() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/unsized-write-through");
     let meta = support::meta();
@@ -107,7 +107,7 @@ async fn tc_compat_unsized_01_every_chunk_is_written_before_write_body_returns()
 }
 
 #[tokio::test]
-async fn tc_compat_unsized_01_multi_block_body() {
+async fn tc_compat_unsized_02_multi_block_body() {
     // Comfortably spans typical 4 KiB file-system block boundaries.
     let big_chunk = vec![0xABu8; 9000];
     let chunks: Vec<&[u8]> = vec![

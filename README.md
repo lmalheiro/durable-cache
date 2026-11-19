@@ -109,7 +109,7 @@ identical path.
 
 **Threads.** Every storage operation is a blocking syscall, so the backend
 runs each one on tokio's blocking pool rather than on the worker Pingora
-polls it from (ADR-STORAGE.EXECUTOR-02). That matters because
+polls it from (ADR-STORAGE.EXECUTOR-03). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
 or a page-cache miss. On Linux, hits are the exception when what they read
@@ -550,7 +550,7 @@ them are inspired by SysML® requirement diagrams, without following them
 strictly. Source files carry `IMP-<ID>` marker comments:
 
 ```rust
-// IMP-STORAGE.PUBLISH-02: satisfy FDS-STORAGE.PUBLISH-02
+// IMP-STORAGE.PUBLISH-03: satisfy FDS-STORAGE.PUBLISH-03
 ```
 
 `reqman-report.py` extracts those during the document build, so the
@@ -595,7 +595,7 @@ To query a requirement without reading LaTeX:
 
 ```bash
 python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
-    durable-cache FDS-STORAGE.PUBLISH-02
+    durable-cache FDS-STORAGE.PUBLISH-03
 ```
 
 A pull request that changes what an existing requirement says gives it its

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The in-flight registry backing streaming partial hits
-//! (FDS-STORAGE.PARTIAL-01).
+//! (FDS-STORAGE.PARTIAL-02).
 //!
 //! The file system does not signal appends, so a partial hit's reader needs
 //! the store's valid length and a notification beside the file. A store
