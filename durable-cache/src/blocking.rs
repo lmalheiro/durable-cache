@@ -27,12 +27,10 @@
 //! again from the start, and the rest of a body read.
 
 use std::fs::File;
-#[cfg(test)]
-use std::path::PathBuf;
+use std::path::Path;
 
 use pingora_error::{Error, ErrorType, Result};
 
-#[cfg(test)]
 use crate::FsCache;
 
 // IMP-STORAGE.EXECUTOR-02: satisfy FDS-STORAGE.EXECUTOR-02
@@ -96,13 +94,14 @@ where
 /// no thread and the operating system cannot start one, Tokio panics. A
 /// panic inside the task is not reported anywhere, even in the test build.
 ///
-/// `cache` and `path` exist only in the test build. They select the pause
-/// point `BeforeClosingRemovedFile`.
-pub(crate) fn close_removed_file(
-    file: File,
-    #[cfg(test)] cache: &'static FsCache,
-    #[cfg(test)] path: PathBuf,
-) {
+/// `cache` and `path`, the file's, select the test build's pause point
+/// `BeforeClosingRemovedFile`.
+pub(crate) fn close_removed_file(file: File, cache: &'static FsCache, path: &Path) {
+    // The pause runs on the pool, with a path of its own.
+    #[cfg(test)]
+    let path = path.to_path_buf();
+    #[cfg(not(test))]
+    let _ = (cache, path);
     let close = move || {
         test_hook! {
             cache.hooks.pause(crate::hooks::PausePoint::BeforeClosingRemovedFile, &path);

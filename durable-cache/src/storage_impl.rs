@@ -20,7 +20,6 @@ use pingora_error::{ErrorType, OrErr, Result};
 use crate::config::FsCacheConfig;
 use crate::crashdiscard::{self, Marker};
 use crate::dircache::ShardDirCache;
-#[cfg(test)]
 use crate::hooks::Hooks;
 use crate::inflight::InFlightRegistry;
 use crate::locks::ChangeLocks;
@@ -49,8 +48,8 @@ pub struct FsCache {
     /// with them switched off.
     #[cfg(target_os = "linux")]
     pub(crate) page_cache_reads: Option<crate::nowait::PageCacheReads>,
-    /// The test hooks of this instance; only in the crate's own test build.
-    #[cfg(test)]
+    /// The test hooks of this instance: an empty stand-in outside the
+    /// crate's own test build (see `crate::hooks`).
     pub(crate) hooks: Hooks,
 }
 
@@ -135,18 +134,11 @@ impl FsCache {
     /// where the caller only exits.
     pub fn new(config: FsCacheConfig) -> Result<Self> {
         let root = config.root().to_path_buf();
-        logged(
-            &root,
-            Self::build(
-                config,
-                #[cfg(test)]
-                Hooks::default(),
-            ),
-        )
+        logged(&root, Self::build(config, Hooks::default()))
     }
 
-    /// [`Self::new`], with the test build's hooks in place from the start.
-    fn build(config: FsCacheConfig, #[cfg(test)] hooks: Hooks) -> Result<Self> {
+    /// [`Self::new`], with `hooks` in place from the start.
+    fn build(config: FsCacheConfig, hooks: Hooks) -> Result<Self> {
         #[cfg(not(test))]
         let boot_id_path = std::path::Path::new(crashdiscard::BOOT_ID_PATH);
         #[cfg(test)]
@@ -159,7 +151,6 @@ impl FsCache {
             config.root(),
             crashdiscard::discard_on(&config),
             boot_id_path,
-            #[cfg(test)]
             &hooks,
         )?;
         let dir_cache = ShardDirCache::build(config.root())
@@ -197,7 +188,6 @@ impl FsCache {
             opener,
             #[cfg(target_os = "linux")]
             page_cache_reads,
-            #[cfg(test)]
             hooks,
         })
     }
@@ -260,12 +250,7 @@ impl FsCache {
     /// fails; the marker then stays.
     pub fn flush(&self) -> Result<()> {
         self.marker
-            .flush(
-                self.root(),
-                &self.lease.id(),
-                #[cfg(test)]
-                &self.hooks,
-            )
+            .flush(self.root(), &self.lease.id(), &self.hooks)
             .or_err_with(ErrorType::FileWriteError, || {
                 format!("flushing the cache under {}", self.root().display())
             })
@@ -285,16 +270,13 @@ impl FsCache {
         self.map_name(sharding::object_name(key.combined_bin(), key.user_tag()))
     }
 
-    #[cfg(test)]
+    /// `name`, or in the test build the name a test's hook maps it to.
     fn map_name(&self, name: String) -> String {
-        match &self.hooks.config.object_name {
-            Some(f) => f(&name),
-            None => name,
+        test_hook! {
+            if let Some(f) = &self.hooks.config.object_name {
+                return f(&name);
+            }
         }
-    }
-
-    #[cfg(not(test))]
-    fn map_name(&self, name: String) -> String {
         name
     }
 

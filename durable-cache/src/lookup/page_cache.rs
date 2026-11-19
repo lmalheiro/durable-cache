@@ -190,13 +190,5 @@ fn unsupported<T>(path: &Path, e: std::io::Error) -> Result<T> {
 /// a record it gives up on, as the close may free a record that a store or
 /// a purge has just removed (see `FsHitHandler`'s `Drop`).
 fn close_on_pool(file: File, cache: &'static FsCache, path: &Path) {
-    #[cfg(not(test))]
-    let _ = (cache, path);
-    blocking::close_removed_file(
-        file,
-        #[cfg(test)]
-        cache,
-        #[cfg(test)]
-        path.to_path_buf(),
-    );
+    blocking::close_removed_file(file, cache, path);
 }

@@ -738,12 +738,6 @@ impl Drop for FsHitHandler {
             drop(file);
             return;
         }
-        blocking::close_removed_file(
-            file,
-            #[cfg(test)]
-            self.cache,
-            #[cfg(test)]
-            self.path.clone(),
-        );
+        blocking::close_removed_file(file, self.cache, &self.path);
     }
 }

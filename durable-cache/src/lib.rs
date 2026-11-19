@@ -64,6 +64,17 @@ pub(crate) mod expire;
 pub(crate) mod format;
 #[cfg(test)]
 pub(crate) mod hooks;
+/// Outside this crate's own test build, the hooks are an empty stand-in, so
+/// that the code carrying an instance's hooks to the places that call them
+/// reads the same in every build. It has nothing to call: every hook call
+/// is inside `test_hook!`.
+#[cfg(not(test))]
+pub(crate) mod hooks {
+    /// The test hooks of an instance: none, and zero bytes, in this build.
+    /// Braced, so that `Hooks::default()` builds it in every build.
+    #[derive(Debug, Default)]
+    pub(crate) struct Hooks {}
+}
 pub mod hotupgrade;
 pub(crate) mod inflight;
 pub(crate) mod key_codec;

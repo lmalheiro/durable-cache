@@ -3,13 +3,17 @@
 
 //! Test hooks: the pause points, fault injection, hash injection, and
 //! instrumentation the test cases name in their Setup. The module exists
-//! only in this crate's own test build (`cfg(test)`). Every call into it is
-//! wrapped in `test_hook!`, and everything else that reaches it is a
-//! `#[cfg(test)]` item: `FsCache`'s `hooks` field, `with_test_hooks` and
-//! `hooks`, the test build's `map_name`, the test-only parameters of
-//! `close_removed_file` and of the discard's synchronisations, and the
-//! test-build line of `on_worker!` in `lookup/page_cache.rs`. So no other build contains a hook, a hook call, or
-//! anything a hook call's arguments compute.
+//! only in this crate's own test build (`cfg(test)`). Every other build has
+//! an empty, zero-sized `Hooks` in its place (in `lib.rs`), so `FsCache`'s
+//! `hooks` field and the parameters that carry it down to a hook are there
+//! in every build, and none of them needs a gate. Every call into the hooks
+//! is wrapped in `test_hook!`, the arguments it computes included, and the
+//! only other code that reaches them is `#[cfg(test)]`: `with_test_hooks`
+//! and `hooks` on `FsCache`, the test build's boot-identity path in its
+//! construction, the owned path `close_removed_file` hands its pause, and
+//! the test-build line of `on_worker!` in `lookup/page_cache.rs`. So no
+//! other build contains a hook, a hook call, or anything a hook call's
+//! arguments compute.
 //!
 //! Hooks are per [`crate::FsCache`] instance, so tests running in parallel
 //! in one binary never see each other's pauses or faults.

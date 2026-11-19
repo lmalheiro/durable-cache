@@ -96,9 +96,7 @@ pub(crate) fn expire_key(cache: &'static FsCache, key: &CompactCacheKey) -> Resu
         &parsed,
         &new_internal,
         &parsed.header_bytes,
-        #[cfg(test)]
         cache,
-        #[cfg(test)]
         &canonical,
     )?;
     Ok(PurgeOutcome::Expired)

@@ -243,28 +243,15 @@ impl FsMissHandler {
                 // Unsynchronised: with the discard after a host restart on,
                 // this instance's marker is in place before the rename
                 // (FDS-PERSISTENCE.CRASHDISCARD-01).
-                let wrote = h
-                    .cache
+                h.cache
                     .marker
-                    .ensure(
-                        h.cache.root(),
-                        &h.cache.lease.id(),
-                        #[cfg(test)]
-                        &h.cache.hooks,
-                    )
+                    .ensure(h.cache.root(), &h.cache.lease.id(), &h.cache.hooks)
                     .or_err_with(ErrorType::FileWriteError, || {
                         format!(
                             "writing the unsynchronised-store marker under {}",
                             h.cache.root().display()
                         )
                     })?;
-                test_hook! {
-                    if wrote {
-                        h.cache.hooks.count_marker_write();
-                    }
-                }
-                #[cfg(not(test))]
-                let _ = wrote;
             }
             Ok(())
         };
@@ -490,13 +477,7 @@ impl Drop for FsMissHandler {
             // stopped waiting for it, holds a reference too, and closes the
             // temporary there, last: `try_unwrap` leaves the close to it.
             if let Some(file) = self.file.take().and_then(|f| Arc::try_unwrap(f).ok()) {
-                blocking::close_removed_file(
-                    file,
-                    #[cfg(test)]
-                    self.cache,
-                    #[cfg(test)]
-                    self.temp_path.clone(),
-                );
+                blocking::close_removed_file(file, self.cache, &self.temp_path);
             }
         }
     }

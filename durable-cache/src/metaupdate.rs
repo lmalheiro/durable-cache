@@ -185,12 +185,8 @@ pub(crate) fn update_meta(cache: &'static FsCache, prepared: PreparedUpdate) -> 
     }
 
     if let Some(shortfall) = shortfall(&parsed, &new_internal, &new_header)? {
-        withdraw(
-            &file,
-            &parsed,
-            #[cfg(test)]
-            cache,
-        )?;
+        test_hook! { cache.hooks.fault(FaultPoint::WithdrawRecord)?; }
+        withdraw(&file, &parsed)?;
         report_outgrown(&canonical, shortfall);
         return Ok(false);
     }
@@ -199,9 +195,7 @@ pub(crate) fn update_meta(cache: &'static FsCache, prepared: PreparedUpdate) -> 
         &parsed,
         &new_internal,
         &new_header,
-        #[cfg(test)]
         cache,
-        #[cfg(test)]
         &canonical,
     )?;
     Ok(true)
@@ -229,14 +223,19 @@ fn shortfall(parsed: &ParsedRecord, new_internal: &[u8], new_header: &[u8]) -> R
 /// Nothing is synchronised: after a host crash the region holds the old
 /// metadata, the new, or a torn mixture, and the metadata checksum rejects
 /// the mixture (ADR-PERSISTENCE.DURABILITY-02).
+///
+/// `cache` and `canonical`, the record's path, select the test build's
+/// pause point between the two writes.
 pub(crate) fn write_in_place(
     file: &File,
     parsed: &ParsedRecord,
     new_internal: &[u8],
     new_header: &[u8],
-    #[cfg(test)] cache: &FsCache,
-    #[cfg(test)] canonical: &Path,
+    cache: &FsCache,
+    canonical: &Path,
 ) -> Result<()> {
+    #[cfg(not(test))]
+    let _ = (cache, canonical);
     let meta_start = parsed.header.meta_region_offset() as u64;
     let mut region = Vec::with_capacity(new_internal.len() + new_header.len());
     region.extend_from_slice(new_internal);
@@ -276,10 +275,9 @@ pub(crate) fn write_in_place(
 /// Nothing is synchronised, as for an update in place: a withdrawal that a
 /// host crash undoes leaves the record as it was, stale, and the next
 /// revalidation withdraws it again (ADR-PERSISTENCE.DURABILITY-02).
-fn withdraw(file: &File, parsed: &ParsedRecord, #[cfg(test)] cache: &FsCache) -> Result<()> {
+fn withdraw(file: &File, parsed: &ParsedRecord) -> Result<()> {
     let mut header = parsed.header;
     header.edit().withdraw();
-    test_hook! { cache.hooks.fault(FaultPoint::WithdrawRecord)?; }
     file.write_all_at(header.as_bytes(), 0)
         .or_err(ErrorType::FileWriteError, "withdrawing the record")
 }
