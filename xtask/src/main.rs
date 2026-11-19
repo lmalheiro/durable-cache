@@ -54,6 +54,11 @@ enum Cmd {
         /// reproducible difference from a timing-dependent one.
         #[arg(long, default_value_t = 2)]
         passes: usize,
+        /// An argument for fixture-proxy, as in `--proxy-arg=--threads=4`;
+        /// repeat it for several. Both backends take the same arguments, so
+        /// the backend stays the one difference between their runs.
+        #[arg(long = "proxy-arg", allow_hyphen_values = true)]
+        proxy_args: Vec<String>,
     },
     /// Cross-reference every TC-* ID in docs/durable-cache-requirements.json
     /// against test functions named `tc_<id>` anywhere in the workspace,
@@ -182,7 +187,8 @@ fn main() -> Result<()> {
             results_out,
             verbose,
             passes,
-        } => cache_tests(results_out.as_deref(), verbose, passes),
+            proxy_args,
+        } => cache_tests(results_out.as_deref(), verbose, passes, &proxy_args),
         Cmd::TraceReport => trace_report(),
         Cmd::Headers => check_headers(),
         Cmd::Fmt { check } => fmt(check),
@@ -309,7 +315,12 @@ fn npm_command(suite_dir: &Path, script: &str, config: &[(&str, &str)]) -> Comma
 // requirement, and this backend's own `required` failures are triaged
 // against the behaviour of pingora-cache in test/cache-tests-baseline.json,
 // where only an unallowlisted one fails the run.
-fn cache_tests(results_out: Option<&Path>, verbose: bool, passes: usize) -> Result<()> {
+fn cache_tests(
+    results_out: Option<&Path>,
+    verbose: bool,
+    passes: usize,
+    proxy_args: &[String],
+) -> Result<()> {
     let root = workspace_root()?;
     let suite_dir = root.join("third_party/cache-tests");
     if !suite_dir.join("package.json").exists() {
@@ -381,11 +392,14 @@ fn cache_tests(results_out: Option<&Path>, verbose: bool, passes: usize) -> Resu
 
     // The same proxy and the same origin for both runs: only the backend
     // differs (TC-COMPLIANCE.RFC-02's setup).
+    if !proxy_args.is_empty() {
+        println!("==> fixture-proxy arguments: {}", proxy_args.join(" "));
+    }
     let mut runs: BTreeMap<&str, Vec<serde_json::Value>> = BTreeMap::new();
     for backend in ["memcache", "fs"] {
         for pass in 1..=passes {
             println!("==> running the suite against {backend} (pass {pass}/{passes})");
-            let results = run_suite(&root, &suite_dir, backend, origin_addr)?;
+            let results = run_suite(&root, &suite_dir, backend, origin_addr, proxy_args)?;
             runs.entry(backend).or_default().push(results);
         }
     }
@@ -418,13 +432,14 @@ fn cache_tests(results_out: Option<&Path>, verbose: bool, passes: usize) -> Resu
     baseline
 }
 
-/// Start a fixture-proxy on `backend`, run the whole suite against it, and
-/// return the results JSON.
+/// Start a fixture-proxy on `backend`, with `proxy_args` besides, run the
+/// whole suite against it, and return the results JSON.
 fn run_suite(
     root: &Path,
     suite_dir: &Path,
     backend: &str,
     origin_addr: SocketAddr,
+    proxy_args: &[String],
 ) -> Result<serde_json::Value> {
     let proxy_addr = free_port()?;
     // On disk, under the target directory: page-cache reads, on by default
@@ -445,6 +460,7 @@ fn run_suite(
             .arg(cache_dir.path())
             .arg("--storage")
             .arg(backend)
+            .args(proxy_args)
             .env("RUST_LOG", "warn")
             .stdout(Stdio::null()),
     )?;

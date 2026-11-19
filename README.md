@@ -123,7 +123,9 @@ Linux 5.12 and a file system with non-blocking reads, as ext4, XFS and
 btrfs have and, as of Linux 6.12, tmpfs and overlayfs do not (overlayfs is
 the file system of a container without a volume): `FsCache::new` fails,
 and logs the error, where they are missing, and
-`with_page_cache_reads(false)` switches them off. The pool is sized by two
+`with_page_cache_reads(false)` switches them off. Stores without
+synchronisation are the other exception, within a bound (see **Inline
+writes** below). The pool is sized by two
 `ServerConf` settings: `max_blocking_threads` (unset keeps tokio's 512) and
 `blocking_threads_ttl_seconds`, how long an idle thread lives (unset keeps
 10 s). The pool's threads mostly wait on the disk, so the maximum caps how
@@ -190,6 +192,18 @@ helper flushes after making the backend read-only, and at the end of a
 shutdown's grace period; without it, call `flush` once the server has
 stopped, which `Server::run` allows and `run_forever` does not. A cache not
 flushed is emptied by the next host restart.
+
+**Inline writes.** With `Durability::NoStoreSync`, a store's opening, its
+chunk writes and its publication run on the worker that polls them, with no
+handoff to the blocking pool, while one of three inline slots is free
+(`FsCacheConfig::with_inline_write_slots`; 0 keeps them all on the pool).
+Such writes go to the page cache and seldom wait, but once the host's dirty
+data passes the kernel's limit, the kernel throttles writers, for up to
+200 ms at a time, and a worker stalls with its write. So at most the
+runtime's workers less one write at once: on Pingora's default of one worker
+(`ServerConf::threads`), or with `work_stealing` off, none do. With the
+discard after a host restart on, publication stays on the pool, since it may
+have to write the marker (ADR-STORAGE.INLINEWRITES-01).
 
 **Features.** `body-crc` (on by default) computes each body's CRC-32C as it
 is stored and records it in the header; without it (`default-features =
@@ -411,7 +425,11 @@ fails when a test ranks **lower** on this backend than on `MemCache`, which
 is the non-regression HLR-COMPLIANCE.RFC-01 asks for: the backend must add
 no deviation of its own, not fix those of `pingora-cache`. Each backend is
 run `--passes` times (2 by default), and a difference counts only when every
-pass agrees; the rest are reported as timing-dependent.
+pass agrees; the rest are reported as timing-dependent. `--proxy-arg` passes
+an argument on to the proxy on both backends: the nightly run repeats the
+comparison with `--proxy-arg=--threads=4
+--proxy-arg=--durability=no-store-sync`, where the backend writes on the
+workers, in inline slots.
 
 It also diffs this backend's own `required` failures against
 `test/cache-tests-baseline.json`, where every entry records why that failure

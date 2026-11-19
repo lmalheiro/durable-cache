@@ -45,12 +45,25 @@ jobs:
         # failure of pingora-cache itself; triage any such failure before
         # attributing it to this crate.
 
+      - name: TC-COMPLIANCE.RFC-02 — the same, unsynchronised stores on four workers
+        if: ${{ !cancelled() }}
+        run: >-
+          nix develop -c cargo xtask cache-tests --verbose
+          --proxy-arg=--threads=4 --proxy-arg=--durability=no-store-sync
+          --results-out cache-tests-results-unsynced.json
+        # Unsynchronised stores on a runtime of more than one worker run some
+        # of their file operations on the workers, in inline slots
+        # (ADR-STORAGE.INLINEWRITES-01): the differential must hold there
+        # too. Both backends run on four workers.
+
       - name: Upload cache-tests results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cache-tests-results
-          path: cache-tests-results.json
+          path: |
+            cache-tests-results.json
+            cache-tests-results-unsynced.json
 
   privileged:
     runs-on: ubuntu-latest

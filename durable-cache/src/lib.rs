@@ -167,6 +167,7 @@ mod integration_tests {
     mod persistence_crashdiscard;
     mod persistence_crashsafe;
     mod storage_expire;
+    mod storage_inlinewrites;
     #[cfg(target_os = "linux")]
     mod storage_pagecache;
     mod storage_publish;
