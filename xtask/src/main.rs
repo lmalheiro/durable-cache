@@ -139,6 +139,16 @@ enum Cmd {
         /// or `no-store-sync` for TC-PERFORMANCE.STORERATE-01.
         #[arg(long, default_value = "strict", value_parser = ["strict", "no-store-sync"])]
         durability: String,
+        /// An argument for fixture-proxy on durable-cache, as in
+        /// `--proxy-arg=--flag=value`, to compare its options; repeat it for
+        /// several. The report names them.
+        #[arg(long = "proxy-arg", allow_hyphen_values = true)]
+        proxy_args: Vec<String>,
+        /// The scenarios to run, separated by commas; all of them unless
+        /// named. The test-case verdicts need `hits` and `fills`, and
+        /// `census` needs strace.
+        #[arg(long, value_enum, value_delimiter = ',')]
+        only: Vec<bench::Scenario>,
     },
 }
 
@@ -189,6 +199,8 @@ fn main() -> Result<()> {
             connections,
             rounds,
             durability,
+            proxy_args,
+            only,
         } => bench::bench(bench::Options {
             nginx,
             oha,
@@ -200,6 +212,15 @@ fn main() -> Result<()> {
             connections,
             rounds,
             durability,
+            proxy_args,
+            scenarios: if only.is_empty() {
+                <bench::Scenario as clap::ValueEnum>::value_variants()
+                    .iter()
+                    .copied()
+                    .collect()
+            } else {
+                only.into_iter().collect()
+            },
         }),
     }
 }
@@ -225,6 +246,11 @@ impl ChildGuard {
             .spawn()
             .with_context(|| format!("failed to spawn {name}"))?;
         Ok(ChildGuard { name, child })
+    }
+
+    /// The child's process id, which is also the id of its process group.
+    fn pid(&self) -> u32 {
+        self.child.id()
     }
 }
 
