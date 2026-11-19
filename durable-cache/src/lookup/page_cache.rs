@@ -21,7 +21,7 @@ use std::sync::Arc;
 use pingora_cache::CacheMeta;
 use pingora_error::{Error, ErrorType, Result};
 
-use super::{partial_hit, published_hit, FsHitHandler, InFlightTemp};
+use super::{partial_hit, published_hit, FsHitHandler, InFlightTemp, OnWorker};
 use crate::inflight::InFlightWriter;
 use crate::record::{self, ReadError};
 use crate::{blocking, FsCache};
@@ -45,17 +45,6 @@ macro_rules! on_worker {
             None => $call,
         }
     }};
-}
-
-/// What an operation tried on the worker came to.
-pub(super) enum OnWorker<T> {
-    /// Its answer.
-    Done(T),
-    /// The pool takes over, with the file if the worker opened it: so that
-    /// the pool does not open it again, and the worker does not close it. A
-    /// close can free a file that a store, a purge or an abort has just
-    /// removed, if it was its last descriptor (see `FsHitHandler`'s `Drop`).
-    ToPool(Option<File>),
 }
 
 /// [`open_published`](super::open_published) on the worker, from the page

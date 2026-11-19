@@ -20,9 +20,56 @@
 //! a hit, a missing file, and a call the system lacks. The blocking pool
 //! does the rest: a lookup again from the start, with the file if the worker
 //! opened it, and the rest of a body read, from where the worker stopped.
+//! Elsewhere, `page_cache` is a stand-in that leaves it all to the pool.
 
 #[cfg(target_os = "linux")]
 mod page_cache;
+/// Elsewhere than on Linux, which alone has calls that fail rather than wait
+/// for the device, nothing is tried on the worker: every lookup and body
+/// read goes to the blocking pool whole.
+#[cfg(not(target_os = "linux"))]
+mod page_cache {
+    use std::fs::File;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use pingora_cache::CacheMeta;
+    use pingora_error::Result;
+
+    use super::{FsHitHandler, InFlightTemp, OnWorker};
+    use crate::inflight::InFlightWriter;
+    use crate::FsCache;
+
+    /// The pool opens the published record.
+    pub(super) fn open_published(
+        _cache: &'static FsCache,
+        _canonical: &Path,
+        _key_bytes: &[u8],
+    ) -> OnWorker<Result<Option<(CacheMeta, FsHitHandler)>>> {
+        OnWorker::ToPool(None)
+    }
+
+    /// The pool opens the store's temporary.
+    pub(super) fn open_partial_hit(
+        _cache: &'static FsCache,
+        _writer: &Arc<InFlightWriter>,
+        _key_bytes: &[u8],
+    ) -> OnWorker<Result<InFlightTemp>> {
+        OnWorker::ToPool(None)
+    }
+
+    /// The pool reads the whole body: nothing is read here.
+    pub(super) fn fill(
+        _cache: &FsCache,
+        _file: &File,
+        _buf: &mut Vec<u8>,
+        _end: usize,
+        _base: u64,
+        _path: &Path,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+}
 
 use std::any::Any;
 use std::fs::File;
@@ -40,8 +87,6 @@ use pingora_cache::trace::SpanHandle;
 use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
-#[cfg(target_os = "linux")]
-use self::page_cache::OnWorker;
 use crate::inflight::{InFlightWriter, WriteOutcome};
 use crate::record::{self, ReadError, RecordError, RecordKind};
 use crate::{blocking, key_codec, platform, FsCache};
@@ -50,6 +95,24 @@ use crate::{blocking, key_codec, platform, FsCache};
 // protocol (validation order, retry, optional body check, seek); miss.rs's
 // IMP-STORAGE.PUBLISH-02 covers the writer half.
 // IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
+
+/// What an operation tried on the worker (`page_cache`) came to.
+#[cfg_attr(
+    not(target_os = "linux"),
+    expect(
+        dead_code,
+        reason = "elsewhere than on Linux, the worker answers nothing"
+    )
+)]
+enum OnWorker<T> {
+    /// Its answer.
+    Done(T),
+    /// The pool takes over, with the file if the worker opened it: so that
+    /// the pool does not open it again, and the worker does not close it. A
+    /// close can free a file that a store, a purge or an abort has just
+    /// removed, if it was its last descriptor (see `FsHitHandler`'s `Drop`).
+    ToPool(Option<File>),
+}
 
 /// The most body one read delivers. A larger chunk takes fewer reads and
 /// fewer trips through Pingora for a large body, but more memory per read.
@@ -216,13 +279,10 @@ pub(crate) async fn lookup(
     let canonical = cache.canonical_path(&name)?;
     // On Linux, from the page cache on this worker when nothing has to wait
     // for the device (`page_cache`); on the pool otherwise.
-    #[cfg(target_os = "linux")]
     let opened = match page_cache::open_published(cache, &canonical, &key_bytes) {
         OnWorker::Done(answer) => return answer,
         OnWorker::ToPool(opened) => opened,
     };
-    #[cfg(not(target_os = "linux"))]
-    let opened = None;
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
@@ -330,13 +390,10 @@ async fn open_in_flight(
     writer: &Arc<InFlightWriter>,
     key_bytes: &[u8],
 ) -> Result<InFlightTemp> {
-    #[cfg(target_os = "linux")]
     let opened = match page_cache::open_partial_hit(cache, writer, key_bytes) {
         OnWorker::Done(found) => return found,
         OnWorker::ToPool(opened) => opened,
     };
-    #[cfg(not(target_os = "linux"))]
-    let opened = None;
     test_hook! { cache.hooks.count_handoff(); }
     let writer = Arc::clone(writer);
     let key_bytes = key_bytes.to_vec();
@@ -424,12 +481,9 @@ async fn fill(
     base: u64,
     path: &Path,
 ) -> Result<Vec<u8>> {
-    #[cfg(target_os = "linux")]
     if page_cache::fill(cache, file, &mut buf, end, base, path)? {
         return Ok(buf);
     }
-    #[cfg(not(target_os = "linux"))]
-    let _ = cache;
     test_hook! { cache.hooks.count_handoff(); }
     let file = Arc::clone(file);
     blocking::run(move || Ok(platform::fill_blocking(&file, &mut buf, end, base).map(|()| buf)))
