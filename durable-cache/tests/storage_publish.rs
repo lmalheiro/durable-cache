@@ -540,3 +540,40 @@ fn a_cache_on_a_file_system_without_non_blocking_reads_fails_to_start() {
     let off = FsCacheConfig::new(tmp.path().join("off"), None).with_page_cache_reads(false);
     durable_cache::FsCache::new(off).expect("without page-cache reads, the cache starts");
 }
+
+/// Step 9: a chunk sent after the one with `eof` set, which the store keeps
+/// for `finish`, fails the store: `pingora-cache` sends no such chunk, so a
+/// caller that does cannot be trusted with the body.
+#[tokio::test]
+async fn tc_storage_publish_03_a_chunk_after_the_last_fails_the_store() {
+    let (cache, _tmp) = support::leaked_cache();
+    let key = support::key("/publish-after-the-last");
+    let meta = support::meta();
+    let trace = support::inactive_trace();
+
+    let mut handler = cache
+        .get_miss_handler(&key, &meta, &trace)
+        .await
+        .expect("the store opens");
+    handler
+        .write_body(Bytes::from_static(b"the last chunk"), true)
+        .await
+        .expect("the last chunk is accepted");
+    handler
+        .write_body(Bytes::from_static(b"one more"), false)
+        .await
+        .expect_err("a chunk after the last must fail its call");
+    assert!(
+        handler.finish().await.is_err(),
+        "and the store cannot be completed"
+    );
+
+    assert!(
+        support::lookup_body(cache, &key).await.is_none(),
+        "nothing is published"
+    );
+    assert!(
+        support::temp_entries(cache, &key).is_empty(),
+        "the failed store's temporary is removed with its handler"
+    );
+}

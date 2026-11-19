@@ -155,7 +155,9 @@ revalidation that outgrows it withdraws the object, which the next request
 fetches again (see [Caveats](#caveats)). `None` selects the design's
 default, 512 bytes.
 Each body chunk is written to its record's file before its `write_body` call
-returns; the backend holds no body bytes in memory beyond the chunk in hand.
+returns, but the last, which `finish` writes in the handoff to the blocking
+pool that publishes the record; the backend holds no more than one chunk of
+a body in memory.
 
 **Access times.** Under the default `relatime`, the first read of a record
 after a store wrote it updates its access time, and on ext4 that starts a

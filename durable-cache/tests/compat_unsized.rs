@@ -6,8 +6,9 @@
 //! Every clause of this TC's expected result — no size declared, reserved,
 //! or bounded ahead of the bytes; persisted length exactly equal to the
 //! total streamed, including the empty-body and multi-chunk-boundary cases;
-//! and every chunk in the file before its `write_body` returns, so the store
-//! holds no body bytes beyond the chunk in hand — is a property of
+//! and every chunk but the last in the file before its `write_body`
+//! returns, and the last once `finish` writes it, so the store holds no more
+//! than one chunk in memory — is a property of
 //! `Storage::get_miss_handler`/`write_body` itself, not of how the bytes
 //! were sourced, so this crate-level exercise (no HTTP, no upstream) closes
 //! it fully. `test/compat`'s `unsized_body.rs` is a redundant end-to-end
@@ -67,12 +68,14 @@ async fn tc_compat_unsized_02_empty_body() {
 }
 
 /// Steps 2 and 4: whatever the body's size and however it is chunked, every
-/// chunk is in the store's temporary before its `write_body` returns:
-/// after each call the file holds the header, key, and metadata region plus
-/// exactly the body bytes accepted so far, so nothing is held back in
+/// chunk but the last is in the store's temporary before its `write_body`
+/// returns: after each call the file holds the header, key, and metadata
+/// region plus exactly the body bytes accepted so far. The last chunk, which
+/// comes with `eof` set, is the one the store keeps, until `finish` writes
+/// it (ADR-STORAGE.LASTCHUNK-01), so no more than one chunk is held back in
 /// memory.
 #[tokio::test]
-async fn tc_compat_unsized_02_every_chunk_is_written_before_write_body_returns() {
+async fn tc_compat_unsized_02_every_chunk_but_the_last_is_written_before_write_body_returns() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/unsized-write-through");
     let meta = support::meta();
@@ -87,18 +90,30 @@ async fn tc_compat_unsized_02_every_chunk_is_written_before_write_body_returns()
     let chunk = vec![0x7Eu8; 33_333];
     let mut expected = Vec::new();
     for i in 0..60 {
+        let eof = i == 59;
         handler
-            .write_body(Bytes::copy_from_slice(&chunk), i == 59)
+            .write_body(Bytes::copy_from_slice(&chunk), eof)
             .await
-            .unwrap();
+            .expect("each chunk is accepted");
+        let in_file = if eof {
+            expected.len()
+        } else {
+            expected.len() + chunk.len()
+        };
         expected.extend_from_slice(&chunk);
         assert_eq!(
-            std::fs::metadata(&temp).unwrap().len(),
-            body_offset as u64 + expected.len() as u64,
-            "after write_body {i} the temporary holds every byte accepted so far"
+            std::fs::metadata(&temp)
+                .expect("the temporary is there")
+                .len(),
+            body_offset as u64 + in_file as u64,
+            "after write_body {i}, the temporary holds every byte accepted so far{}",
+            if eof { " but the last chunk's" } else { "" }
         );
     }
-    handler.finish().await.unwrap();
+    handler
+        .finish()
+        .await
+        .expect("finish writes the last chunk");
     let (_meta, body) = support::lookup_body(cache, &key).await.unwrap();
     assert_eq!(
         body, expected,

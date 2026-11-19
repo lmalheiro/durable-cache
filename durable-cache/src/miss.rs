@@ -8,7 +8,8 @@
 //! directory: the header, key, and metadata region when the miss handler
 //! opens (the `CacheMeta` is available then), then the body chunk by chunk,
 //! each folded into a running CRC-32C unless the build leaves out the
-//! `body-crc` feature. `finish` patches `body_len` and `body_crc`,
+//! `body-crc` feature; `write_body` keeps the last chunk rather than write
+//! it. `finish` writes that chunk, patches `body_len` and `body_crc`,
 //! synchronises the file unless stores are unsynchronised
 //! (`Durability::NoStoreSync`), and renames it over the canonical name. A
 //! store that never finishes takes its temporary with it, and so does one
@@ -68,9 +69,15 @@ pub struct FsMissHandler {
     /// (ADR-PERSISTENCE.DURABILITY-02); stays zero in a build without the
     /// `body-crc` feature.
     body_crc: u32,
-    /// Body bytes written to the temporary so far. Every chunk is written
-    /// before its `write_body` returns (FRE-COMPAT.UNSIZED-02).
+    /// Body bytes written to the temporary so far. Every chunk but the last
+    /// is written before its `write_body` returns, and `finish` writes the
+    /// last (FRE-COMPAT.UNSIZED-02).
     body_written: u64,
+    /// The last body chunk, which `write_body` received with `eof` set and
+    /// kept for `finish` to write, in the handoff that publishes the store
+    /// (ADR-STORAGE.LASTCHUNK-01). The only body bytes the store holds
+    /// beyond a `write_body` call; its CRC-32C is already folded in.
+    last_chunk: Option<Bytes>,
     writer: Arc<InFlightWriter>,
     /// The tag `pingora-cache` passes back when the request that opened this
     /// store looks it up, so that lookup resolves to this very store.
@@ -175,6 +182,7 @@ impl FsMissHandler {
             header,
             body_crc: 0,
             body_written: 0,
+            last_chunk: None,
             writer,
             write_tag,
             finished: false,
@@ -215,12 +223,41 @@ impl FsMissHandler {
         )
     }
 
-    /// Patch the header, synchronise, and publish. Returns the record size:
-    /// the published file's full length (FRE-COMPAT.EVICTION-01).
+    /// Write the last body chunk, if `write_body` kept it for `finish`
+    /// (ADR-STORAGE.LASTCHUNK-01), and make it readable at once: a reader
+    /// streaming the store from its partial hit is woken here, before the
+    /// store is synchronised (FDS-STORAGE.PARTIAL-02).
+    fn write_last_chunk(&mut self) -> Result<()> {
+        let Some(chunk) = self.last_chunk.take() else {
+            return Ok(());
+        };
+        if chunk.is_empty() {
+            return Ok(());
+        }
+        test_hook! { self.cache.hooks.fault(FaultPoint::WriteTemp)?; }
+        let offset = self.header.body_offset() as u64 + self.body_written;
+        self.file()
+            .write_all_at(&chunk, offset)
+            .or_err_with(ErrorType::FileWriteError, || {
+                format!(
+                    "writing the last body chunk to {}",
+                    self.temp_path.display()
+                )
+            })?;
+        self.body_written += chunk.len() as u64;
+        self.writer.publish_valid_len(self.body_written);
+        Ok(())
+    }
+
+    /// Write the last chunk if it was kept, patch the header, synchronise,
+    /// and publish. Returns the record size: the published file's full
+    /// length (FRE-COMPAT.EVICTION-01).
     fn finish_inner(&mut self) -> Result<u64> {
         if self.failed {
             return self.already_failed();
         }
+        self.write_last_chunk()
+            .inspect_err(|_| self.failed = true)?;
         self.header.edit().body(self.body_written, self.body_crc);
         let patch = |h: &mut Self| -> Result<()> {
             h.file()
@@ -365,9 +402,19 @@ pub(crate) fn create_temp(cache: &FsCache, name: &str) -> Result<(File, PathBuf)
 
 #[async_trait]
 impl HandleMiss for FsMissHandler {
-    async fn write_body(&mut self, data: Bytes, _eof: bool) -> Result<()> {
+    async fn write_body(&mut self, data: Bytes, eof: bool) -> Result<()> {
         if self.failed {
             return self.already_failed();
+        }
+        if self.last_chunk.is_some() {
+            // A chunk after the one that ended the body: `pingora-cache`
+            // never sends one, so a caller that does cannot be trusted with
+            // the body, and the store fails (FDS-STORAGE.PUBLISH-03).
+            self.failed = true;
+            return Error::e_explain(
+                ErrorType::InternalError,
+                format!("a body chunk came after the last one of {}", self.name),
+            );
         }
         // Folding the chunk into the running checksum is pure CPU, so it
         // stays here; the write behind it is a syscall and does not
@@ -376,10 +423,17 @@ impl HandleMiss for FsMissHandler {
         {
             self.body_crc = crc32c::crc32c_append(self.body_crc, &data);
         }
-        // Every chunk is written before this call returns, and only then
-        // made readable: the store holds no body bytes beyond the chunk in
-        // hand (FRE-COMPAT.UNSIZED-02), and a partial-hit reader sees each
-        // one as soon as it is in the file (FDS-STORAGE.PARTIAL-02).
+        if eof {
+            // The last chunk: `finish`, which `pingora-cache` calls next,
+            // writes it in the handoff that publishes the store, rather
+            // than this call in one of its own (ADR-STORAGE.LASTCHUNK-01).
+            self.last_chunk = Some(data);
+            return Ok(());
+        }
+        // Any other chunk is written before this call returns, and only
+        // then made readable: the store holds no body bytes beyond the
+        // chunk in hand (FRE-COMPAT.UNSIZED-02), and a partial-hit reader
+        // sees each one as soon as it is in the file (FDS-STORAGE.PARTIAL-02).
         let file = Arc::clone(self.file());
         let offset = self.header.body_offset() as u64 + self.body_written;
         let len = data.len() as u64;
@@ -405,13 +459,13 @@ impl HandleMiss for FsMissHandler {
     }
 
     async fn finish(self: Box<Self>) -> Result<MissFinishType> {
-        // `finish` patches the header, `fdatasync`s unless the configured
-        // durability skips it, and renames: up to three syscalls, one of
-        // them a flush that can take milliseconds on a real device. So the
-        // whole handler moves to the blocking pool
-        // (FDS-STORAGE.EXECUTOR-03), and is dropped there as the closure
-        // ends, whether the store published or failed. A failed store's
-        // `Drop` aborts it and removes its temporary
+        // `finish` writes the last chunk if `write_body` kept it, patches
+        // the header, `fdatasync`s unless the configured durability skips
+        // it, and renames: up to four syscalls, one of them a flush that can
+        // take milliseconds on a real device. So the whole handler moves to
+        // the blocking pool (FDS-STORAGE.EXECUTOR-03), and is dropped there
+        // as the closure ends, whether the store published or failed. A
+        // failed store's `Drop` aborts it and removes its temporary
         // (FRE-COMPAT.ABORTSPACE-01). A published store's closes its handle
         // on the record, which frees the record if another store has
         // replaced it, or a purge removed it, in the meantime: a close that

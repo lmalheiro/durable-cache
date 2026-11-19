@@ -33,9 +33,10 @@ pub struct InFlightWriter {
     /// the growing temporary again.
     pub internal_meta: Vec<u8>,
     pub header_meta: Vec<u8>,
-    /// Body bytes written to the temporary so far. The store writes every
-    /// chunk before its `write_body` returns and only then publishes the new
-    /// length, so a reader never reads past what is in the file.
+    /// Body bytes written to the temporary so far. The store writes each
+    /// chunk, in its `write_body` or, for the last, in `finish`, and only
+    /// then publishes the new length, so a reader never reads past what is
+    /// in the file.
     pub valid_len: AtomicU64,
     /// Notified once per appended chunk, and once more when the store ends,
     /// so readers never poll.

@@ -124,7 +124,8 @@ async fn tc_compat_streaming_02_lookup_resolves_to_the_most_recently_opened_writ
 
 /// Steps 6 to 8: several followers on one in-flight store receive each chunk
 /// as the store writes it — at least 99 % of deliveries within 10 ms of the
-/// chunk's `write_body` returning (FRE-COMPAT.STREAMDELIVERY-02) — and every
+/// chunk's `write_body` returning, or, for the last chunk, of `finish`
+/// starting (FRE-COMPAT.STREAMDELIVERY-02) — and every
 /// follower's body matches the store's, ending normally across the
 /// concluding rename (FRE-COMPAT.STREAMEND-01).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -178,6 +179,9 @@ async fn tc_compat_streaming_02_followers_receive_chunks_within_the_latency_boun
         // is written for.
         tokio::task::yield_now().await;
     }
+    // `finish` writes the last chunk, so that chunk's delivery is timed from
+    // the start of `finish`.
+    *last_write.lock().expect("no other thread panicked") = Instant::now();
     writer.finish().await.unwrap();
 
     let expected: Vec<u8> = CHUNK.repeat(CHUNKS);
