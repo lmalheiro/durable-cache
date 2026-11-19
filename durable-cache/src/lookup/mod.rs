@@ -20,57 +20,15 @@
 //! a hit, a missing file, and a call the system lacks. The blocking pool
 //! does the rest: a lookup again from the start, with the file if the worker
 //! opened it, and the rest of a body read, from where the worker stopped.
-//! Elsewhere, `page_cache` is a stand-in that leaves it all to the pool.
+//! Elsewhere, `page_cache` is a stand-in (`noop_page_cache.rs`) that leaves
+//! it all to the pool.
 
 mod body_check;
 #[cfg(target_os = "linux")]
 mod page_cache;
-/// Elsewhere than on Linux, which alone has calls that fail rather than wait
-/// for the device, nothing is tried on the worker: every lookup and body
-/// read goes to the blocking pool whole.
 #[cfg(not(target_os = "linux"))]
-mod page_cache {
-    use std::fs::File;
-    use std::path::Path;
-    use std::sync::Arc;
-
-    use pingora_cache::CacheMeta;
-    use pingora_error::Result;
-
-    use super::{FsHitHandler, InFlightTemp, OnWorker};
-    use crate::inflight::InFlightWriter;
-    use crate::FsCache;
-
-    /// The pool opens the published record.
-    pub(super) fn open_published(
-        _cache: &'static FsCache,
-        _canonical: &Path,
-        _key_bytes: &[u8],
-    ) -> OnWorker<Result<Option<(CacheMeta, FsHitHandler)>>> {
-        OnWorker::ToPool(None)
-    }
-
-    /// The pool opens the store's temporary.
-    pub(super) fn open_partial_hit(
-        _cache: &'static FsCache,
-        _writer: &Arc<InFlightWriter>,
-        _key_bytes: &[u8],
-    ) -> OnWorker<Result<InFlightTemp>> {
-        OnWorker::ToPool(None)
-    }
-
-    /// The pool reads the whole body: nothing is read here.
-    pub(super) fn fill(
-        _cache: &FsCache,
-        _file: &File,
-        _buf: &mut Vec<u8>,
-        _end: usize,
-        _base: u64,
-        _path: &Path,
-    ) -> Result<bool> {
-        Ok(false)
-    }
-}
+#[path = "noop_page_cache.rs"]
+mod page_cache;
 
 use std::any::Any;
 use std::fs::File;

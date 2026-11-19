@@ -243,8 +243,9 @@ test scaffolding, or tooling.
 │   │   ├── lookup/
 │   │   │   ├── mod.rs           read path: lookup / HandleHit, incl. partial hits
 │   │   │   ├── body_check.rs    the read-time body check (feature `body-crc-verify`)
-│   │   │   └── page_cache.rs    Linux: lookups and body reads tried first on
-│   │   │                        the worker, from the page cache
+│   │   │   ├── page_cache.rs    Linux: lookups and body reads tried first on
+│   │   │   │                    the worker, from the page cache
+│   │   │   └── noop_page_cache.rs  elsewhere: its stand-in, every read on the pool
 │   │   ├── publish.rs           sync, atomic rename, discard; holds the old record open
 │   │   ├── crashdiscard.rs      unsynchronised-store markers, flush, and the discard
 │   │   │                        after a host restart
