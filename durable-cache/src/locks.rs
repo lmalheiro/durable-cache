@@ -154,7 +154,8 @@ fn set_in_change(held: bool) {
 }
 
 /// In a debug build, panic with `what` if this thread holds a change: the
-/// module doc's third rule.
+/// module doc's third rule. The panic names the caller's line.
+#[track_caller]
 fn assert_no_change(what: &str) {
     debug_assert!(!IN_CHANGE.with(Cell::get), "{what}");
 }
