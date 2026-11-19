@@ -293,7 +293,7 @@ test scaffolding, or tooling.
 │   └── rfc9110/9111/3864        the standards the compliance chapter cites
 │
 ├── xtask/                     cargo xtask cache-tests | trace-report | headers |
-│                              fmt | readme-links | bench
+│                              fmt | readme-links | bench | cfg-matrix
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
 ├── .github/workflows/         ci.yml, compliance.yml, deny.yml, pr-title.yml and
 │                              release-plz.yml (see below)
@@ -341,6 +341,15 @@ cargo deny --manifest-path durable-cache/Cargo.toml --exclude-dev check
 committed: build the specification first (see
 [The specification](#the-specification)), and rebuild it after editing a
 `.tex` file, or the report checks a stale list of test cases.
+
+**Other Unix systems.** No CI job builds durable-cache for a system other
+than Linux. `cargo xtask cfg-matrix` lints and tests it here in every build
+its `#[cfg]` gates select: clippy for each feature set and for a release
+build, and nextest with the default features and with all of them, first in
+the workspace, then in a copy under the target directory whose Linux gates
+select their other-Unix side. `--no-tests` lints only. Each step's whole log
+stays under `<target>/xtask/cfg-matrix/logs` until the next run. What it
+cannot catch is a call that another system's libc lacks.
 
 **Other targets.** CI builds for 64-bit glibc only. The 32-bit glibc and
 the musl code (`durable-cache/src/nowait.rs`) can be checked on an amd64
