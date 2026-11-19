@@ -7,8 +7,8 @@ use bytes::Bytes;
 
 /// One scripted response: a status, a header set, and a body delivered as
 /// a sequence of chunks, each optionally delayed — enough to drive
-/// TC-COMPAT.UNSIZED-01 (irregular chunk sizes, no declared length),
-/// TC-COMPAT.STREAMING-01 (throttled delivery so a follower's promptness
+/// TC-COMPAT.UNSIZED-02 (irregular chunk sizes, no declared length),
+/// TC-COMPAT.STREAMING-02 (throttled delivery so a follower's promptness
 /// is observable), and ordinary fixed responses (headers/freshness/etc.
 /// tests) alike.
 #[derive(Clone, Debug)]
@@ -18,7 +18,7 @@ pub struct Scenario {
     pub chunks: Vec<Chunk>,
     /// When `false`, no `Content-Length` is sent and the connection close
     /// (or chunked transfer-encoding, per the HTTP version negotiated)
-    /// signals the end — the unsized-body case FRE-COMPAT.UNSIZED-01 needs.
+    /// signals the end — the unsized-body case FRE-COMPAT.UNSIZED-02 needs.
     pub declare_length: bool,
     /// When set, a conditional request whose `If-None-Match` carries this
     /// entity tag is answered `304 (Not Modified)` with

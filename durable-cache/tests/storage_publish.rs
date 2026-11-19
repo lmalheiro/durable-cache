@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-STORAGE.PUBLISH-02 — Atomic same-directory publication.
+//! TC-STORAGE.PUBLISH-03 — Atomic same-directory publication.
 //!
 //! The per-writer temporary and its rename publish atomically, keep
 //! concurrent writers isolated, never reuse another writer's file,
@@ -21,13 +21,13 @@ use pingora_cache::storage::Storage;
 
 use super::support;
 
-// IMP-TC.STORAGE.PUBLISH-02: satisfy TC-STORAGE.PUBLISH-02
+// IMP-TC.STORAGE.PUBLISH-03: satisfy TC-STORAGE.PUBLISH-03
 
 /// Step 1: each writer writes its own temporary, named with this process's
 /// writer identity and a distinct counter, and the bytes of neither appear
 /// in the other's file.
 #[tokio::test]
-async fn tc_storage_publish_02_concurrent_writers_use_their_own_temporaries() {
+async fn tc_storage_publish_03_concurrent_writers_use_their_own_temporaries() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-concurrent");
     let meta = support::meta();
@@ -84,7 +84,7 @@ async fn tc_storage_publish_02_concurrent_writers_use_their_own_temporaries() {
 /// Step 2: a file already at the name the next counter would produce is left
 /// untouched, and the store takes the following counter value.
 #[tokio::test]
-async fn tc_storage_publish_02_name_collision_advances_the_counter() {
+async fn tc_storage_publish_03_name_collision_advances_the_counter() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-collision");
     let combined = key.combined();
@@ -120,7 +120,7 @@ async fn tc_storage_publish_02_name_collision_advances_the_counter() {
 /// Step 3: the object becomes visible under its canonical name only at the
 /// rename, and `finish` reports the published file's full length.
 #[tokio::test]
-async fn tc_storage_publish_02_visible_only_at_the_rename_and_reports_record_size() {
+async fn tc_storage_publish_03_visible_only_at_the_rename_and_reports_record_size() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-visibility");
     let meta = support::meta();
@@ -162,7 +162,7 @@ async fn tc_storage_publish_02_visible_only_at_the_rename_and_reports_record_siz
 /// Step 3, continued: the temporary is synchronised *before* the rename, so
 /// a failing synchronisation means nothing is ever published.
 #[tokio::test]
-async fn tc_storage_publish_02_synchronises_before_renaming() {
+async fn tc_storage_publish_03_synchronises_before_renaming() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-sync-order");
     let meta = support::meta();
@@ -196,7 +196,7 @@ async fn tc_storage_publish_02_synchronises_before_renaming() {
 /// without being synchronised: a fault injected at the synchronisation is
 /// never reached, and the record is published whole.
 #[tokio::test]
-async fn tc_storage_publish_02_no_store_sync_publishes_without_synchronising() {
+async fn tc_storage_publish_03_no_store_sync_publishes_without_synchronising() {
     let tmp = support::tempdir();
     let cache = support::leaked_cache_with(
         FsCacheConfig::new(tmp.path(), None).with_durability(Durability::NoStoreSync),
@@ -227,7 +227,7 @@ async fn tc_storage_publish_02_no_store_sync_publishes_without_synchronising() {
 /// publishes nothing, and leaves no temporary behind
 /// (FDS-COMPAT.READONLY-02).
 #[tokio::test]
-async fn tc_storage_publish_02_store_completing_once_read_only_publishes_nothing() {
+async fn tc_storage_publish_03_store_completing_once_read_only_publishes_nothing() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-read-only");
     let meta = support::meta();
@@ -269,7 +269,7 @@ async fn tc_storage_publish_02_store_completing_once_read_only_publishes_nothing
 /// is atomic by construction. That no path publishes by copying is left to
 /// inspection.
 #[tokio::test]
-async fn tc_storage_publish_02_temporary_shares_the_canonical_directory() {
+async fn tc_storage_publish_03_temporary_shares_the_canonical_directory() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/publish-same-dir");
     let meta = support::meta();
@@ -539,4 +539,41 @@ fn a_cache_on_a_file_system_without_non_blocking_reads_fails_to_start() {
     }
     let off = FsCacheConfig::new(tmp.path().join("off"), None).with_page_cache_reads(false);
     durable_cache::FsCache::new(off).expect("without page-cache reads, the cache starts");
+}
+
+/// Step 9: a chunk sent after the one with `eof` set, which the store keeps
+/// for `finish`, fails the store: `pingora-cache` sends no such chunk, so a
+/// caller that does cannot be trusted with the body.
+#[tokio::test]
+async fn tc_storage_publish_03_a_chunk_after_the_last_fails_the_store() {
+    let (cache, _tmp) = support::leaked_cache();
+    let key = support::key("/publish-after-the-last");
+    let meta = support::meta();
+    let trace = support::inactive_trace();
+
+    let mut handler = cache
+        .get_miss_handler(&key, &meta, &trace)
+        .await
+        .expect("the store opens");
+    handler
+        .write_body(Bytes::from_static(b"the last chunk"), true)
+        .await
+        .expect("the last chunk is accepted");
+    handler
+        .write_body(Bytes::from_static(b"one more"), false)
+        .await
+        .expect_err("a chunk after the last must fail its call");
+    assert!(
+        handler.finish().await.is_err(),
+        "and the store cannot be completed"
+    );
+
+    assert!(
+        support::lookup_body(cache, &key).await.is_none(),
+        "nothing is published"
+    );
+    assert!(
+        support::temp_entries(cache, &key).is_empty(),
+        "the failed store's temporary is removed with its handler"
+    );
 }

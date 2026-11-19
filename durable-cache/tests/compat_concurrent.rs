@@ -5,7 +5,7 @@
 //!
 //! Isolation-without-interleaving among the writers themselves is also
 //! covered, from the publish side, in `storage_publish.rs`'s
-//! `tc_storage_publish_02_concurrent_same_key_writers_stay_isolated`; this
+//! `tc_storage_publish_03_concurrent_same_key_writers_stay_isolated`; this
 //! file adds the mid-flight-lookup leg (step 2) that TC-COMPAT.CONCURRENT-01
 //! specifically calls for.
 

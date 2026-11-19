@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The read-time validation of a record (SDS-LAYOUT.OBJECTFILE-02), which
+//! The read-time validation of a record (SDS-LAYOUT.OBJECTFILE-03), which
 //! makes a damaged or foreign record a miss rather than a corrupt read. The
 //! format it validates, the header included, is defined in `format.rs`.
 
@@ -15,7 +15,7 @@ use zerocopy::{FromZeros, IntoBytes};
 use crate::format::{self, HeaderError, RecordHeader};
 
 /// How many times a reader reads the header and metadata region on a CRC
-/// mismatch: the first read plus three more (SDS-LAYOUT.OBJECTFILE-02,
+/// mismatch: the first read plus three more (SDS-LAYOUT.OBJECTFILE-03,
 /// "Metadata updates in place"). A lookup then reads once more holding the
 /// key's publication lock (see `crate::lookup`); a caller that already holds
 /// it takes a mismatch that persists as damage.
@@ -126,7 +126,7 @@ pub enum ReadError {
     Io(#[from] io::Error),
 }
 
-/// Read and validate one record, once, in the order SDS-LAYOUT.OBJECTFILE-02
+/// Read and validate one record, once, in the order SDS-LAYOUT.OBJECTFILE-03
 /// specifies: magic and version, `header_crc`, `meta_crc`, the stored key
 /// (when `expected_key` is given), and, for a published record, the exact
 /// length.
@@ -284,7 +284,7 @@ fn read_record_with(
 /// attempts.
 ///
 /// Blocking, and deliberately so: every caller reaches it from Tokio's
-/// blocking pool (FDS-STORAGE.EXECUTOR-02), where yielding the thread is the
+/// blocking pool (FDS-STORAGE.EXECUTOR-03), where yielding the thread is the
 /// right thing to do and an `.await` is not available.
 pub fn read_record_blocking(
     file: &File,

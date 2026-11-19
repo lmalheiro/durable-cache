@@ -90,6 +90,40 @@ async fn tc_compat_writefail_01_failing_finish_publishes_nothing() {
     }
 }
 
+/// Step 2, for the body's last chunk: `write_body` keeps it for `finish` to
+/// write (ADR-STORAGE.LASTCHUNK-01), so a failure writing it fails `finish`,
+/// and nothing is published.
+#[tokio::test]
+async fn tc_compat_writefail_01_failing_last_chunk_fails_finish() {
+    let (cache, _tmp) = support::leaked_cache();
+    let key = support::key("/writefail-last-chunk");
+    let meta = support::meta();
+    let trace = support::inactive_trace();
+
+    let mut handler = cache
+        .get_miss_handler(&key, &meta, &trace)
+        .await
+        .expect("the store opens");
+    cache.hooks().inject_fault(FaultPoint::WriteTemp, 1);
+    handler
+        .write_body(Bytes::from_static(b"the whole body"), true)
+        .await
+        .expect("the last chunk is kept, not written yet");
+    let Err(err) = handler.finish().await else {
+        panic!("a failed write of the last chunk must fail finish()");
+    };
+    assert!(
+        err.to_string().contains("WriteTemp"),
+        "unexpected error: {err}"
+    );
+
+    assert!(
+        support::lookup_body(cache, &key).await.is_none(),
+        "nothing may be published when the last chunk fails"
+    );
+    assert!(support::temp_entries(cache, &key).is_empty());
+}
+
 /// Step 3: a shard directory removed from outside the backend is recreated
 /// once, and the store succeeds (FDS-LAYOUT.STARTUP-01).
 #[tokio::test]

@@ -22,7 +22,7 @@
 
   \textbf{Context:} Each cached object has a small block of metadata and a body
   of arbitrary length, unknown when writing begins
-  (\reqref{FRE-COMPAT.UNSIZED-01}), persisted on a plain file system
+  (\reqref{FRE-COMPAT.UNSIZED-02}), persisted on a plain file system
   (\reqref{ADR-PERSISTENCE.MECHANISM-01}). Block-granular allocation means a
   separate file holding only the small metadata would waste most of a block
   per object (\reqref{REQ-EFFICIENCY.FRAGMENTATION-01}).
@@ -43,7 +43,7 @@
       file wastes most of a block per object regardless of the body's
       size (\reqref{REQ-EFFICIENCY.FRAGMENTATION-01}). Committing the two
       files as one atomic unit also loses the single-rename publication
-      this design enables (\reqref{FDS-STORAGE.PUBLISH-02}): a plain
+      this design enables (\reqref{FDS-STORAGE.PUBLISH-03}): a plain
       rename is atomic per path, not across two, so publishing both
       together would need a per-object subdirectory renamed as a whole
       --- an extra inode and directory entry per object, working against
@@ -105,11 +105,11 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.PUBLISH-02}{Specify how object publication is
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify how object publication is
   made atomic under concurrent same-key writes and process crashes.}
   \reqexpect{refine}{FDS-STORAGE.METAUPDATE-01}{Specify how a metadata update
   that grows past its record's reserved capacity is handled.}
-  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-02}{Specify the concrete on-disk
+  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-03}{Specify the concrete on-disk
   record format --- header, key, metadata region, and body placement ---
   that realises the combined metadata-and-body file.}
 
@@ -256,14 +256,14 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.PUBLISH-02}{Specify the fdatasync of the
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify the fdatasync of the
   temporary before its rename, and how a failed sync is surfaced.}
   \reqexpect{refine}{FDS-STORAGE.PURGE-01}{Specify the fsync of the shard
   directory before an invalidating purge is reported, and that a purge made
   to evict is not synchronised.}
   \reqexpect{refine}{FDS-STORAGE.METAUPDATE-01}{Specify that a metadata
   update, written in place or withdrawing the record, is not synced.}
-  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-02}{Add the body CRC-32C field
+  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-03}{Add the body CRC-32C field
   and how it is computed and recorded, and specify the optional read-time
   check that logs a mismatch at the end of a whole-body read.}
 
@@ -295,7 +295,7 @@
 
   Without the sync, a host crash can leave a published name over a body that
   never reached the device. The read validation of
-  \reqref{SDS-LAYOUT.OBJECTFILE-02} catches the common case: it compares a
+  \reqref{SDS-LAYOUT.OBJECTFILE-03} catches the common case: it compares a
   record's file length with the record length its header gives, and a file
   system that records a file's length only once its data is written --- ext4
   in its default \texttt{data=ordered} mode, XFS, btrfs --- leaves such a
@@ -378,7 +378,7 @@
       guarantee of \reqref{ADR-PERSISTENCE.DURABILITY-02}. Rejected: a store
       reported complete is then not yet visible by name, which changes what a
       purge, the eviction manager's admission and the read-only drain see
-      (\reqref{FDS-STORAGE.PUBLISH-02}), each to be specified again.
+      (\reqref{FDS-STORAGE.PUBLISH-03}), each to be specified again.
     \item \emph{Group commit}: one flush for a batch of stores. Rejected: each
       store still waits for a flush, and ext4 already commits concurrent
       \texttt{fdatasync} calls together, which the measurements above
@@ -438,13 +438,13 @@
   \textbf{The options.} \texttt{FsCacheConfig} carries the durability of
   stores: \texttt{Strict}, the default, or \texttt{NoStoreSync}. With
   \texttt{NoStoreSync}, \texttt{finish} renames a store into place without
-  synchronising its temporary first (\reqref{FDS-STORAGE.PUBLISH-02});
+  synchronising its temporary first (\reqref{FDS-STORAGE.PUBLISH-03});
   everything else is as with \texttt{Strict}, the invalidating purge's
   directory sync included (\reqref{FDS-STORAGE.PURGE-01}). A second switch,
   off by default, turns on the discard after a host restart. Off, the
   backend writes no marker, and after a host crash it keeps every record the
   file system recovered: the read validation of
-  \reqref{SDS-LAYOUT.OBJECTFILE-02}, which compares a published record's
+  \reqref{SDS-LAYOUT.OBJECTFILE-03}, which compares a published record's
   file length with the record length its header gives, reports each record
   left short or empty as a miss, and the restart scan reclaims it
   (\reqref{FDS-STORAGE.RECLAIM-01}). The switch,
@@ -458,7 +458,7 @@
   that cannot be read counts as one naming another boot.
 
   \textbf{The marker.} Each backend instance with the discard on has its own
-  marker beside its writer lease (\reqref{FDS-STORAGE.PUBLISH-02}),
+  marker beside its writer lease (\reqref{FDS-STORAGE.PUBLISH-03}),
   \texttt{writers/\allowbreak<pid>-<nonce>.unsynced}, holding the boot identity. Before
   a \texttt{NoStoreSync} store's rename, if the instance's marker does not
   exist, the backend writes it --- a temporary, synchronised, renamed into
@@ -507,7 +507,7 @@
 
   \refine{ADR-PERSISTENCE.UNSYNCED-01}
   \satisfy{HLR-PERSISTENCE.CRASHSAFE-02}
-  \trace{FDS-STORAGE.PUBLISH-02}
+  \trace{FDS-STORAGE.PUBLISH-03}
   \trace{FDS-COMPAT.READONLY-02}
   \trace{FDS-LAYOUT.STARTUP-01}
   \trace{FDS-EVICTION.STARTUP-01}
@@ -519,7 +519,7 @@
   \localreqdiagram*{adratomicpublish01}{\reqid}{\reqdesc}
 
   \textbf{Context:} A store's record grows over time
-  (\reqref{FRE-COMPAT.UNSIZED-01}) in a single file
+  (\reqref{FRE-COMPAT.UNSIZED-02}) in a single file
   (\reqref{ADR-STORAGE.OBJECTFILE-01}), yet every write must be durably
   published as a complete object or not at all, including when several
   same-key writers race (\reqref{FRE-COMPAT.CONCURRENT-01}), a store is
@@ -597,7 +597,7 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.PUBLISH-02}{Specify the temporary's naming
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify the temporary's naming
   and placement, and the completion sequence that ends in the rename.}
 
   \refine{ADR-STORAGE.OBJECTFILE-01}
@@ -693,7 +693,7 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.PUBLISH-02}{Specify the temporary name
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify the temporary name
   format and exclusive creation, including what happens on a collision.}
   \reqexpect{refine}{FDS-STORAGE.RECLAIM-01}{Specify the liveness test the
   scan applies to a temporary's writer (its lease's lock), the removal of
@@ -706,7 +706,7 @@
   \trace{ADR-STORAGE.RECLAIM-01}
 \end{requirement}
 
-\begin{requirement}{FDS-STORAGE.PUBLISH-02}[draft][functionalRequirement]{Atomic publication via rename}
+\begin{requirement}{FDS-STORAGE.PUBLISH-03}[draft][functionalRequirement]{Atomic publication via rename}
 
   \localreqdiagram*{fdspublish01}{\reqid}{\reqdesc}
 
@@ -746,22 +746,32 @@
   counter and retry.
 
   The backend shall then write the record header, key, and metadata region
-  (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and append each body chunk as
+  (\reqref{SDS-LAYOUT.OBJECTFILE-03}), and append each body chunk as
   \texttt{write\_body} delivers it, folding it into a running CRC-32C unless
   the build leaves out the \texttt{body-crc} feature
   (\reqref{ADR-PERSISTENCE.DURABILITY-02}). While the temporary grows it is
   also the read source for streaming partial hits, as
-  \reqref{FDS-STORAGE.PARTIAL-01} specifies.
+  \reqref{FDS-STORAGE.PARTIAL-02} specifies.
 
   \textbf{Write-through.} The backend shall write each chunk to the
   temporary before its \texttt{write\_body} call returns, holding no body
-  bytes beyond the chunk being written (\reqref{FRE-COMPAT.UNSIZED-01}).
-  Only then does the valid length advance, so a partial-hit reader, which
-  sees only bytes already in the file, is woken as soon as the chunk is
-  there (\reqref{FDS-STORAGE.PARTIAL-01}).
+  bytes beyond the chunk being written (\reqref{FRE-COMPAT.UNSIZED-02}), but
+  for the last: the backend shall keep the chunk that \texttt{write\_body}
+  receives with \texttt{eof} set, for \texttt{finish} to write
+  (\reqref{ADR-STORAGE.LASTCHUNK-01}). Only once a chunk is written does the
+  valid length advance, so
+  a partial-hit reader, which sees only bytes already in the file, is woken
+  as soon as the chunk is there (\reqref{FDS-STORAGE.PARTIAL-02}). IF
+  \texttt{write\_body} receives a chunk while the backend keeps the last
+  one, THEN the call shall return an error, and the store is treated as
+  aborted: \texttt{pingora-cache} sends no chunk after the one with
+  \texttt{eof} set,\footnote{\pgsrc{pingora-cache/src/storage.rs}{357}{\texttt{HandleMiss::write\_body(data,~eof)}}
+  sets \texttt{eof} on the final call only.} so a caller that does cannot
+  be trusted with the body.
 
   \textbf{Publishing.} WHEN a store completes, \texttt{finish} shall, in
-  order: patch \texttt{body\_len} and \texttt{body\_crc}, recompute
+  order: write the last chunk, if the backend kept it, and advance the valid
+  length; patch \texttt{body\_len} and \texttt{body\_crc}, recompute
   \texttt{header\_crc}, synchronise the temporary's data to stable storage
   (\reqref{ADR-PERSISTENCE.DURABILITY-02}) unless stores are unsynchronised
   (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and rename the temporary over the
@@ -804,10 +814,10 @@
   miss handler is dropped (\reqref{FRE-COMPAT.ABORTSPACE-01}). Its own handle
   on the temporary stays open across the unlink, so the unlink removes only
   the name, and it closes that handle on the blocking pool
-  (\reqref{FDS-STORAGE.EXECUTOR-02}): the close frees the storage, which
+  (\reqref{FDS-STORAGE.EXECUTOR-03}): the close frees the storage, which
   can take a long time for a large temporary. A partial-hit
   reader still holding the temporary open is unaffected by the unlink; how its
-  stream ends is specified by \reqref{FDS-STORAGE.PARTIAL-01}.
+  stream ends is specified by \reqref{FDS-STORAGE.PARTIAL-02}.
 
   \textbf{Isolation and replacement.} Same-key writers stay isolated under
   this scheme: each has its own temporary, so no writer's bytes are ever
@@ -846,7 +856,8 @@
         \begin{call}{HttpCache}{write\_body(chunk, eof)}{Storage}{}
           \postlevel
           \postlevel
-          \begin{callself}{Storage}{{\small \shortstack{append to temporary; update body CRC;\\advance valid length; wake readers}}}{}
+          \postlevel
+          \begin{callself}{Storage}{{\small \shortstack{update body CRC; append to temporary,\\or keep the last chunk for finish;\\advance valid length; wake readers}}}{}
           \end{callself}
         \end{call}
         \begin{call}{Follower}{read\_body() (concurrent partial hit)}{Storage}{chunk}
@@ -856,7 +867,8 @@
         \postlevel
         \postlevel
         \postlevel
-        \begin{callself}{Storage}{{\small \shortstack{patch body\_len, body\_crc, header\_crc;\\fdatasync temporary;\\rename over canonical name}}}{}
+        \postlevel
+        \begin{callself}{Storage}{{\small \shortstack{append the kept last chunk; advance\\valid length; wake readers;\\patch body\_len, body\_crc, header\_crc;\\fdatasync temporary;\\rename over canonical name}}}{}
         \end{callself}
       \end{call}
     \end{sequencediagram}
@@ -865,11 +877,11 @@
     Figure~\ref{fig:cache-miss-seq} shows opaque: \texttt{get\_miss\_handler}
     creates the per-writer temporary, writes its header, key, and metadata
     region, and registers the write for partial hits
-    (\reqref{FDS-STORAGE.PARTIAL-01}); each \texttt{write\_body} call appends
+    (\reqref{FDS-STORAGE.PARTIAL-02}); each \texttt{write\_body} call appends
     a chunk and advances the valid length a concurrent \texttt{Follower}
-    streams from; and \texttt{finish} patches the header, synchronises the
-    temporary unless stores are unsynchronised, and renames it over the
-    canonical name --- the object's
+    streams from, but for the last, which it keeps; and \texttt{finish}
+    appends that chunk, patches the header, synchronises the temporary unless
+    stores are unsynchronised, and renames it over the canonical name --- the object's
     durable publication --- returning the record size.}\label{fig:fds-publish-seq}
   \end{figure}
 
@@ -882,18 +894,19 @@
   \refine{ADR-STORAGE.ATOMICPUBLISH-01}
   \refine{ADR-STORAGE.WRITERID-01}
   \refine{ADR-PERSISTENCE.DURABILITY-02}
+  \refine{ADR-STORAGE.LASTCHUNK-01}
   \satisfy{FRE-COMPAT.CONCURRENT-01}
   \satisfy{FRE-COMPLIANCE.INCOMPLETE-02}
   \satisfy{FRE-COMPLIANCE.REPLACE-01}
   \satisfy{FRE-COMPLIANCE.READERISOLATION-01}
   \satisfy{FRE-COMPAT.WRITEFAIL-01}
   \satisfy{FRE-COMPAT.ABORTSPACE-01}
-  \satisfy{FRE-COMPAT.UNSIZED-01}
-  \trace{FDS-STORAGE.PARTIAL-01}
+  \satisfy{FRE-COMPAT.UNSIZED-02}
+  \trace{FDS-STORAGE.PARTIAL-02}
   \trace{SDS-LAYOUT.SHARDING-01}
 \end{requirement}
 
-\begin{requirement}{FDS-STORAGE.PARTIAL-01}[draft][functionalRequirement]{Streaming partial hits}
+\begin{requirement}{FDS-STORAGE.PARTIAL-02}[draft][functionalRequirement]{Streaming partial hits}
 
   \localreqdiagram*{fdspartial01}{\reqid}{\reqdesc}
 
@@ -904,7 +917,7 @@
   \texttt{CacheMeta}, the valid body length written so far, a notification
   channel, and the order in which the store opened. A store enters the
   registry when \texttt{get\_miss\_handler} opens its temporary
-  (\reqref{FDS-STORAGE.PUBLISH-02}), and
+  (\reqref{FDS-STORAGE.PUBLISH-03}), and
   leaves it when the store completes
   --- published, or removed once the backend is read-only or an invalidating
   purge has ended it --- or aborts. An invalidating purge marks the key's
@@ -917,7 +930,7 @@
   first consult the registry. If one or more stores of the key that no
   invalidating purge has ended are in flight, it shall return a partial hit
   backed by the most recently opened of them; otherwise it shall look up the
-  published record as \reqref{SDS-LAYOUT.OBJECTFILE-02} specifies. The
+  published record as \reqref{SDS-LAYOUT.OBJECTFILE-03} specifies. The
   request writing a store reads its body back through a lookup that names
   the store by its streaming write
   tag;\footnote{\pgsrc{pingora-cache/src/storage.rs}{166}{\texttt{Storage::lookup\_streaming\_write}},
@@ -928,11 +941,14 @@
 
   \textbf{Partial-hit readers.} A partial hit's reader opens its own
   descriptor on the store's temporary and delivers the bytes up to the valid
-  length, then waits on the store's notification channel. WHEN
-  \texttt{write\_body} appends a chunk, the backend shall advance the valid
-  length and wake every reader of that store before \texttt{write\_body}
-  returns, so that each reader can deliver the chunk within the latency bound
-  \reqref{FRE-COMPAT.STREAMDELIVERY-01} sets. WHEN the store completes ---
+  length, then waits on the store's notification channel. WHEN the backend
+  appends a chunk to the temporary, it shall advance the valid length and
+  wake every reader of that store before the call that appended the chunk
+  goes on: before \texttt{write\_body} returns, or, for the last chunk, which
+  \texttt{finish} writes (\reqref{FDS-STORAGE.PUBLISH-03}), before
+  \texttt{finish} patches the header and synchronises the temporary. Each
+  reader can then deliver the chunk within the latency bound
+  \reqref{FRE-COMPAT.STREAMDELIVERY-02} sets. WHEN the store completes ---
   whether it is published, or removed once the backend is read-only or a
   purge has ended it --- each
   reader shall
@@ -957,10 +973,10 @@
   \refine{ADR-STORAGE.OBJECTFILE-01}
   \satisfy{FRE-COMPAT.STREAMFLAG-01}
   \satisfy{FRE-COMPAT.STREAMING-01}
-  \satisfy{FRE-COMPAT.STREAMDELIVERY-01}
+  \satisfy{FRE-COMPAT.STREAMDELIVERY-02}
   \satisfy{FRE-COMPAT.STREAMEND-01}
   \satisfy{FRE-COMPLIANCE.PARTIALABORT-01}
-  \trace{FDS-STORAGE.PUBLISH-02}
+  \trace{FDS-STORAGE.PUBLISH-03}
 \end{requirement}
 
 \begin{requirement}{FDS-STORAGE.METAUPDATE-01}[draft][functionalRequirement]{Metadata update: in place or withdrawn}
@@ -969,13 +985,13 @@
 
   Each object's metadata sits in a region of its record, right after the key
   and ahead of the body (\reqref{ADR-STORAGE.OBJECTFILE-01}), whose capacity
-  the record's header holds (\reqref{SDS-LAYOUT.OBJECTFILE-02}). Unlike the body, whose length is
-  unknown until the stream ends (\reqref{FRE-COMPAT.UNSIZED-01}), the
+  the record's header holds (\reqref{SDS-LAYOUT.OBJECTFILE-03}). Unlike the body, whose length is
+  unknown until the stream ends (\reqref{FRE-COMPAT.UNSIZED-02}), the
   metadata's exact size is already known when the record is created ---
   \texttt{CacheMeta} is fully serialised at that point --- so the region
   reserves exactly that size plus a \emph{configurable} amount of growth
   headroom beyond it --- 512 bytes by default
-  (\reqref{SDS-LAYOUT.OBJECTFILE-02}) --- to anticipate a later metadata
+  (\reqref{SDS-LAYOUT.OBJECTFILE-03}) --- to anticipate a later metadata
   update. How much
   headroom to reserve is deployment-tunable, trading reserved-but-possibly-unused
   space against how often a later update fits in place; a
@@ -1004,7 +1020,7 @@
   (\reqref{FRE-COMPLIANCE.METAABSENT-01}) rather than updating it. A
   \emph{reader} re-reads instead, and takes the lock only for a last read of
   a record whose checksums kept failing, which then finds it whole
-  (\reqref{SDS-LAYOUT.OBJECTFILE-02}).
+  (\reqref{SDS-LAYOUT.OBJECTFILE-03}).
 
   Before either path, still holding the lock, the backend shall check that
   the record holds the response the update freshens. \texttt{pingora-cache}
@@ -1026,11 +1042,11 @@
   whether because the growth is unusually large or because no headroom was
   configured --- the backend shall withdraw the record instead, so that the
   next request fetches the object again: it rewrites only the record's
-  header, marked withdrawn (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and reports
+  header, marked withdrawn (\reqref{SDS-LAYOUT.OBJECTFILE-03}), and reports
   the update not applied. Every lookup then misses, and Pingora fetches the
   object from the origin and stores it, through a store whose region is
   sized for the new metadata and whose rename replaces the file
-  (\reqref{FDS-STORAGE.PUBLISH-02}). The response that triggered the update
+  (\reqref{FDS-STORAGE.PUBLISH-03}). The response that triggered the update
   is still served, from the record its hit handler holds open. Until the
   store replaces it, the withdrawn file keeps its length, so the eviction
   manager, which the backend never calls (\reqref{FRE-COMPAT.EVICTION-01}),
@@ -1050,7 +1066,7 @@
   record was withdrawn.
   The publication lock is a per-key lock
   in process memory, which a store's final rename
-  (\reqref{FDS-STORAGE.PUBLISH-02}), a purge's unlink
+  (\reqref{FDS-STORAGE.PUBLISH-03}), a purge's unlink
   (\reqref{FDS-STORAGE.PURGE-01}), the reclaim scan's unlink of a canonical
   record (\reqref{FDS-STORAGE.RECLAIM-01}), and the restart procedure's
   admission checks (\reqref{FDS-EVICTION.STARTUP-01}) also take, so none can
@@ -1113,7 +1129,7 @@
   The in-place path writes into the region a lookup may be reading, and a
   withdrawal into the header; a lookup that catches either mid-write is
   protected by the read-side validation and retry that
-  \reqref{SDS-LAYOUT.OBJECTFILE-02} specifies, so it observes the
+  \reqref{SDS-LAYOUT.OBJECTFILE-03} specifies, so it observes the
   pre-update metadata, the post-update metadata, or a miss once the record
   is withdrawn, never a mixture. The body is untouched on either path.
 
@@ -1198,7 +1214,7 @@
   \satisfy{FRE-COMPLIANCE.METAATOMIC-01}
   \satisfy{FRE-COMPLIANCE.METAPERSIST-01}
   \satisfy{FRE-COMPLIANCE.METAABSENT-01}
-  \trace{FDS-STORAGE.PUBLISH-02}
+  \trace{FDS-STORAGE.PUBLISH-03}
   \trace{FDS-STORAGE.PURGE-01}
   \trace{REQ-EFFICIENCY.FRAGMENTATION-01}
 \end{requirement}
@@ -1602,7 +1618,7 @@
   which lives at an unrelated shard path the primary key cannot derive
   (\reqref{FRE-COMPLIANCE.PURGE-01}), nor a per-writer temporary for the
   same key, which is a distinct directory entry identified by its own
-  writer-identity and \texttt{.tmp} suffix (\reqref{FDS-STORAGE.PUBLISH-02}) that a
+  writer-identity and \texttt{.tmp} suffix (\reqref{FDS-STORAGE.PUBLISH-03}) that a
   purge addressed to the bare canonical name never names or opens.
 
   The purge operation itself is an \texttt{unlink} of that canonical path,
@@ -1648,13 +1664,13 @@
 
   \textbf{Racing writers.} A same-key store in flight publishes by renaming
   its own per-writer temporary over the canonical path at completion, under
-  the key's publication lock (\reqref{FDS-STORAGE.PUBLISH-02}). An
+  the key's publication lock (\reqref{FDS-STORAGE.PUBLISH-03}). An
   invalidation shall end every store of the key in flight, under the same
   lock (\reqref{FRE-COMPLIANCE.PURGE-01}): it marks them ended in the
   in-flight registry, so that later lookups pass over them
-  (\reqref{FDS-STORAGE.PARTIAL-01}), and each one's \texttt{finish},
+  (\reqref{FDS-STORAGE.PARTIAL-02}), and each one's \texttt{finish},
   deciding under the lock, removes its temporary instead of renaming it and
-  reports an error (\reqref{FDS-STORAGE.PUBLISH-02}). A store that published
+  reports an error (\reqref{FDS-STORAGE.PUBLISH-03}). A store that published
   before the invalidation took the lock has its record removed by the
   \texttt{unlink}, so no store that began before an invalidation lands
   after it; a store that begins after it is not affected. When the key holds
@@ -1782,8 +1798,8 @@
   \satisfy{FRE-COMPLIANCE.PURGEABSENT-01}
   \satisfy{FRE-COMPLIANCE.PURGEDURABLE-01}
   \satisfy{FRE-COMPLIANCE.READERISOLATION-01}
-  \trace{FDS-STORAGE.PUBLISH-02}
-  \trace{FDS-STORAGE.PARTIAL-01}
+  \trace{FDS-STORAGE.PUBLISH-03}
+  \trace{FDS-STORAGE.PARTIAL-02}
   \trace{FRE-COMPLIANCE.REPLACE-01}
   \trace{SDS-LAYOUT.SHARDING-01}
   \trace{ADR-STORAGE.RECLAIM-01}
@@ -1834,7 +1850,7 @@
   its full length on
   disk.\footnote{\pgsrc{pingora-cache/src/lib.rs}{1901}{\texttt{purge\_impl}}
   makes no eviction call for an \texttt{Expired} outcome.} A record
-  that fails the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-02}
+  that fails the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-03}
   specifies --- damaged, truncated, of another format version, or withdrawn
   --- is reported \texttt{NotFound}, matching what a lookup of that same
   record would report, and is left as it is for
@@ -1921,7 +1937,7 @@
   \trace{FRE-COMPLIANCE.READERISOLATION-01}
 \end{requirement}
 
-\begin{requirement}{ADR-STORAGE.EXECUTOR-02}[draft][designConstraint]{File I/O on the blocking pool}
+\begin{requirement}{ADR-STORAGE.EXECUTOR-03}[draft][designConstraint]{File I/O on the blocking pool}
 
   \localreqdiagram*{adrexecutor01}{\reqid}{\reqdesc}
 
@@ -1993,8 +2009,10 @@
       on the integrator.
     \item[--] One thread handoff per storage operation, which is charged
       against every lookup and every body chunk whether or not the data was
-      in the page cache; on Linux, \reqref{ADR-STORAGE.PAGECACHE-01} keeps
-      the reads the page cache answers on the worker.
+      in the page cache. On Linux, \reqref{ADR-STORAGE.PAGECACHE-01} keeps
+      the reads the page cache answers on the worker; on any system,
+      \reqref{ADR-STORAGE.LASTCHUNK-01} has a store's last chunk written in
+      the handoff that publishes it.
     \item[--] The blocking pool is shared with everything else in the process
       that uses it, and its size is the runtime's to decide, not this
       backend's.
@@ -2006,37 +2024,39 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.EXECUTOR-02}{Specify which work moves to the
+  \reqexpect{refine}{FDS-STORAGE.EXECUTOR-03}{Specify which work moves to the
   blocking pool, what stays on the worker, and how the restart scan bounds
   the stall it cannot move.}
 
   \refine{ADR-PERSISTENCE.MECHANISM-01}
   \satisfy{HLR-COMPLIANCE.RFC-01}
   \trace{ADR-PERSISTENCE.DURABILITY-02}
-  \trace{FRE-COMPAT.STREAMDELIVERY-01}
+  \trace{FRE-COMPAT.STREAMDELIVERY-02}
 \end{requirement}
 
-\begin{requirement}{FDS-STORAGE.EXECUTOR-02}[draft][functionalRequirement]{Storage calls never block the worker}
+\begin{requirement}{FDS-STORAGE.EXECUTOR-03}[draft][functionalRequirement]{Storage calls never block the worker}
 
   \localreqdiagram*{fdsexecutor01}{\reqid}{\reqdesc}
 
   WHILE a \texttt{Storage} call, a \texttt{HandleHit} read, or a
   \texttt{HandleMiss} write is in progress, the backend shall leave the
   executor thread that polled it free to drive other tasks
-  (\reqref{ADR-STORAGE.EXECUTOR-02}).
+  (\reqref{ADR-STORAGE.EXECUTOR-03}).
 
   \textbf{What moves.} Each of the following runs as one unit on the blocking
   pool, so an operation costs a single handoff rather than one per syscall:
   \begin{itemize}
     \item \texttt{lookup} --- opening the record, validating it, and
-      deserialising its metadata (\reqref{SDS-LAYOUT.OBJECTFILE-02}), for a
+      deserialising its metadata (\reqref{SDS-LAYOUT.OBJECTFILE-03}), for a
       published record and for a partial hit's temporary alike
-      (\reqref{FDS-STORAGE.PARTIAL-01});
+      (\reqref{FDS-STORAGE.PARTIAL-02});
     \item \texttt{get\_miss\_handler} --- creating the per-writer temporary
-      and writing the record's fixed part (\reqref{FDS-STORAGE.PUBLISH-02});
-    \item \texttt{write\_body} --- writing a chunk to the temporary;
-    \item \texttt{finish} --- patching the header, the \texttt{fdatasync}
-      unless stores are unsynchronised
+      and writing the record's fixed part (\reqref{FDS-STORAGE.PUBLISH-03});
+    \item \texttt{write\_body} --- writing a chunk to the temporary, but for
+      the last chunk, which the backend keeps for \texttt{finish}
+      (\reqref{FDS-STORAGE.PUBLISH-03}) at no handoff of its own;
+    \item \texttt{finish} --- writing that last chunk, patching the
+      header, the \texttt{fdatasync} unless stores are unsynchronised
       (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and the rename
       (\reqref{ADR-PERSISTENCE.DURABILITY-02}), then
       dropping the miss handler, whose close frees the store's file if the
@@ -2063,7 +2083,7 @@
   have to cross the boundary, since only owned bytes do.
 
   A partial hit's wait for the next chunk also stays on the worker: it is a
-  notification, not a syscall (\reqref{FDS-STORAGE.PARTIAL-01}), and blocking
+  notification, not a syscall (\reqref{FDS-STORAGE.PARTIAL-02}), and blocking
   a pool thread on it would hold that thread for as long as the store takes.
 
   Two syscalls stay deliberately. The first is the \texttt{unlink} that
@@ -2110,10 +2130,10 @@
   co-resident on a single-worker runtime observes while cache traffic runs.}
   \reqcover{satisfy}{IMP}
 
-  \refine{ADR-STORAGE.EXECUTOR-02}
+  \refine{ADR-STORAGE.EXECUTOR-03}
   \satisfy{HLR-COMPLIANCE.RFC-01}
-  \trace{FDS-STORAGE.PUBLISH-02}
-  \trace{FDS-STORAGE.PARTIAL-01}
+  \trace{FDS-STORAGE.PUBLISH-03}
+  \trace{FDS-STORAGE.PARTIAL-02}
   \trace{FDS-STORAGE.PURGE-01}
   \trace{FDS-STORAGE.METAUPDATE-01}
   \trace{FDS-EVICTION.STARTUP-01}
@@ -2123,7 +2143,7 @@
 
   \localreqdiagram*{adrpagecache01}{\reqid}{\reqdesc}
 
-  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-02} runs every storage
+  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-03} runs every storage
   operation on Tokio's blocking pool, and counts the cost among its
   consequences: one thread handoff per operation, whether or not the data
   was in the page cache. Measured on 22~October~2026 with the benchmark of
@@ -2135,7 +2155,7 @@
   and 62\,\% of \texttt{MemCache} for 1~KiB, 64~KiB and 1~MiB bodies, short
   of \reqref{HLR-PERFORMANCE.HITRATE-01} for the first two.
 
-  What \reqref{ADR-STORAGE.EXECUTOR-02} rules out is a worker waiting for the
+  What \reqref{ADR-STORAGE.EXECUTOR-03} rules out is a worker waiting for the
   device. A call the page cache answers does not wait, and Linux can report
   in advance that a call would: \texttt{openat2} with
   \texttt{RESOLVE\_CACHED} fails with \texttt{EAGAIN} unless every component
@@ -2164,15 +2184,15 @@
 
   \textbf{Decision:} On Linux, perform each lookup --- of a published record,
   or of the temporary of a store in flight for a partial hit
-  (\reqref{FDS-STORAGE.PARTIAL-01}) --- and each read of a hit's body on the
+  (\reqref{FDS-STORAGE.PARTIAL-02}) --- and each read of a hit's body on the
   worker that polls it, through calls that fail rather than wait: open the
   file with \texttt{openat2} and \texttt{RESOLVE\_CACHED}, and read it with
   \texttt{preadv2} and \texttt{RWF\_NOWAIT}. When one of these calls reports
   that it would wait, run the operation on the blocking pool, as
-  \reqref{ADR-STORAGE.EXECUTOR-02} decides --- a lookup whole, with the file
+  \reqref{ADR-STORAGE.EXECUTOR-03} decides --- a lookup whole, with the file
   the worker opened, and a body read from the bytes it already holds; so too when a lookup finds anything but a hit or a missing file ---
   a checksum mismatch, whose re-read takes the key's publication lock
-  (\reqref{SDS-LAYOUT.OBJECTFILE-02}), a record that fails validation, an
+  (\reqref{SDS-LAYOUT.OBJECTFILE-03}), a record that fails validation, an
   error --- so that the pool answers it as it always has. Open records and
   temporaries with \texttt{O\_NOATIME}, on the worker and on the pool.
   Every other operation stays on the pool: stores, purges, metadata updates,
@@ -2209,7 +2229,7 @@
       \texttt{MemCache}, short of \reqref{HLR-PERFORMANCE.HITRATE-01}, for
       one more component to build.
     \item \emph{\texttt{io\_uring}}: no pool and no handoff for any
-      operation. Rejected for the reasons \reqref{ADR-STORAGE.EXECUTOR-02}
+      operation. Rejected for the reasons \reqref{ADR-STORAGE.EXECUTOR-03}
       gives; it would also replace the pool for every operation, where this
       decision moves only the reads that need not wait.
     \item \emph{Map records into memory}, and check with \texttt{mincore}
@@ -2236,7 +2256,7 @@
     \item[+] A hit on a record the page cache holds makes no handoff, and the
       pool stays at a few threads beside the workers.
     \item[+] The worker still never waits for the device, so
-      \reqref{FDS-STORAGE.EXECUTOR-02} holds: a call that would wait says so
+      \reqref{FDS-STORAGE.EXECUTOR-03} holds: a call that would wait says so
       instead. The RFC 9111 differential on a single worker
       (\reqref{TC-COMPLIANCE.RFC-01}) found no new deviation in October 2026,
       when the reads of published records first ran on the worker; partial
@@ -2267,7 +2287,7 @@
   worker, through which calls, when an operation goes to the blocking pool,
   the options, and what construction checks.}
 
-  \refine{ADR-STORAGE.EXECUTOR-02}
+  \refine{ADR-STORAGE.EXECUTOR-03}
   \satisfy{HLR-PERFORMANCE.HITRATE-01}
   \trace{HLR-SCOPE.V1-02}
   \trace{HLR-COMPLIANCE.RFC-01}
@@ -2282,16 +2302,16 @@
   body, the backend shall perform that operation on the worker that polls it
   through file calls that fail rather than wait for the storage device; an
   operation one of whose calls fails so runs on the blocking pool, as
-  \reqref{FDS-STORAGE.EXECUTOR-02} specifies
+  \reqref{FDS-STORAGE.EXECUTOR-03} specifies
   (\reqref{ADR-STORAGE.PAGECACHE-01}).
 
   \textbf{The calls.} The lookup opens the canonical path
   (\reqref{SDS-LAYOUT.SHARDING-01}), or, for a partial hit, the temporary of
-  the store it reads (\reqref{FDS-STORAGE.PARTIAL-01}), read-only with
+  the store it reads (\reqref{FDS-STORAGE.PARTIAL-02}), read-only with
   \texttt{openat2} and \texttt{RESOLVE\_CACHED}. It reads the file's first
   16~KiB with \texttt{preadv2} and \texttt{RWF\_NOWAIT}, keeping what the
   page cache holds of them when that covers the header, key and metadata
-  region (\reqref{SDS-LAYOUT.OBJECTFILE-02}). A body read reads its chunk the
+  region (\reqref{SDS-LAYOUT.OBJECTFILE-03}). A body read reads its chunk the
   same way, into memory not zeroed first. A read that returns less than it
   asked for is continued from where it stopped. A call \emph{fails rather
   than waits} when it returns \texttt{EAGAIN}. \texttt{fstat}, which reads
@@ -2301,14 +2321,14 @@
   does it again from the start with the file the worker opened, when a call
   fails rather than waits, and whenever the worker finds anything but a hit
   or a missing file: a record whose checksums do not match, whose re-read
-  under the key's publication lock (\reqref{SDS-LAYOUT.OBJECTFILE-02}) waits
+  under the key's publication lock (\reqref{SDS-LAYOUT.OBJECTFILE-03}) waits
   for an in-place update to end; a record that fails validation, which the
   pool reports as a miss; an error, which the pool reports with its context.
   A path that the kernel's lookup cache knows not to exist is a miss,
   answered on the worker, and so is a partial hit's temporary that is gone.
   The worker never closes a file it hands over, as that close could free a
   file that a store or a purge has just removed
-  (\reqref{FDS-STORAGE.EXECUTOR-02}). A body read that fails rather than
+  (\reqref{FDS-STORAGE.EXECUTOR-03}). A body read that fails rather than
   waits carries on on the pool from the bytes it already holds; one that
   fails with another error is done again on the pool, which reports it.
   Stores, purges, metadata updates, expiries and the restart scan always run
@@ -2329,7 +2349,7 @@
   exist only on Linux and are on by default: page-cache reads
   (\texttt{with\_page\_cache\_reads}) and \texttt{O\_NOATIME}
   (\texttt{with\_noatime}). With page-cache reads off, every lookup and body
-  read runs on the pool as \reqref{FDS-STORAGE.EXECUTOR-02} specifies; with
+  read runs on the pool as \reqref{FDS-STORAGE.EXECUTOR-03} specifies; with
   \texttt{O\_NOATIME} off, files are opened as usual. At construction, with
   page-cache reads on, the backend opens the cache root with
   \texttt{openat2} and \texttt{RESOLVE\_CACHED}, and reads its writer lease
@@ -2347,9 +2367,121 @@
 
   \refine{ADR-STORAGE.PAGECACHE-01}
   \satisfy{HLR-PERFORMANCE.HITRATE-01}
-  \trace{FDS-STORAGE.EXECUTOR-02}
-  \trace{FDS-STORAGE.PARTIAL-01}
-  \trace{SDS-LAYOUT.OBJECTFILE-02}
+  \trace{FDS-STORAGE.EXECUTOR-03}
+  \trace{FDS-STORAGE.PARTIAL-02}
+  \trace{SDS-LAYOUT.OBJECTFILE-03}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.LASTCHUNK-01}[draft][designConstraint]{Last chunk written by finish}
+
+  \localreqdiagram*{adrlastchunk01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-03} runs a store's file
+  work on the blocking pool, one handoff per operation: one to open the
+  store, one per body chunk, and one for \texttt{finish}. A handoff costs
+  about 20~microseconds of processor time under load
+  (Appendix~\ref{app:executor-cost}), and without synchronisation
+  (\reqref{ADR-PERSISTENCE.UNSYNCED-01}) the handoffs are a large share of
+  what a store costs. A body also comes in more chunks than its size
+  suggests. \texttt{pingora-core} reads an HTTP/1 response's headers into a
+  4~KiB buffer, and hands the body bytes that buffer holds over as a chunk
+  of their
+  own,\footnote{\pgsrc{pingora-core/src/protocols/http/v1/client.rs}{247}{\texttt{HttpSession::read\_response}}
+  reads the headers into a buffer it grows by
+  \pgsrc{pingora-core/src/protocols/http/v1/common.rs}{29}{\texttt{INIT\_HEADER\_BUF\_SIZE}},
+  4096 bytes (\pgsrc{pingora-core/src/protocols/http/v1/client.rs}{385}{L385}),
+  and keeps the bytes past the headers as the start of the body
+  (\pgsrc{pingora-core/src/protocols/http/v1/client.rs}{337}{L337}).} so a
+  4~KiB body comes in two chunks, and its store makes four handoffs.
+
+  The body's last chunk is marked: \texttt{write\_body} receives it with
+  \texttt{eof} set, and \texttt{pingora-proxy} calls \texttt{finish} as soon
+  as that call returns.\footnote{\pgsrc{pingora-proxy/src/proxy_cache.rs}{744}{\texttt{HttpProxy::cache\_http\_task}}
+  calls \texttt{finish\_miss\_handler\_best\_effort} right after it
+  (\pgsrc{pingora-proxy/src/proxy_cache.rs}{746}{L746}).} The last chunk's
+  handoff and \texttt{finish}'s therefore follow each other, with nothing
+  between them.
+
+  \textbf{Decision:} Keep the chunk that \texttt{write\_body} receives with
+  \texttt{eof} set, once it is folded into the body's CRC-32C on the worker,
+  and write it in \texttt{finish}'s handoff, before the header is patched. A
+  partial-hit reader is woken as soon as the chunk is written, before the
+  store is synchronised (\reqref{FDS-STORAGE.PARTIAL-02}). Every store does
+  so, with one handoff fewer: three for a 4~KiB body. No option selects it.
+
+  Under \reqref{HLR-SCOPE.V1-02} the two alternatives tie: writing the last
+  chunk in \texttt{finish} builds no component, public interface, background
+  task, or on-disk structure. It was chosen for the fills it raises.
+  Measured on 19~November~2026 with the benchmark of
+  \reqref{TC-PERFORMANCE.STORERATE-01} (four workers, 64 connections, an XFS
+  file system, two runs of five rounds each), unsynchronised fills rose by
+  3.7\,\% for 4~KiB bodies and by 2.9\,\% for 64~KiB bodies, from 50 to 51\,\%
+  and from 61 to 63\,\% of \texttt{MemCache}, and each store took about
+  14~microseconds less processor time. Synchronised fills of those sizes,
+  which wait on their \texttt{fdatasync}, moved by less than one percent.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Keep the last chunk's own handoff}, as every other chunk's:
+      the store holds no chunk past its \texttt{write\_body} call, and a
+      partial-hit reader receives the last chunk when that call returns,
+      rather than when \texttt{finish} writes it. Not adopted:
+      \texttt{finish} follows at once, so a reader waits at most one handoff
+      longer, against a handoff saved on every store.
+    \item \emph{A configuration option between the two}, so that an
+      integrator that calls \texttt{finish} later could keep the last
+      chunk's own handoff. Rejected under \reqref{HLR-SCOPE.V1-02}: a public
+      interface, for an alternative that improves a measured figure by 4\,\%
+      at most, not by the 20\,\% the rule asks.
+    \item \emph{Publish the store from the \texttt{write\_body} call that
+      ends the body}, saving \texttt{finish}'s handoff instead. Rejected: the
+      \texttt{HandleMiss} contract has \texttt{finish} complete a store, and
+      counts a miss handler dropped without it as a failed
+      write;\footnote{\pgsrc{pingora-cache/src/storage.rs}{363}{\texttt{HandleMiss::finish}}.}
+      a store published before \texttt{finish} could no longer fail.
+    \item \emph{Keep a small body whole, and write it in \texttt{finish}'s
+      handoff}, which would save the handoffs of all its chunks. Rejected: it
+      holds a buffer per store in flight, which
+      \reqref{FRE-COMPAT.UNSIZED-02} rules out, and a partial-hit reader
+      would wait for the whole body.
+    \item \emph{Write a store's chunks on the worker}, the direction
+      Appendix~\ref{app:executor} favours, which saves every handoff. Left
+      to a decision of its own: a write the page cache absorbs still waits
+      for the device once the host's dirty data reaches its limit, so the
+      worker needs a bound on the writes it takes.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] One handoff fewer per store: three instead of four for a 4~KiB
+      body.
+    \item[--] The store holds its last chunk from the \texttt{write\_body}
+      call that delivers it until \texttt{finish} writes it: one chunk, as
+      \reqref{FRE-COMPAT.UNSIZED-02} allows.
+    \item[--] A partial-hit reader receives the last chunk once
+      \texttt{finish} has written it, one handoff after the
+      \texttt{write\_body} call that delivered it; an integrator that called
+      \texttt{finish} later would delay it as much
+      (\reqref{FRE-COMPAT.STREAMDELIVERY-02}).
+    \item[--] A failure to write the last chunk is returned by
+      \texttt{finish} rather than by \texttt{write\_body}, which
+      \reqref{FRE-COMPAT.WRITEFAIL-01} allows.
+    \item[--] A chunk sent after the last fails the store, where it was
+      appended before; \texttt{pingora-cache} sends none.
+    \item[--] A body chunk is written in two places, in a \texttt{write\_body}
+      handoff and in \texttt{finish}'s, which must stay equivalent.
+  \end{itemize}
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify which chunk the store
+  keeps, when finish writes it, and what a chunk sent after it does.}
+
+  \refine{ADR-STORAGE.EXECUTOR-03}
+  \trace{FRE-COMPAT.UNSIZED-02}
+  \trace{FRE-COMPAT.STREAMDELIVERY-02}
+  \trace{HLR-PERFORMANCE.STORERATE-01}
+  \trace{HLR-SCOPE.V1-02}
 \end{requirement}
 
 \begin{requirement}{ADR-STORAGE.RECLAIM-01}[draft][designConstraint]{Reclaim via the restart-time scan}
@@ -2359,7 +2491,7 @@
   \textbf{Context:} One kind of file is left behind by otherwise-correct
   operation of this design and never revisited by any keyed
   \texttt{Storage} call again: a per-writer temporary a crash orphans before
-  its rename (\reqref{FDS-STORAGE.PUBLISH-02}, \reqref{FRE-COMPAT.STARTRECLAIM-01}).
+  its rename (\reqref{FDS-STORAGE.PUBLISH-03}, \reqref{FRE-COMPAT.STARTRECLAIM-01}).
   It is not discoverable through
   \texttt{lookup}, \texttt{purge}, or \texttt{update\_meta}: every
   \texttt{Storage} call pingora-cache itself makes is keyed to one specific
@@ -2383,7 +2515,7 @@
   restart-time scan, rather than by any separate mechanism --- together with
   two kinds of canonical record the scan meets anyway: one that fails
   validation, which lookups report as a miss but deliberately leave in place
-  (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and one a metadata update withdrew
+  (\reqref{SDS-LAYOUT.OBJECTFILE-03}), and one a metadata update withdrew
   (\reqref{FDS-STORAGE.METAUPDATE-01}). While Eviction Recovery walks the tree
   to reconstruct the eviction manager, the same walk also classifies and
   removes them, at the cost of no second full-tree traversal and no new
@@ -2514,7 +2646,7 @@
 
   \textbf{Crash-orphaned temporaries.} An entry with the \texttt{.tmp}
   extension carries its writer's lease identity in its name
-  (\reqref{FDS-STORAGE.PUBLISH-02}). The procedure shall treat the writer as
+  (\reqref{FDS-STORAGE.PUBLISH-03}). The procedure shall treat the writer as
   possibly running --- and leave the temporary untouched --- exactly when
   the writer's lease exists and the procedure cannot take its lock, or
   cannot tell (\reqref{ADR-STORAGE.WRITERID-01}). The process's own writers
@@ -2537,21 +2669,21 @@
   matter.
 
   \textbf{Damaged or foreign canonical records.} A canonical record that fails
-  the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-02} specifies ---
+  the read-time validation \reqref{SDS-LAYOUT.OBJECTFILE-03} specifies ---
   including one of another format version --- cannot be admitted, since its key or freshness
   deadline cannot be trusted or decoded. Lookups report such records as
   misses but leave them in place, so the procedure shall reclaim them. A
   record whose checksums mismatch on every read may instead be an in-place
   metadata update caught between its two writes: before treating it as
   damaged, the procedure reads it once more holding the key's publication
-  lock, as a lookup does (\reqref{SDS-LAYOUT.OBJECTFILE-02}), and admits it
+  lock, as a lookup does (\reqref{SDS-LAYOUT.OBJECTFILE-03}), and admits it
   if that read finds it whole.
 
   \textbf{Misplaced records.} A canonical record found anywhere but at the
   path its stored key names (\reqref{SDS-LAYOUT.SHARDING-01}) --- put there by
   hand, or by a defect --- is never served: a lookup of its key reads the
   other path, and a lookup of the key this path belongs to finds a key
-  mismatch (\reqref{SDS-LAYOUT.OBJECTFILE-02}). The procedure shall reclaim
+  mismatch (\reqref{SDS-LAYOUT.OBJECTFILE-03}). The procedure shall reclaim
   it, counted as damaged.
 
   \textbf{Withdrawn records.} A canonical record that a metadata update
@@ -2562,7 +2694,7 @@
 
   \textbf{Variants.} A canonical record whose own stored key carries a
   variance (\texttt{Some(variance)} in its \texttt{CompactCacheKey}) is a
-  secondary slot (\reqref{SDS-LAYOUT.OBJECTFILE-02}). The procedure shall
+  secondary slot (\reqref{SDS-LAYOUT.OBJECTFILE-03}). The procedure shall
   admit it like any other valid record, whatever its sibling primary holds
   (\reqref{ADR-STORAGE.RECLAIM-01}). It never opens that primary: a lookup
   can reach a variant for which no primary was ever stored, and a variant no
@@ -2672,9 +2804,9 @@
   \refine{ADR-STORAGE.WRITERID-01}
   \satisfy{FRE-COMPAT.STARTRECLAIM-01}
   \trace{FDS-EVICTION.STARTUP-01}
-  \trace{FDS-STORAGE.PUBLISH-02}
+  \trace{FDS-STORAGE.PUBLISH-03}
   \trace{FDS-STORAGE.PURGE-01}
-  \trace{SDS-LAYOUT.OBJECTFILE-02}
+  \trace{SDS-LAYOUT.OBJECTFILE-03}
   \trace{SDS-LAYOUT.SHARDING-01}
   \trace{FRE-COMPAT.HOTUPGRADE-01}
 \end{requirement}
@@ -2902,7 +3034,7 @@
 
   This backend has no such generations to distinguish. One key names one
   canonical path (\reqref{SDS-LAYOUT.SHARDING-01}) and a store replaces whatever
-  is there by renaming over it (\reqref{FDS-STORAGE.PUBLISH-02}); a per-writer
+  is there by renaming over it (\reqref{FDS-STORAGE.PUBLISH-03}); a per-writer
   temporary is not a readable generation, and the identifier is required to
   survive \texttt{finish}, so a temporary's identity could not serve as one.
 
@@ -3393,7 +3525,7 @@
   \reqcover{satisfy}{FDS}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
-  \trace{FDS-STORAGE.PUBLISH-02}
+  \trace{FDS-STORAGE.PUBLISH-03}
   \trace{FRE-COMPAT.STREAMING-01}
 \end{requirement}
 
@@ -3409,7 +3541,7 @@
   object, or of a torn record. Delivering only the object's own bytes implies
   that the storage the reader reads from is not reused for anything else while
   the reader still references it; the design decides how
-  (\reqref{FDS-STORAGE.PUBLISH-02}, \reqref{FDS-STORAGE.PURGE-01}).
+  (\reqref{FDS-STORAGE.PUBLISH-03}, \reqref{FDS-STORAGE.PURGE-01}).
 
   \textit{Basis: \rfcsec{9111}{4.4}[invalidating stored responses];
   \rfcsec{9111}{3}[storing responses].}

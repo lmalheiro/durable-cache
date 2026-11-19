@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-COMPAT.UNSIZED-01 — Unsized body accepted and persisted.
+//! TC-COMPAT.UNSIZED-02 — Unsized body accepted and persisted.
 //!
 //! Every clause of this TC's expected result — no size declared, reserved,
 //! or bounded ahead of the bytes; persisted length exactly equal to the
 //! total streamed, including the empty-body and multi-chunk-boundary cases;
-//! and every chunk in the file before its `write_body` returns, so the store
-//! holds no body bytes beyond the chunk in hand — is a property of
+//! and every chunk but the last in the file before its `write_body`
+//! returns, and the last once `finish` writes it, so the store holds no more
+//! than one chunk in memory — is a property of
 //! `Storage::get_miss_handler`/`write_body` itself, not of how the bytes
 //! were sourced, so this crate-level exercise (no HTTP, no upstream) closes
 //! it fully. `test/compat`'s `unsized_body.rs` is a redundant end-to-end
@@ -20,7 +21,7 @@ use pingora_cache::storage::Storage;
 
 use super::support;
 
-// IMP-TC.COMPAT.UNSIZED-01: satisfy TC-COMPAT.UNSIZED-01
+// IMP-TC.COMPAT.UNSIZED-02: satisfy TC-COMPAT.UNSIZED-02
 
 async fn store_and_verify(name: &str, chunks: &[&[u8]]) {
     let (cache, _tmp) = support::leaked_cache();
@@ -34,7 +35,7 @@ async fn store_and_verify(name: &str, chunks: &[&[u8]]) {
         let eof = i == chunks.len() - 1;
         // No Content-Length is ever passed to get_miss_handler or write_body
         // — the total length is learned only once the last chunk lands,
-        // exactly as FRE-COMPAT.UNSIZED-01 requires.
+        // exactly as FRE-COMPAT.UNSIZED-02 requires.
         handler
             .write_body(Bytes::copy_from_slice(chunk), eof)
             .await
@@ -50,7 +51,7 @@ async fn store_and_verify(name: &str, chunks: &[&[u8]]) {
 }
 
 #[tokio::test]
-async fn tc_compat_unsized_01_irregular_chunk_sizes() {
+async fn tc_compat_unsized_02_irregular_chunk_sizes() {
     store_and_verify(
         "/unsized-irregular",
         &[b"a", b"", b"bcdefg", b"h", b"ijklmnopqrstuvwxyz"],
@@ -59,7 +60,7 @@ async fn tc_compat_unsized_01_irregular_chunk_sizes() {
 }
 
 #[tokio::test]
-async fn tc_compat_unsized_01_empty_body() {
+async fn tc_compat_unsized_02_empty_body() {
     // A single empty final chunk — `pingora-cache` always calls `write_body`
     // at least once, with `eof` set on the last (here, only) call, even for
     // a zero-length body.
@@ -67,12 +68,14 @@ async fn tc_compat_unsized_01_empty_body() {
 }
 
 /// Steps 2 and 4: whatever the body's size and however it is chunked, every
-/// chunk is in the store's temporary before its `write_body` returns:
-/// after each call the file holds the header, key, and metadata region plus
-/// exactly the body bytes accepted so far, so nothing is held back in
+/// chunk but the last is in the store's temporary before its `write_body`
+/// returns: after each call the file holds the header, key, and metadata
+/// region plus exactly the body bytes accepted so far. The last chunk, which
+/// comes with `eof` set, is the one the store keeps, until `finish` writes
+/// it (ADR-STORAGE.LASTCHUNK-01), so no more than one chunk is held back in
 /// memory.
 #[tokio::test]
-async fn tc_compat_unsized_01_every_chunk_is_written_before_write_body_returns() {
+async fn tc_compat_unsized_02_every_chunk_but_the_last_is_written_before_write_body_returns() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/unsized-write-through");
     let meta = support::meta();
@@ -87,18 +90,30 @@ async fn tc_compat_unsized_01_every_chunk_is_written_before_write_body_returns()
     let chunk = vec![0x7Eu8; 33_333];
     let mut expected = Vec::new();
     for i in 0..60 {
+        let eof = i == 59;
         handler
-            .write_body(Bytes::copy_from_slice(&chunk), i == 59)
+            .write_body(Bytes::copy_from_slice(&chunk), eof)
             .await
-            .unwrap();
+            .expect("each chunk is accepted");
+        let in_file = if eof {
+            expected.len()
+        } else {
+            expected.len() + chunk.len()
+        };
         expected.extend_from_slice(&chunk);
         assert_eq!(
-            std::fs::metadata(&temp).unwrap().len(),
-            body_offset as u64 + expected.len() as u64,
-            "after write_body {i} the temporary holds every byte accepted so far"
+            std::fs::metadata(&temp)
+                .expect("the temporary is there")
+                .len(),
+            body_offset as u64 + in_file as u64,
+            "after write_body {i}, the temporary holds every byte accepted so far{}",
+            if eof { " but the last chunk's" } else { "" }
         );
     }
-    handler.finish().await.unwrap();
+    handler
+        .finish()
+        .await
+        .expect("finish writes the last chunk");
     let (_meta, body) = support::lookup_body(cache, &key).await.unwrap();
     assert_eq!(
         body, expected,
@@ -107,7 +122,7 @@ async fn tc_compat_unsized_01_every_chunk_is_written_before_write_body_returns()
 }
 
 #[tokio::test]
-async fn tc_compat_unsized_01_multi_block_body() {
+async fn tc_compat_unsized_02_multi_block_body() {
     // Comfortably spans typical 4 KiB file-system block boundaries.
     let big_chunk = vec![0xABu8; 9000];
     let chunks: Vec<&[u8]> = vec![

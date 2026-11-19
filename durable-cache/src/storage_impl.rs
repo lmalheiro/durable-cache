@@ -316,7 +316,7 @@ impl Storage for FsCache {
     ) -> Result<MissHandler> {
         // Hash the key and serialise the metadata here (pure CPU), then let
         // the blocking pool create the temporary and write the record's
-        // fixed part (FDS-STORAGE.EXECUTOR-02).
+        // fixed part (FDS-STORAGE.EXECUTOR-03).
         let prepared = crate::miss::FsMissHandler::prepare(self, key, meta)?;
         crate::blocking::run(move || crate::miss::FsMissHandler::open(self, prepared))
             .await
@@ -339,7 +339,7 @@ impl Storage for FsCache {
         //
         // The target is resolved here because it borrows the caller's key;
         // the unlink and any `fsync` behind it go to the blocking pool
-        // (FDS-STORAGE.EXECUTOR-02).
+        // (FDS-STORAGE.EXECUTOR-03).
         let Some(key) = crate::purge::resolve(target) else {
             return Ok(PurgeOutcome::NotFound);
         };
@@ -370,7 +370,7 @@ impl Storage for FsCache {
         _trace: &SpanHandle,
     ) -> Result<bool> {
         // Serialising the new metadata is CPU work and stays here; reading
-        // the record and writing it back does not (FDS-STORAGE.EXECUTOR-02).
+        // the record and writing it back does not (FDS-STORAGE.EXECUTOR-03).
         let prepared = crate::metaupdate::prepare(self, key, meta)?;
         crate::blocking::run(move || crate::metaupdate::update_meta(self, prepared)).await
     }

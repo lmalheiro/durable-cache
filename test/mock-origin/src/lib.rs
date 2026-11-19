@@ -72,7 +72,7 @@ impl MockOrigin {
     }
 
     /// How many times this path has actually been fetched from the origin
-    /// -- TC-COMPAT.STREAMING-01's own concern: a follower attached to an
+    /// -- TC-COMPAT.STREAMING-02's own concern: a follower attached to an
     /// in-flight writer must never cause a second fetch.
     pub fn fetch_count(&self, path: impl Into<String>) -> usize {
         self.state

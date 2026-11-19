@@ -111,7 +111,7 @@ impl FsCacheConfig {
     /// pool. A lookup opens the record with `openat2` and `RESOLVE_CACHED`
     /// (Linux 5.12), and reads it with `preadv2` and `RWF_NOWAIT`, which
     /// fail rather than wait for the device; whatever would wait goes to the
-    /// pool (FDS-STORAGE.EXECUTOR-02).
+    /// pool (FDS-STORAGE.EXECUTOR-03).
     ///
     /// The kernel and the cache's file system must support both calls:
     /// ext4, XFS and btrfs do; as of Linux 6.12, tmpfs and overlayfs, the
@@ -218,7 +218,7 @@ impl FsCacheConfig {
     }
 
     /// The metadata region's capacity for segments of `segments_len` bytes:
-    /// the segments plus the headroom (SDS-LAYOUT.OBJECTFILE-02).
+    /// the segments plus the headroom (SDS-LAYOUT.OBJECTFILE-03).
     #[inline]
     pub(crate) fn meta_capacity_for(&self, segments_len: u32) -> u32 {
         segments_len.saturating_add(self.meta_headroom)

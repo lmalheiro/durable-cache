@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The in-flight registry backing streaming partial hits
-//! (FDS-STORAGE.PARTIAL-01).
+//! (FDS-STORAGE.PARTIAL-02).
 //!
 //! The file system does not signal appends, so a partial hit's reader needs
 //! the store's valid length and a notification beside the file. A store
@@ -33,9 +33,10 @@ pub struct InFlightWriter {
     /// the growing temporary again.
     pub internal_meta: Vec<u8>,
     pub header_meta: Vec<u8>,
-    /// Body bytes written to the temporary so far. The store writes every
-    /// chunk before its `write_body` returns and only then publishes the new
-    /// length, so a reader never reads past what is in the file.
+    /// Body bytes written to the temporary so far. The store writes each
+    /// chunk, in its `write_body` or, for the last, in `finish`, and only
+    /// then publishes the new length, so a reader never reads past what is
+    /// in the file.
     pub valid_len: AtomicU64,
     /// Notified once per appended chunk, and once more when the store ends,
     /// so readers never poll.

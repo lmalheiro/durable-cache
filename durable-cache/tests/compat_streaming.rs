@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-COMPAT.STREAMING-01 — Followers stream a partial hit.
+//! TC-COMPAT.STREAMING-02 — Followers stream a partial hit.
 //!
 //! The backend advertises streaming partial writes
 //! (FRE-COMPAT.STREAMFLAG-01), a lookup while several stores of a key are in
 //! flight resolves to the most recently opened one
 //! (FRE-COMPAT.STREAMING-01), chunks reach followers within the bound
-//! FRE-COMPAT.STREAMDELIVERY-01 sets, and a follower ends normally when the
+//! FRE-COMPAT.STREAMDELIVERY-02 sets, and a follower ends normally when the
 //! store completes (FRE-COMPAT.STREAMEND-01).
 //!
 //! Two legs need a real proxy rather than the `Storage` API: the cache lock
@@ -27,13 +27,13 @@ use super::support;
 /// Step 1: the flag that lets followers reach a partial hit at all
 /// (FRE-COMPAT.STREAMFLAG-01).
 #[tokio::test]
-async fn tc_compat_streaming_01_advertises_streaming_partial_writes() {
+async fn tc_compat_streaming_02_advertises_streaming_partial_writes() {
     let (cache, _tmp) = support::leaked_cache();
     assert!(cache.support_streaming_partial_write());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tc_compat_streaming_01_follower_streams_as_leader_writes() {
+async fn tc_compat_streaming_02_follower_streams_as_leader_writes() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/streaming-basic");
     let meta = support::meta();
@@ -83,7 +83,7 @@ async fn tc_compat_streaming_01_follower_streams_as_leader_writes() {
 }
 
 #[tokio::test]
-async fn tc_compat_streaming_01_lookup_resolves_to_the_most_recently_opened_writer() {
+async fn tc_compat_streaming_02_lookup_resolves_to_the_most_recently_opened_writer() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/streaming-most-recent");
     let meta = support::meta();
@@ -124,11 +124,12 @@ async fn tc_compat_streaming_01_lookup_resolves_to_the_most_recently_opened_writ
 
 /// Steps 6 to 8: several followers on one in-flight store receive each chunk
 /// as the store writes it — at least 99 % of deliveries within 10 ms of the
-/// chunk's `write_body` returning (FRE-COMPAT.STREAMDELIVERY-01) — and every
+/// chunk's `write_body` returning, or, for the last chunk, of `finish`
+/// starting (FRE-COMPAT.STREAMDELIVERY-02) — and every
 /// follower's body matches the store's, ending normally across the
 /// concluding rename (FRE-COMPAT.STREAMEND-01).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tc_compat_streaming_01_followers_receive_chunks_within_the_latency_bound() {
+async fn tc_compat_streaming_02_followers_receive_chunks_within_the_latency_bound() {
     const FOLLOWERS: usize = 10;
     const CHUNKS: usize = 1000;
     const CHUNK: &[u8] = b"0123456789abcdef";
@@ -178,6 +179,9 @@ async fn tc_compat_streaming_01_followers_receive_chunks_within_the_latency_boun
         // is written for.
         tokio::task::yield_now().await;
     }
+    // `finish` writes the last chunk, so that chunk's delivery is timed from
+    // the start of `finish`.
+    *last_write.lock().expect("no other thread panicked") = Instant::now();
     writer.finish().await.unwrap();
 
     let expected: Vec<u8> = CHUNK.repeat(CHUNKS);
@@ -206,7 +210,7 @@ async fn tc_compat_streaming_01_followers_receive_chunks_within_the_latency_boun
 /// writing, resolves to that very store, not to whichever opened most
 /// recently.
 #[tokio::test]
-async fn tc_compat_streaming_01_a_tagged_lookup_resolves_to_its_own_writer() {
+async fn tc_compat_streaming_02_a_tagged_lookup_resolves_to_its_own_writer() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/streaming-tagged");
     let meta = support::meta();
@@ -248,9 +252,9 @@ async fn tc_compat_streaming_01_a_tagged_lookup_resolves_to_its_own_writer() {
 
 /// A partial hit neither seeks nor counts an eviction access, like one from
 /// `MemCache`, the in-memory backend of `pingora-cache`
-/// (FDS-STORAGE.PARTIAL-01).
+/// (FDS-STORAGE.PARTIAL-02).
 #[tokio::test]
-async fn tc_compat_streaming_01_partial_hits_do_not_seek_or_count_access() {
+async fn tc_compat_streaming_02_partial_hits_do_not_seek_or_count_access() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/streaming-no-seek");
     let meta = support::meta();
@@ -280,7 +284,7 @@ async fn tc_compat_streaming_01_partial_hits_do_not_seek_or_count_access() {
 }
 
 #[tokio::test]
-async fn tc_compat_streaming_01_multiple_concurrent_followers_see_the_same_writer() {
+async fn tc_compat_streaming_02_multiple_concurrent_followers_see_the_same_writer() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/streaming-multi-follower");
     let meta = support::meta();
@@ -311,7 +315,7 @@ async fn tc_compat_streaming_01_multiple_concurrent_followers_see_the_same_write
 /// body, and never from the published record, which may be another store's
 /// (`Storage::lookup_streaming_write`'s own contract).
 #[tokio::test]
-async fn tc_compat_streaming_01_a_tagged_lookup_never_falls_back_to_another_object() {
+async fn tc_compat_streaming_02_a_tagged_lookup_never_falls_back_to_another_object() {
     let (cache, _tmp) = support::leaked_cache();
     let key = support::key("/streaming-tag-gone");
     let meta = support::meta();

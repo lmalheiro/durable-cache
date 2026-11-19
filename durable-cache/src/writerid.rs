@@ -6,7 +6,7 @@
 //!
 //! **The problem.** A store writes its record to a temporary file, and
 //! renames it to the object's name once the record is complete
-//! (FDS-STORAGE.PUBLISH-02). A process that crashes leaves its temporaries
+//! (FDS-STORAGE.PUBLISH-03). A process that crashes leaves its temporaries
 //! behind, and the scan at the next start removes them
 //! (FDS-STORAGE.RECLAIM-01). But more than one process can use a cache
 //! directory at the same time: during a hot upgrade, the old process and the
@@ -67,7 +67,7 @@ use std::{fmt, io};
 
 /// The directory under the cache root that holds the leases.
 pub const LEASE_DIR: &str = "writers";
-/// Extension of a per-writer temporary (FDS-STORAGE.PUBLISH-02):
+/// Extension of a per-writer temporary (FDS-STORAGE.PUBLISH-03):
 /// `<hash>.<pid>-<nonce>.<counter>.tmp`.
 pub const TEMP_SUFFIX: &str = "tmp";
 /// A lease's extension.
@@ -294,7 +294,7 @@ mod tests {
         nonce: 0x6fd5_a44b_0000_0001,
     };
 
-    /// A temporary's name, as FDS-STORAGE.PUBLISH-02 spells it, parses back
+    /// A temporary's name, as FDS-STORAGE.PUBLISH-03 spells it, parses back
     /// into the parts it was written from.
     #[test]
     fn name_round_trips() {

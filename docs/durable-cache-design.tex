@@ -59,7 +59,7 @@
 
   While a store is in flight, the object is written in that same
   second-level directory as a per-writer temporary, named per
-  \reqref{FDS-STORAGE.PUBLISH-02} (e.g.\
+  \reqref{FDS-STORAGE.PUBLISH-03} (e.g.\
   \texttt{a1/b2/a1b2c3d4e5f6\dots.4711-6fd5a44b00000001.17.tmp} for store~17
   of the backend instance holding the lease
   \texttt{writers/4711-6fd5a44b00000001.lock});
@@ -120,7 +120,7 @@
   \satisfy{REQ-EFFICIENCY.DIRSCALE-01}
   \satisfy{FRE-COMPLIANCE.VARY-01}
   \satisfy{FRE-COMPLIANCE.VARYISOLATION-01}
-  \trace{FDS-STORAGE.PUBLISH-02}
+  \trace{FDS-STORAGE.PUBLISH-03}
   \trace{ADR-EFFICIENCY.COMPACTION-01}
   \trace{FRE-COMPAT.STREAMING-01}
 
@@ -223,7 +223,7 @@
   \refine{SDS-LAYOUT.SHARDING-01}
 \end{requirement}
 
-\begin{requirement}{SDS-LAYOUT.OBJECTFILE-02}[draft][structuralRequirement]{Object-file record layout}
+\begin{requirement}{SDS-LAYOUT.OBJECTFILE-03}[draft][structuralRequirement]{Object-file record layout}
 
   \localreqdiagram*{dsn2}{\reqid}{\reqdesc}
 
@@ -387,18 +387,20 @@
   hands the backend the \texttt{CacheMeta} directly, before any body bytes
   arrive.} --- the
   \texttt{CacheMeta} is available then; body
-  chunks are appended as they stream in, each folded into a running CRC-32C
-  kept in memory unless the build leaves out the \texttt{body-crc} feature.
-  While the per-writer temporary grows
+  chunks are appended as they stream in, but for the last, which is
+  appended at completion (\reqref{FDS-STORAGE.PUBLISH-03}), each folded
+  into a running CRC-32C kept in memory unless the build leaves out the
+  \texttt{body-crc} feature. While the per-writer temporary grows
   (\reqref{SDS-LAYOUT.SHARDING-01}), the valid length lives in the in-memory
   in-flight registry that backs streaming partial hits
-  (\reqref{FDS-STORAGE.PARTIAL-01}); the on-disk header is \emph{not}
+  (\reqref{FDS-STORAGE.PARTIAL-02}); the on-disk header is \emph{not}
   the source of truth for readers of an in-flight write. At completion the
-  backend patches \texttt{body\_len} and \texttt{body\_crc}, recomputes
+  backend appends that last chunk, patches \texttt{body\_len} and
+  \texttt{body\_crc}, recomputes
   \texttt{header\_crc}, synchronises the file's data to stable storage unless
   stores are unsynchronised (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and
   renames the temporary to the canonical name
-  (\reqref{FDS-STORAGE.PUBLISH-02}, \reqref{ADR-PERSISTENCE.DURABILITY-02}).
+  (\reqref{FDS-STORAGE.PUBLISH-03}, \reqref{ADR-PERSISTENCE.DURABILITY-02}).
 
   A reader accepts a published record only if, in this order: the magic and
   \texttt{version} match this layout's; \texttt{header\_crc} verifies; the
@@ -438,7 +440,7 @@
         \postlevel
         \postlevel
         \postlevel
-        \begin{callself}{Storage}{{\small \shortstack{no in-flight write for the key (\reqref{FDS-STORAGE.PARTIAL-01});\\compute combined hash (\reqref{SDS-LAYOUT.SHARDING-01});\\open file at shard path; read 44-byte header}}}{}
+        \begin{callself}{Storage}{{\small \shortstack{no in-flight write for the key (\reqref{FDS-STORAGE.PARTIAL-02});\\compute combined hash (\reqref{SDS-LAYOUT.SHARDING-01});\\open file at shard path; read 44-byte header}}}{}
         \end{callself}
         \begin{sdalt}{alt}{[magic, version, CRCs, key, and length all valid]}
           \postlevel
@@ -461,7 +463,7 @@
     \end{sequencediagram}
     \end{adjustbox}
     \caption{Lookup/read sequence for a published record (an in-flight write
-    of the key is served first, as \reqref{FDS-STORAGE.PARTIAL-01}
+    of the key is served first, as \reqref{FDS-STORAGE.PARTIAL-02}
     specifies): the reader recomputes the file's own path from the key,
     opens it, and validates the record before trusting it. Any single
     validation failure --- a bad magic or version, a CRC mismatch, a
@@ -663,7 +665,7 @@
   \satisfy{FRE-COMPLIANCE.VALIDATORS-01}
   \satisfy{FRE-COMPLIANCE.BODY-01}
   \satisfy{FRE-COMPLIANCE.TRAILERS-01}
-  \trace{FDS-STORAGE.PUBLISH-02}
+  \trace{FDS-STORAGE.PUBLISH-03}
   \trace{FDS-STORAGE.METAUPDATE-01}
   \trace{ADR-EFFICIENCY.COMPACTION-01}
   \trace{FRE-COMPLIANCE.REVALIDATION-01}
@@ -678,7 +680,7 @@
 
   \localreqdiagram*{dsn3}{\reqid}{\reqdesc}
 
-  The key segment of a record (\reqref{SDS-LAYOUT.OBJECTFILE-02}) holds the
+  The key segment of a record (\reqref{SDS-LAYOUT.OBJECTFILE-03}) holds the
   object's
   \texttt{CompactCacheKey}\footnote{\pgsrc{pingora-cache/src/key.rs}{153}{\texttt{CompactCacheKey}}.}
   as these fields, in this order, with no padding between them:
@@ -721,7 +723,7 @@
   record whose key does not decode.}
   \reqcover{satisfy}{IMP}
 
-  \refine{SDS-LAYOUT.OBJECTFILE-02}
+  \refine{SDS-LAYOUT.OBJECTFILE-03}
   \trace{FDS-EVICTION.STARTUP-01}
   \trace{FDS-STORAGE.RECLAIM-01}
   \trace{FRE-COMPAT.FORMATUPGRADE-01}
@@ -743,7 +745,7 @@
   force every integrator to reimplement the same scan-and-reconcile
   sequencing below, and doing so from outside the crate would mean exposing
   the private on-disk object-record format this specification keeps
-  internal everywhere else (\reqref{SDS-LAYOUT.OBJECTFILE-02}); folding it
+  internal everywhere else (\reqref{SDS-LAYOUT.OBJECTFILE-03}); folding it
   into a custom \texttt{EvictionManager} was already ruled out by
   \reqref{ADR-COMPAT.EVICTION-01}, which adopted the stock manager
   specifically to avoid building one. The cost is a second public API
@@ -768,7 +770,7 @@
   \texttt{HttpCache} builds for a live admission, so the two paths address one
   entry rather than two --- and \texttt{size} is the
   record size --- the file's length --- the same size a completed store
-  reports (\reqref{FDS-STORAGE.PUBLISH-02}). Each \texttt{admit} may return
+  reports (\reqref{FDS-STORAGE.PUBLISH-03}). Each \texttt{admit} may return
   eviction victims --- the manager deducts their sizes immediately and
   expects the caller to remove them from storage --- so the procedure shall
   purge every returned victim from \texttt{Storage} as an eviction, naming it by
@@ -877,7 +879,7 @@
 
   \textbf{The read-only gate.} The backend shall keep a process-wide
   \emph{read-only} flag behind a read--write gate. Every durable change ---
-  a store's final rename (\reqref{FDS-STORAGE.PUBLISH-02}), a purge's unlink
+  a store's final rename (\reqref{FDS-STORAGE.PUBLISH-03}), a purge's unlink
   (\reqref{FDS-STORAGE.PURGE-01}), either path of a metadata update
   (\reqref{FDS-STORAGE.METAUPDATE-01}) or of an expiry
   (\reqref{FDS-STORAGE.EXPIRE-01}), and a reclaim unlink
@@ -902,7 +904,7 @@
       it,\footnote{The proxy propagates the error from
       \pgsrc{pingora-proxy/src/proxy_cache.rs}{689}{\texttt{set\_miss\_handler}}
       with \texttt{?}.} and partial-hit readers inside this process
-      (\reqref{FDS-STORAGE.PARTIAL-01}) keep streaming;
+      (\reqref{FDS-STORAGE.PARTIAL-02}) keep streaming;
     \item in \texttt{finish}, remove the temporary instead of renaming it,
       while reporting the store created with its record size, so the request
       completes normally --- the entry this adds to the process's own

@@ -98,11 +98,11 @@ pub enum PausePoint {
     /// blocking pool inside a runtime, or where the handler is dropped
     /// outside one. The file is an aborted or discarded store's temporary, a
     /// record replaced or purged while a hit read it, or a removed temporary
-    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-02).
+    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-03).
     BeforeClosingRemovedFile,
     /// Store: at the start of its miss handler's `Drop`. A test holds a
     /// store here to see on which thread its handler is dropped. Path: the
-    /// canonical record (FDS-STORAGE.EXECUTOR-02).
+    /// canonical record (FDS-STORAGE.EXECUTOR-03).
     StoreDropping,
 }
 
@@ -114,7 +114,7 @@ pub enum FaultPoint {
     /// a body chunk (TC-COMPAT.WRITEFAIL-01, TC-COMPAT.ABORTSPACE-01).
     WriteTemp,
     /// Synchronising a store's temporary before it is renamed into place
-    /// (TC-COMPAT.WRITEFAIL-01, TC-STORAGE.PUBLISH-02).
+    /// (TC-COMPAT.WRITEFAIL-01, TC-STORAGE.PUBLISH-03).
     SyncTemp,
     /// Renaming a store's temporary over its canonical name
     /// (TC-COMPAT.WRITEFAIL-01).
