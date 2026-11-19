@@ -24,6 +24,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
+mod worker;
+
+#[cfg(target_os = "linux")]
+pub use self::worker::WorkerCall;
+
 /// A place in the backend where a test can hold an operation.
 ///
 /// A test arms a pause with [`Hooks::arm_pause`], naming the point and,
@@ -119,23 +125,6 @@ pub enum FaultPoint {
     SyncFileSystem,
 }
 
-/// A call on the async worker, from the page cache only, that a test can
-/// make fail: report that it would wait for the device, or that the system
-/// does not support it (TC-STORAGE.PAGECACHE-01). Linux only, as those calls
-/// are.
-#[cfg(target_os = "linux")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkerCall {
-    /// A lookup's open of a record or of a store's temporary. Path: that
-    /// file.
-    Open,
-    /// A lookup's read of a record's fixed part. Path: the record or
-    /// temporary.
-    RecordRead,
-    /// A read of a body chunk. Path: the record or temporary read.
-    BodyRead,
-}
-
 type NameOverride = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -211,16 +200,6 @@ pub struct HookConfig {
     pub faults: Vec<(FaultPoint, usize)>,
 }
 
-/// One armed worker fault: the call to make fail, on which file, after how
-/// many such calls go through, and with what kind of error.
-#[cfg(target_os = "linux")]
-struct WorkerFault {
-    call: WorkerCall,
-    path: PathBuf,
-    skip: usize,
-    kind: std::io::ErrorKind,
-}
-
 /// The runtime hooks of one backend instance.
 #[derive(Default)]
 pub struct Hooks {
@@ -229,7 +208,7 @@ pub struct Hooks {
     faults: Mutex<HashMap<FaultPoint, usize>>,
     meta_decodes: AtomicU64,
     #[cfg(target_os = "linux")]
-    worker_faults: Mutex<Vec<WorkerFault>>,
+    worker_faults: Mutex<Vec<worker::WorkerFault>>,
     handoffs: AtomicU64,
     marker_writes: AtomicU64,
 }
@@ -313,60 +292,6 @@ impl Hooks {
 
     pub(crate) fn count_meta_decode(&self) {
         self.meta_decodes.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Make one `call` on the worker, on the file at `path`, report that it
-    /// would wait: the first after `skip` such calls go through.
-    #[cfg(target_os = "linux")]
-    pub fn arm_worker_wait(&self, call: WorkerCall, path: &Path, skip: usize) {
-        self.arm_worker_fault(call, path, skip, std::io::ErrorKind::WouldBlock);
-    }
-
-    /// Make one `call` on the worker, on the file at `path`, report that the
-    /// system does not support it: the first after `skip` such calls go
-    /// through.
-    #[cfg(target_os = "linux")]
-    pub fn arm_worker_unsupported(&self, call: WorkerCall, path: &Path, skip: usize) {
-        self.arm_worker_fault(call, path, skip, std::io::ErrorKind::Unsupported);
-    }
-
-    /// Make one `call` on the worker, on the file at `path`, report that the
-    /// file does not exist, as when it is removed just before: the first
-    /// after `skip` such calls go through.
-    #[cfg(target_os = "linux")]
-    pub fn arm_worker_missing(&self, call: WorkerCall, path: &Path, skip: usize) {
-        self.arm_worker_fault(call, path, skip, std::io::ErrorKind::NotFound);
-    }
-
-    #[cfg(target_os = "linux")]
-    fn arm_worker_fault(
-        &self,
-        call: WorkerCall,
-        path: &Path,
-        skip: usize,
-        kind: std::io::ErrorKind,
-    ) {
-        lock(&self.worker_faults).push(WorkerFault {
-            call,
-            path: path.to_path_buf(),
-            skip,
-            kind,
-        });
-    }
-
-    /// The error this `call` on `path` is to fail with, if a test armed one.
-    #[cfg(target_os = "linux")]
-    pub(crate) fn worker_fault(&self, call: WorkerCall, path: &Path) -> Option<std::io::Error> {
-        let mut faults = lock(&self.worker_faults);
-        let i = faults
-            .iter()
-            .position(|w| w.call == call && w.path == path)?;
-        if faults[i].skip > 0 {
-            faults[i].skip -= 1;
-            return None;
-        }
-        let kind = faults.remove(i).kind;
-        Some(std::io::Error::new(kind, format!("injected at {call:?}")))
     }
 
     /// How many lookups and body reads this backend has handed to the

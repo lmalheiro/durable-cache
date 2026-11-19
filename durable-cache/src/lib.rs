@@ -40,7 +40,7 @@
 //! crate is an independent project, not affiliated with, endorsed by, or
 //! sponsored by Cloudflare, Inc.
 
-/// Run a test hook (see `src/hooks.rs`): the body is compiled only into this
+/// Run a test hook (see `src/hooks/mod.rs`): the body is compiled only into this
 /// crate's own test build. Everything in it, the arguments a hook call
 /// computes included, is absent from any other build, so a hook can never
 /// cost a production build anything or block it. The body is a block: a

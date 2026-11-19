@@ -262,7 +262,9 @@ test scaffolding, or tooling.
 │   │   │                        the service worker (Linux page-cache reads aside)
 │   │   ├── nowait.rs            Linux: page-cache reads on the worker, which
 │   │   │                        fail rather than wait for the device
-│   │   ├── hooks.rs             test-only pauses, faults and instrumentation
+│   │   ├── platform.rs          the calls that differ between Linux and other
+│   │   │                        Unix systems: opening, reading on the pool, flushing
+│   │   ├── hooks/               test-only pauses, faults and instrumentation
 │   │   └── metrics.rs           prometheus counters (feature `metrics`)
 │   └── tests/                 integration tests against the real Storage trait
 │                              (no HTTP); named tc_<requirement-id>_*. Built into
