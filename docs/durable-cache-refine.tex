@@ -2004,7 +2004,10 @@
   \textbf{Consequences:}
   \begin{itemize}
     \item[+] A storage operation never holds a service worker, so a slow
-      device delays the request that touched it and nothing else.
+      device delays the request that touched it and nothing else. The one
+      exception, \reqref{ADR-STORAGE.INLINEWRITES-01}, holds fewer workers at
+      once than the runtime has, and only for writes that wait for no
+      device.
     \item[+] Correct on the default Pingora configuration, with no requirement
       on the integrator.
     \item[--] One thread handoff per storage operation, which is charged
@@ -2012,7 +2015,9 @@
       in the page cache. On Linux, \reqref{ADR-STORAGE.PAGECACHE-01} keeps
       the reads the page cache answers on the worker; on any system,
       \reqref{ADR-STORAGE.LASTCHUNK-01} has a store's last chunk written in
-      the handoff that publishes it.
+      the handoff that publishes it, and
+      \reqref{ADR-STORAGE.INLINEWRITES-01} runs most operations of
+      unsynchronised stores on the workers, in a bounded number of slots.
     \item[--] The blocking pool is shared with everything else in the process
       that uses it, and its size is the runtime's to decide, not this
       backend's.
@@ -2041,7 +2046,10 @@
   WHILE a \texttt{Storage} call, a \texttt{HandleHit} read, or a
   \texttt{HandleMiss} write is in progress, the backend shall leave the
   executor thread that polled it free to drive other tasks
-  (\reqref{ADR-STORAGE.EXECUTOR-03}).
+  (\reqref{ADR-STORAGE.EXECUTOR-03}), except while an operation of an
+  unsynchronised store runs in an inline slot
+  (\reqref{FDS-STORAGE.INLINEWRITES-01}), which holds its thread: never
+  every thread of the runtime at once.
 
   \textbf{What moves.} Each of the following runs as one unit on the blocking
   pool, so an operation costs a single handoff rather than one per syscall:
@@ -2071,7 +2079,10 @@
   \end{itemize}
   On Linux, \reqref{FDS-STORAGE.PAGECACHE-01} keeps on the worker a lookup,
   of a published record or of a store's temporary, and the reads of a hit's
-  body, when no call has to wait for the device.
+  body, when no call has to wait for the device. On any system,
+  \reqref{FDS-STORAGE.INLINEWRITES-01} runs an unsynchronised store's
+  opening, chunk writes and finish on the worker when an inline slot is
+  free.
 
   \textbf{What stays.} Work that touches no file stays on the worker, because
   a handoff would cost more than it saves: hashing the cache key, serialising
@@ -2482,6 +2493,150 @@
   \trace{FRE-COMPAT.STREAMDELIVERY-02}
   \trace{HLR-PERFORMANCE.STORERATE-01}
   \trace{HLR-SCOPE.V1-02}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.INLINEWRITES-01}[draft][designConstraint]{Unsynced writes on the worker}
+
+  \localreqdiagram*{adrinlinewrites01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-03} runs every file
+  operation on the blocking pool, so that no worker ever waits for the
+  device. An unsynchronised store (\reqref{ADR-PERSISTENCE.UNSYNCED-01})
+  waits for no device by nature: it creates its temporary, writes it and
+  renames it, and the page cache takes each write. Its handoffs to the pool
+  are then most of what it costs: Appendix~\ref{app:executor-experiment}
+  measured such stores 24 to 32\,\% faster with every operation on the
+  worker that polls it. Two things can still make such a write wait
+  (Appendix~\ref{app:executor-stalls}). The kernel throttles every writer
+  once the host's dirty data passes its limit, for up to 200~ms at a time,
+  and on ext4 a write can wait for a commit of the journal. A worker inside
+  such a wait stalls every task it holds; with a single worker, Pingora's
+  default, that is the whole service, and the deviation
+  \reqref{ADR-STORAGE.EXECUTOR-03} records came from such a stall.
+
+  \textbf{Decision:} Keep $K$ \emph{inline slots}, as
+  Appendix~\ref{app:executor-bounded} proposes. Each operation of an
+  unsynchronised store --- its opening, the writing of a body chunk, and its
+  finish --- takes a free slot, with one atomic operation, and runs on the
+  worker that polls it, giving the slot back as soon as it returns; when no
+  slot is free, it runs on the pool, as before. Of the $K$ slots, at most
+  the runtime's workers less one are used, the number of workers read from
+  Tokio at each operation, so that one worker always stays free: a runtime
+  of one worker, or a runtime per worker as Pingora builds with work
+  stealing off, takes no slot. Synchronised stores, every read, purges,
+  metadata updates and expiries keep the pool, and so does a store's finish
+  while the discard after a host restart is on, since it may have to write
+  and synchronise the marker (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}). A
+  configuration option sets $K$, 3 by default; 0 keeps every operation on
+  the pool.
+
+  Under \reqref{HLR-SCOPE.V1-02} this takes the exception: the mechanism it
+  adds --- an option, and a second place where a store's file work runs ---
+  raised the 64~KiB fills \reqref{TC-PERFORMANCE.STORERATE-01} measures by
+  20\,\% on ext4 and 21\,\% on XFS, to 72 and 75\,\% of \texttt{MemCache},
+  and the 4~KiB fills by 18 and 17\,\%, to 59\,\% on both. They were
+  measured on 19~November~2026 with that test case's benchmark: three slots
+  on four workers, unsynchronised stores, means of three runs. Two slots
+  gained 14 and 16\,\% at 64~KiB, short of the bar, which sets the default.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Every operation on the workers, with more workers}
+      (Appendix~\ref{app:executor-experiment}): the fastest stores, but
+      nothing bounds the workers a burst of writes stalls, and 64 workers on
+      four processors raised the 99th percentile of hits sixfold.
+    \item \emph{A slot per store}, held from the store's opening to its
+      finish: it bounds the stores that write on the workers, but holds a
+      slot through every wait for the upstream, while no write runs.
+    \item \emph{$K$ checked against the workers the integrator states}: the
+      backend does not see \texttt{ServerConf::threads}, so the option would
+      take both numbers, and a default could not know them. Tokio knows the
+      workers of the runtime that polls each operation.
+    \item \emph{Two slots by default}: a gentler burst, but a gain below the
+      bar \reqref{HLR-SCOPE.V1-02} sets for an added mechanism.
+    \item \emph{Non-blocking writes} (\texttt{RWF\_NOWAIT}), which XFS
+      accepts and ext4 refuses, and \emph{\texttt{io\_uring}}: left to
+      decisions of their own (Appendix~\ref{app:executor-directions}).
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] Most operations of unsynchronised stores make no handoff, and
+      the server runs fewer threads: about 30 instead of about 70 in the
+      runs above.
+    \item[--] Under a burst of writes that passes the throttle, up to $K$
+      workers stall, and the tasks they hold wait it out, up to 200~ms a
+      pause. In the benchmark's burst --- 4,000 stores of 1~MiB in about
+      4~seconds --- hits fell by 13\,\% on ext4 and 25\,\% on XFS, and
+      their 99th percentile rose from 8.8 to 9.6~ms and from 8.1 to 11.9~ms;
+      nginx, whose workers write the bodies themselves, stood at about
+      30~ms.
+    \item[--] It needs more than one worker: on Pingora's default of one,
+      or with work stealing off, nothing changes.
+    \item[--] A store's file work runs in two places, the pool and the
+      workers, which must stay equivalent. The test cases of
+      \reqref{FDS-STORAGE.EXECUTOR-03} run on one worker, where no slot is
+      taken; \reqref{TC-STORAGE.INLINEWRITES-01} tests the slots.
+    \item[--] \reqref{TC-COMPLIANCE.RFC-01} runs its differential a second
+      time, on four workers with unsynchronised stores.
+  \end{itemize}
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{refine}{FDS-STORAGE.INLINEWRITES-01}{Specify which operations
+  take a slot, how a slot is taken and given back, the cap the runtime's
+  workers set, and the option.}
+
+  \refine{ADR-STORAGE.EXECUTOR-03}
+  \trace{HLR-PERFORMANCE.STORERATE-01}
+  \trace{HLR-SCOPE.V1-02}
+  \trace{HLR-COMPLIANCE.RFC-01}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.INLINEWRITES-01}[draft][functionalRequirement]{Inline write slots}
+
+  \localreqdiagram*{fdsinlinewrites01}{\reqid}{\reqdesc}
+
+  \textbf{The slots.} The backend shall count the \emph{inline slots}
+  taken, against a limit the configuration sets
+  (\texttt{FsCacheConfig::with\_inline\_write\_slots}), 3 by default.
+
+  \textbf{Taking one.} WHEN an unsynchronised store
+  (\reqref{ADR-PERSISTENCE.UNSYNCED-01}) opens, writes a body chunk, or
+  finishes, the backend shall take a slot, with one atomic operation, if
+  fewer are taken than the limit and than the workers of the runtime that
+  polls the operation less one, and run the operation's file work on that
+  worker, giving the slot back as soon as it returns. When it cannot take
+  one, it shall run the operation on the blocking pool, as
+  \reqref{FDS-STORAGE.EXECUTOR-03} specifies. The workers are read from the
+  runtime at each operation, so that a runtime of one worker, or a runtime
+  per worker as Pingora builds with work stealing off, takes no slot; the
+  backend logs, once, that it uses fewer slots than the configuration asks.
+  A slot stays taken for as long as its operation's system calls run, a
+  wait in the kernel's write-back throttle, or for a lock, included: at most
+  the slots, and never every worker, are held at once.
+
+  \textbf{What takes none.} The operations of a synchronised store, every
+  read, purge, metadata update and expiry, and the finish of a store while
+  the discard after a host restart is on, which may have to write and
+  synchronise the marker (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), take
+  no slot.
+
+  \textbf{Closing.} A store finished in a slot shall close its record on
+  the worker if the record still has a name, as a hit closes its file
+  (\reqref{FDS-STORAGE.EXECUTOR-03}), and give it to the pool to close
+  otherwise. The record it replaced, whose close frees its storage, it
+  shall always give to the pool.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqcover{satisfy}{IMP}
+  \reqcover{verify}{TC}
+
+  \refine{ADR-STORAGE.INLINEWRITES-01}
+  \trace{FDS-STORAGE.EXECUTOR-03}
+  \trace{FDS-STORAGE.PUBLISH-03}
+  \trace{FDS-PERSISTENCE.CRASHDISCARD-01}
 \end{requirement}
 
 \begin{requirement}{ADR-STORAGE.RECLAIM-01}[draft][designConstraint]{Reclaim via the restart-time scan}

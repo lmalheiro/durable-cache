@@ -67,10 +67,15 @@ stock run is the reference: a test that fails on both runs is a limitation of
       then suboptimal, then fail. Re-run against both backends every test
       whose outcome differs, to separate a reproducible difference from a
       timing-dependent one.
+    \item Repeat steps 1 to 3 with both proxies on four workers and the
+      file-system backend's stores unsynchronised, so that it runs some of
+      its stores' operations on the workers, in inline slots
+      (\reqref{FDS-STORAGE.INLINEWRITES-01}).
   \end{enumerate}
 
-  \textbf{Expected result:} No test has a reproducibly lower-ranked outcome
-  with the file-system backend than with \texttt{MemCache}. Tests that fail on
+  \textbf{Expected result:} In both comparisons, no test has a reproducibly
+  lower-ranked outcome with the file-system backend than with
+  \texttt{MemCache}. Tests that fail on
   both runs are recorded as \texttt{pingora-cache} limitations, outside this
   requirement. Observation-only results that differ are listed for review.
   (Restart scenarios are outside this test --- \texttt{cache-tests} cannot
@@ -1678,6 +1683,51 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \reqcover{satisfy}{IMP}
 
   \verify{FDS-STORAGE.PAGECACHE-01}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.INLINEWRITES-01}[draft][verify]{Writes in inline slots}
+
+  \localreqdiagram*{tcinlinewrites01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} An unsynchronised store's opening, chunk writes and
+  finish run on the worker in an inline slot, never more of them at once
+  than the slots and the runtime's workers less one allow, and on the
+  blocking pool otherwise; what takes no slot stays on the pool; and a store
+  finished in a slot leaves the close of the record it replaced to the pool.
+
+  \textbf{Setup:} The backend driven directly through the \texttt{Storage}
+  interface, on runtimes of one, two and four workers, with test hooks that
+  count the operations run in a slot and hold a body write where it starts.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item On four workers, with the default slots, store an unsynchronised
+      body of two chunks, the second with \texttt{eof} set.
+    \item Store the same with stores synchronised.
+    \item Store it unsynchronised on a runtime of one worker.
+    \item Store it unsynchronised on four workers with no slots.
+    \item On two workers, with the default slots, hold a store's body write
+      where it starts; open another store meanwhile; then release the write,
+      and finish the first store.
+    \item On Linux, on four workers, store it unsynchronised with the
+      discard after a host restart on.
+    \item On four workers, store an unsynchronised body over a record of the
+      same key, holding the close of the replaced record.
+  \end{enumerate}
+
+  \textbf{Expected result:} Step 1's store opens, writes its first chunk
+  and finishes in a slot, and steps 2 to 4 take none. In step 5 the held
+  write takes the one slot two workers allow, the other store opens on the
+  pool, and the finish takes the slot again once the write is released.
+  Step 6 opens and writes in a slot and finishes on the pool. In step 7 the
+  store completes while the replaced record's close, on the pool, is held.
+  Every body reads back as stored.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-STORAGE.INLINEWRITES-01}
 \end{requirement}
 
 \begin{requirement}{TC-STORAGE.RECLAIM-01}[draft][verify]{Orphan reclaim at restart}

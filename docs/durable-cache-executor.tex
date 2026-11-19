@@ -335,6 +335,13 @@ Open questions:
     with $K = 0$; the others need a functional design and test cases of their
     own.
 \end{itemize}
+\reqref{ADR-STORAGE.INLINEWRITES-01} adopts this direction, with three
+slots by default, and settles these questions. The backend reads the
+workers of the runtime that polls each operation from Tokio, and uses at
+most one fewer slot; with work stealing off, each runtime has one worker,
+and so takes none. \reqref{TC-COMPLIANCE.RFC-01} runs its differential in
+this mode too. \reqref{FDS-STORAGE.INLINEWRITES-01} specifies the slots, and
+\reqref{TC-STORAGE.INLINEWRITES-01} tests them.
 
 \subsection{Early write-back}
 \label{app:executor-writeback}
