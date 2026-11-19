@@ -18,13 +18,14 @@
 //! reports: a page-cache read never turns into a pool read unnoticed.
 //!
 //! With `FsCacheConfig::with_noatime`, on by default, records are opened
-//! with `O_NOATIME`, here and on the pool (`crate::platform::Opener`). A read that
-//! updates a file's access time dirties its inode, and on ext4 that starts a
-//! journal transaction, which can wait: even a read that `RWF_NOWAIT` keeps
-//! from waiting for the device updates it. With the default `relatime`, it
-//! happens on the first read of every record after it was written, as its
-//! writes leave its access time behind its modification time. The kernel
-//! refuses `O_NOATIME` on a file of another owner, and the open then fails.
+//! with `O_NOATIME`, here and on the pool (`crate::platform::Opener`). A
+//! read that updates a file's access time dirties its inode, and on ext4
+//! that starts a journal transaction, which can wait: even a read that
+//! `RWF_NOWAIT` keeps from waiting for the device updates it. With the
+//! default `relatime`, it happens on the first read of every record after
+//! it was written, as its writes leave its access time behind its
+//! modification time. The kernel refuses `O_NOATIME` on a file of another
+//! owner, and the open then fails.
 
 use std::fs::File;
 use std::io::{self, IoSliceMut};
@@ -119,7 +120,9 @@ impl PageCacheReads {
         let checked = check_support(opener, root, &lease_file);
         checked.map(Some).or_err_with(ErrorType::InternalError, || {
             format!(
-                "checking the page-cache reads that FsCacheConfig::with_page_cache_reads asks                  for under {}; switch them off where the kernel or the file system lacks them,                  as tmpfs and overlayfs do",
+                "checking the page-cache reads that FsCacheConfig::with_page_cache_reads asks \
+                 for under {}; switch them off where the kernel or the file system lacks them, \
+                 as tmpfs and overlayfs do",
                 root.display()
             )
         })
