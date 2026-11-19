@@ -129,6 +129,8 @@ pub struct Options {
     pub rounds: usize,
     /// fixture-proxy's `--durability` for durable-cache.
     pub durability: String,
+    /// More arguments for fixture-proxy on durable-cache.
+    pub proxy_args: Vec<String>,
     pub scenarios: BTreeSet<Scenario>,
 }
 
@@ -454,10 +456,10 @@ fn start_server(
             )
         }
         Server::DurableCache | Server::MemCache => {
-            let storage = if server == Server::DurableCache {
-                "fs"
+            let (storage, more_args) = if server == Server::DurableCache {
+                ("fs", options.proxy_args.as_slice())
             } else {
-                "memcache"
+                ("memcache", &[][..])
             };
             ChildGuard::spawn(
                 "fixture-proxy",
@@ -473,7 +475,8 @@ fn start_server(
                     .arg("--durability")
                     .arg(&options.durability)
                     .arg("--threads")
-                    .arg(machine.threads.to_string()),
+                    .arg(machine.threads.to_string())
+                    .args(more_args),
             )
         }
     }
@@ -1345,14 +1348,19 @@ fn report(
                 .map(|name| name.trim().to_owned())
         })
         .unwrap_or_else(|| "unknown CPU".to_owned());
+    let proxy_args = if options.proxy_args.is_empty() {
+        String::new()
+    } else {
+        format!(", with `{}`", options.proxy_args.join(" "))
+    };
     writeln!(out, "# durable-cache benchmark\n")?;
     writeln!(
         out,
         "{cpu}; servers on CPUs {} with {} workers each, oha on CPUs {}; \
          {nginx_version}, {oha_version}; caches in {}; durable-cache stores \
-         {}. Medians of {} round(s), {} connections; errors and origin \
-         requests are totals over the rounds. CPU is the server's processor \
-         time per request; threads, the most the server ran.\n",
+         {}{proxy_args}. Medians of {} round(s), {} connections; errors and \
+         origin requests are totals over the rounds. CPU is the server's \
+         processor time per request; threads, the most the server ran.\n",
         if machine.server_cpus.is_empty() {
             "(unpinned)"
         } else {

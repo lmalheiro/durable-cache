@@ -139,6 +139,11 @@ enum Cmd {
         /// or `no-store-sync` for TC-PERFORMANCE.STORERATE-01.
         #[arg(long, default_value = "strict", value_parser = ["strict", "no-store-sync"])]
         durability: String,
+        /// An argument for fixture-proxy on durable-cache, as in
+        /// `--proxy-arg=--flag=value`, to compare its options; repeat it for
+        /// several. The report names them.
+        #[arg(long = "proxy-arg", allow_hyphen_values = true)]
+        proxy_args: Vec<String>,
         /// The scenarios to run, separated by commas; all of them unless
         /// named. The test-case verdicts need `hits` and `fills`, and
         /// `census` needs strace.
@@ -194,6 +199,7 @@ fn main() -> Result<()> {
             connections,
             rounds,
             durability,
+            proxy_args,
             only,
         } => bench::bench(bench::Options {
             nginx,
@@ -206,6 +212,7 @@ fn main() -> Result<()> {
             connections,
             rounds,
             durability,
+            proxy_args,
             scenarios: if only.is_empty() {
                 <bench::Scenario as clap::ValueEnum>::value_variants()
                     .iter()

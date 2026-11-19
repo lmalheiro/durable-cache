@@ -464,7 +464,9 @@ cargo xtask bench --work-dir /var/tmp/durable-cache-bench
 `--durability no-store-sync` runs durable-cache with its stores published
 without synchronisation, as TC-PERFORMANCE.STORERATE-01 measures them; the
 default, `strict`, is durable-cache's own default, which
-TC-PERFORMANCE.HITRATE-01 measures.
+TC-PERFORMANCE.HITRATE-01 measures. `--proxy-arg` passes an argument on to
+fixture-proxy on durable-cache, to compare its options, as in
+`--proxy-arg=--no-page-cache-reads`; the report names them.
 
 It needs `nginx` and [`oha`](https://github.com/hatoo/oha), the load
 generator; `--nginx` and `--oha` name them if they are not on the `PATH`.
@@ -472,12 +474,12 @@ The census also needs `strace`. nginx runs as an ordinary user, with its
 files in the work directory. Put that directory on the disk you mean to
 measure, since on a tmpfs `fdatasync` costs nothing; it needs about 7 GB
 free, as each server's cache is deleted after its runs. The burst writes
-about 4 GB to the disk per server and round. The servers and the load generator get separate physical cores
-(`--server-cpus` and `--load-cpus` override the split), and each server gets
-one worker per server CPU (`--threads` overrides it): `worker_processes` for
-nginx, and for fixture-proxy `ServerConf::threads`, whose default is 1. The
-benchmark does not run in CI, whose shared runners are too noisy to compare
-numbers.
+about 4 GB to the disk per server and round. The servers and the load
+generator get separate physical cores (`--server-cpus` and `--load-cpus`
+override the split), and each server gets one worker per server CPU
+(`--threads` overrides it): `worker_processes` for nginx, and for
+fixture-proxy `ServerConf::threads`, whose default is 1. The benchmark does
+not run in CI, whose shared runners are too noisy to compare numbers.
 
 Two differences shape the results:
 
