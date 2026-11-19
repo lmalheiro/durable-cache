@@ -336,6 +336,7 @@ cargo test -p compat                  # end-to-end through a real fixture-proxy
 cargo test -p caching-proxy           # the example, in front of a mock origin
 cargo xtask trace-report              # every test case has a test fn or IMP marker
 cargo xtask cache-tests               # the RFC 9111 suite (needs Node + submodule)
+cargo xtask cfg-matrix                # every cfg build, on Linux and other Unix
 cargo deny --manifest-path durable-cache/Cargo.toml --exclude-dev check
                                       # advisories, licences, duplicates, sources
 ```
