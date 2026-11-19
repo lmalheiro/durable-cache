@@ -154,10 +154,10 @@ impl RecordHeader {
     /// A sealed header of this format revision: `magic` and `version`
     /// filled in, every other field zero. Set the rest with [`Self::edit`].
     pub fn new() -> Self {
-        let mut header = RecordHeader {
+        let mut header = Self {
             magic: MAGIC.into(),
             version: FORMAT_VERSION.into(),
-            ..RecordHeader::new_zeroed()
+            ..Self::new_zeroed()
         };
         header.seal();
         header
@@ -195,9 +195,9 @@ impl RecordHeader {
         if self.compute_header_crc() != self.header_crc() {
             return Err(HeaderError::CrcMismatch);
         }
-        let segments = self.internal_len() as u64 + self.header_len() as u64;
+        let segments = u64::from(self.internal_len()) + u64::from(self.header_len());
         let capacity = self.meta_capacity();
-        if segments > capacity as u64 {
+        if segments > u64::from(capacity) {
             return Err(HeaderError::SegmentsExceedCapacity { segments, capacity });
         }
         Ok(())

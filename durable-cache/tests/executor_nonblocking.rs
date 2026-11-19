@@ -59,7 +59,7 @@ impl Timekeeper {
                 }
             })
         };
-        (Timekeeper { worst_us, stop }, handle)
+        (Self { worst_us, stop }, handle)
     }
 
     async fn finish(self, handle: tokio::task::JoinHandle<()>) -> Duration {
@@ -318,7 +318,7 @@ fn tc_storage_executor_02_the_restart_scan_yields_between_records() {
         }
         fn remove(&self, item: CacheEntryKeyRef<'_>) {
             note(&self.events, "remove");
-            self.inner.remove(item)
+            self.inner.remove(item);
         }
         fn access(&self, item: &CacheEntryKey, size: usize, fresh_until: SystemTime) -> bool {
             self.inner.access(item, size, fresh_until)

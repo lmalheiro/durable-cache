@@ -191,15 +191,7 @@ async fn tc_eviction_reconstruct_01_converges_with_stores_the_scan_never_saw() {
 /// (ADR-STORAGE.WRITERID-01).
 #[tokio::test]
 async fn tc_eviction_reconstruct_01_uses_no_snapshot_or_log() {
-    let (cache, _tmp) = support::leaked_cache();
-    let key = support::key("/reconstruct-no-snapshot");
-    support::store(cache, &key, &support::meta(), b"body").await;
-
-    let manager = Manager::new(usize::MAX);
-    recover(cache, &manager).await.unwrap();
-
-    // The only files anywhere under the root are records in leaf shards and
-    // the lease.
+    /// Every file under `dir`, at any depth.
     fn files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap().flatten() {
             let meta = entry.metadata().unwrap();
@@ -210,6 +202,16 @@ async fn tc_eviction_reconstruct_01_uses_no_snapshot_or_log() {
             }
         }
     }
+
+    let (cache, _tmp) = support::leaked_cache();
+    let key = support::key("/reconstruct-no-snapshot");
+    support::store(cache, &key, &support::meta(), b"body").await;
+
+    let manager = Manager::new(usize::MAX);
+    recover(cache, &manager).await.unwrap();
+
+    // The only files anywhere under the root are records in leaf shards and
+    // the lease.
     let mut found = Vec::new();
     files(cache.root(), &mut found);
     found.sort();

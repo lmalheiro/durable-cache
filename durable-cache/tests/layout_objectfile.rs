@@ -44,14 +44,14 @@ async fn tc_layout_objectfile_01_each_violation_is_a_miss_that_leaves_the_file()
         (
             "header CRC",
             Box::new(|p: &std::path::Path| {
-                support::flip_byte_at(p, format::BODY_LEN_OFFSET as u64)
+                support::flip_byte_at(p, format::BODY_LEN_OFFSET as u64);
             }),
         ),
         (
             "metadata CRC",
             Box::new(|p: &std::path::Path| {
                 let meta_start = support::read_header(p).meta_region_offset() as u64;
-                support::flip_byte_at(p, meta_start)
+                support::flip_byte_at(p, meta_start);
             }),
         ),
         (

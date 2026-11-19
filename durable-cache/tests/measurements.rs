@@ -173,8 +173,9 @@ async fn tc_efficiency_space_01_overhead_per_load() {
             let header = support::read_header(&support::canonical_path(cache, &key));
             // The objects' own bytes: the metadata segments the record
             // holds, plus the body.
-            object_bytes +=
-                header.internal_len() as u64 + header.header_len() as u64 + header.body_len();
+            object_bytes += u64::from(header.internal_len())
+                + u64::from(header.header_len())
+                + header.body_len();
         }
         let occupied = support::tree_disk_usage(tmp.path());
         let overhead = (occupied as f64 - object_bytes as f64) / object_bytes as f64 * 100.0;

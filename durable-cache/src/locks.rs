@@ -121,7 +121,7 @@ pub struct ChangeLocks {
 
 impl Default for ChangeLocks {
     fn default() -> Self {
-        ChangeLocks {
+        Self {
             read_only: RwLock::new(false),
             stripes: (0..STRIPES).map(|_| Mutex::new(())).collect(),
         }

@@ -51,7 +51,7 @@ impl RecordError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            RecordError::Header(HeaderError::CrcMismatch) | RecordError::MetaCrcMismatch
+            Self::Header(HeaderError::CrcMismatch) | Self::MetaCrcMismatch
         )
     }
 }
@@ -86,7 +86,7 @@ pub struct FileIdentity {
 
 impl FileIdentity {
     pub fn of(meta: &std::fs::Metadata) -> Self {
-        FileIdentity {
+        Self {
             dev: meta.dev(),
             ino: meta.ino(),
         }
@@ -247,7 +247,7 @@ fn read_record_with(
     let mut internal_bytes = vec![0u8; internal_len as usize];
     part(&mut internal_bytes, meta_start)?;
     let mut header_bytes = vec![0u8; header_len as usize];
-    part(&mut header_bytes, meta_start + internal_len as u64)?;
+    part(&mut header_bytes, meta_start + u64::from(internal_len))?;
     if format::compute_meta_crc(&key_bytes, &internal_bytes, &header_bytes) != header.meta_crc() {
         return Err(RecordError::MetaCrcMismatch.into());
     }
@@ -463,7 +463,7 @@ mod tests {
             read(&bytes[..bytes.len() - 1], None).unwrap_err(),
             RecordError::LengthMismatch { .. }
         ));
-        let mut longer = bytes.clone();
+        let mut longer = bytes;
         longer.push(0);
         assert!(matches!(
             read(&longer, None).unwrap_err(),

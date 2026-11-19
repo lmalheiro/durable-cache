@@ -166,7 +166,7 @@ impl FsMissHandler {
             .begin(&name, temp_path.clone(), internal_bytes, header_bytes);
         let write_tag = U64WriteId::from(writer.id);
 
-        Ok(FsMissHandler {
+        Ok(Self {
             cache,
             file: Some(Arc::new(file)),
             temp_path,

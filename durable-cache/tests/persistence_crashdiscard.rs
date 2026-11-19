@@ -340,9 +340,8 @@ fn tc_persistence_crashdiscard_01_an_unreadable_boot_identity_fails_construction
         boot_id_path: Some(missing.clone()),
         ..HookConfig::default()
     };
-    let e = match FsCache::with_test_hooks(config, hooks) {
-        Ok(_) => panic!("step 6: construction fails"),
-        Err(e) => e,
+    let Err(e) = FsCache::with_test_hooks(config, hooks) else {
+        panic!("step 6: construction fails");
     };
     assert!(
         e.to_string().contains(&missing.display().to_string()),

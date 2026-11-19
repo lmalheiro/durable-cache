@@ -42,9 +42,9 @@ pub(crate) enum Op {
 impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Op::Purge => "purge",
-            Op::Expire => "expire",
-            Op::UpdateMeta => "update_meta",
+            Self::Purge => "purge",
+            Self::Expire => "expire",
+            Self::UpdateMeta => "update_meta",
         })
     }
 }

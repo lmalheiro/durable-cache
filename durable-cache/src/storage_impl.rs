@@ -101,13 +101,13 @@ impl FsCache {
     /// [`Self::new`], with `hooks` in place from the start.
     fn build(config: FsCacheConfig, hooks: Hooks) -> Result<Self> {
         #[cfg(not(test))]
-        let boot_id_path = std::path::Path::new(crashdiscard::BOOT_ID_PATH);
+        let boot_id_path = Path::new(crashdiscard::BOOT_ID_PATH);
         #[cfg(test)]
         let boot_id_path = hooks
             .config
             .boot_id_path
             .as_deref()
-            .unwrap_or(std::path::Path::new(crashdiscard::BOOT_ID_PATH));
+            .unwrap_or(Path::new(crashdiscard::BOOT_ID_PATH));
         let boot_id = crashdiscard::at_construction(
             config.root(),
             crashdiscard::discard_on(&config),
@@ -129,7 +129,7 @@ impl FsCache {
         // With the `metrics` feature, the counters are served from here on,
         // at zero, rather than from their first event.
         metrics::register();
-        Ok(FsCache {
+        Ok(Self {
             config,
             dir_cache,
             inflight: InFlightRegistry::new(),

@@ -33,7 +33,7 @@ mod imp {
         /// build without the `body-crc` feature records, and the checksum of
         /// an empty body.
         pub fn start(cache: &FsCache, stored: u32) -> Self {
-            BodyCheck(
+            Self(
                 (cache.config.body_crc_verification() && stored != 0)
                     .then_some(Running { running: 0, stored }),
             )
@@ -42,7 +42,7 @@ mod imp {
         /// No check: for a partial hit, as a store in flight has no
         /// checksum yet.
         pub fn none() -> Self {
-            BodyCheck(None)
+            Self(None)
         }
 
         /// Take in the next bytes delivered.
@@ -90,11 +90,11 @@ mod imp {
 
     impl BodyCheck {
         pub fn start(_cache: &FsCache, _stored: u32) -> Self {
-            BodyCheck
+            Self
         }
 
         pub fn none() -> Self {
-            BodyCheck
+            Self
         }
 
         pub fn update(&mut self, _bytes: &[u8]) {}

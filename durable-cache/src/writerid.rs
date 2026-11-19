@@ -98,7 +98,7 @@ impl WriterId {
     /// A fresh identity for this process; exclusive creation of the lease
     /// catches the unlikely collision of two nonces.
     fn fresh() -> Self {
-        WriterId {
+        Self {
             pid: std::process::id(),
             nonce: random_nonce(),
         }
@@ -112,7 +112,7 @@ impl WriterId {
     /// [`Display`]: fmt::Display
     pub(crate) fn parse(s: &str) -> Option<Self> {
         let (pid, nonce) = s.split_once('-')?;
-        let id = WriterId {
+        let id = Self {
             pid: pid.parse().ok()?,
             nonce: u64::from_str_radix(nonce, 16).ok()?,
         };
@@ -172,7 +172,7 @@ impl WriterLease {
             }
             match std::fs::rename(&staging, &lease) {
                 Ok(()) => {
-                    return Ok(WriterLease {
+                    return Ok(Self {
                         id,
                         _file: file,
                         counter: AtomicU64::new(0),

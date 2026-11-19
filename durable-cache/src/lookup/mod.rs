@@ -210,7 +210,7 @@ pub(crate) async fn lookup(
     // stalling the worker this lookup is running on
     // (FDS-STORAGE.EXECUTOR-02).
     test_hook! { cache.hooks.count_handoff(); }
-    blocking::run(move || open_published(cache, &name, canonical, key_bytes, opened)).await
+    blocking::run(move || open_published(cache, &name, canonical, &key_bytes, opened)).await
 }
 
 /// Open and validate the published record at `canonical`, the record of the
@@ -221,7 +221,7 @@ fn open_published(
     cache: &'static FsCache,
     name: &str,
     canonical: PathBuf,
-    key_bytes: Vec<u8>,
+    key_bytes: &[u8],
     opened: Option<File>,
 ) -> Result<Option<(CacheMeta, FsHitHandler)>> {
     let file = match opened.map_or_else(|| cache.opener.open_blocking(&canonical), Ok) {
@@ -235,7 +235,7 @@ fn open_published(
             )
         }
     };
-    let mut read = record::read_published_blocking(&file, &key_bytes);
+    let mut read = record::read_published_blocking(&file, key_bytes);
     // Checksums that kept failing may be an in-place metadata update caught
     // between its two writes, by an updater the scheduler stopped there.
     // Every in-place update holds the key's publication lock from its first
@@ -246,7 +246,7 @@ fn open_published(
     // change meanwhile, as `ChangeLocks::lock_key` requires.
     if matches!(&read, Err(ReadError::Record(e)) if e.is_retryable()) {
         let _key = cache.locks.lock_key(name);
-        read = record::read_published_once(&file, &key_bytes);
+        read = record::read_published_once(&file, key_bytes);
     }
     let parsed = match read {
         Ok(parsed) => parsed,

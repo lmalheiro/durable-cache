@@ -31,7 +31,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
@@ -83,14 +83,14 @@ pub(crate) struct Marker {
 
 impl Marker {
     pub(crate) fn new(boot_id: Option<String>) -> Self {
-        Marker {
+        Self {
             boot_id,
             written: Mutex::new(false),
         }
     }
 
     fn written(&self) -> MutexGuard<'_, bool> {
-        self.written.lock().unwrap_or_else(|p| p.into_inner())
+        self.written.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Before a store published without synchronisation is renamed into
@@ -342,7 +342,7 @@ pub(crate) fn remove_discarded(root: &Path) {
         return;
     };
     let dirs: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok())
+        .filter_map(io::Result::ok)
         .filter(|entry| entry.file_name().to_str().is_some_and(is_discarded_name))
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .map(|entry| entry.path())

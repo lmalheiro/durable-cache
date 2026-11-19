@@ -462,7 +462,7 @@ async fn tc_storage_expire_01_an_unreadable_record_is_not_found_and_left_alone()
             "a damaged record",
             Box::new(|p: &std::path::Path| {
                 let meta_start = support::read_header(p).meta_region_offset() as u64;
-                support::flip_byte_at(p, meta_start)
+                support::flip_byte_at(p, meta_start);
             }),
         ),
         (
@@ -472,13 +472,13 @@ async fn tc_storage_expire_01_an_unreadable_record_is_not_found_and_left_alone()
         (
             "a record of another format version",
             Box::new(|p: &std::path::Path| {
-                support::set_format_version(p, format::FORMAT_VERSION + 1)
+                support::set_format_version(p, format::FORMAT_VERSION + 1);
             }),
         ),
         (
             "a withdrawn record",
             Box::new(|p: &std::path::Path| {
-                support::set_format_version(p, format::WITHDRAWN_VERSION)
+                support::set_format_version(p, format::WITHDRAWN_VERSION);
             }),
         ),
     ];

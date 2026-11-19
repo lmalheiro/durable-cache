@@ -30,7 +30,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 #[cfg(target_os = "linux")]
@@ -137,7 +137,7 @@ pub enum FaultPoint {
 type NameOverride = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|p| p.into_inner())
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[derive(Default)]
@@ -168,7 +168,7 @@ impl PauseHandle {
             .gate
             .cv
             .wait_timeout_while(guard, timeout, |s| !s.reached)
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(PoisonError::into_inner);
         guard.reached
     }
 
@@ -225,7 +225,7 @@ pub struct Hooks {
 impl Hooks {
     pub(crate) fn new(config: HookConfig) -> Self {
         let faults = config.faults.iter().copied().collect();
-        Hooks {
+        Self {
             config,
             faults: Mutex::new(faults),
             ..Default::default()
@@ -271,7 +271,7 @@ impl Hooks {
         state.reached = true;
         gate.cv.notify_all();
         while !state.released {
-            state = gate.cv.wait(state).unwrap_or_else(|p| p.into_inner());
+            state = gate.cv.wait(state).unwrap_or_else(PoisonError::into_inner);
         }
     }
 

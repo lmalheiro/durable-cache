@@ -165,13 +165,13 @@ fn tc_compat_hotupgrade_01_a_shutdown_during_the_wait_skips_the_scan() {
 /// its next entry, and the scan's summary line says why.
 #[test]
 fn tc_compat_hotupgrade_01_a_shutdown_during_the_scan_stops_it() {
+    const RECORDS: usize = 4;
     if !support::in_own_process(
         module_path!(),
         "tc_compat_hotupgrade_01_a_shutdown_during_the_scan_stops_it",
     ) {
         return;
     }
-    const RECORDS: usize = 4;
     let logs = support::LogCapture::install();
     let (cache, _tmp) = populated(RECORDS);
     let eviction = Timed::leaked();
@@ -189,13 +189,13 @@ fn tc_compat_hotupgrade_01_a_shutdown_during_the_scan_stops_it() {
 /// meanwhile stays.
 #[test]
 fn tc_compat_hotupgrade_01_a_shutdown_after_the_walk_skips_the_ghost_pass() {
+    const RECORDS: usize = 2;
     if !support::in_own_process(
         module_path!(),
         "tc_compat_hotupgrade_01_a_shutdown_after_the_walk_skips_the_ghost_pass",
     ) {
         return;
     }
-    const RECORDS: usize = 2;
     let logs = support::LogCapture::install();
     let (cache, _tmp) = populated(RECORDS);
     let eviction = Timed::leaked();
@@ -300,15 +300,15 @@ struct Running {
 }
 
 impl Running {
-    fn start(server: Server) -> Running {
+    fn start(server: Server) -> Self {
         let (signals, received) = mpsc::unbounded_channel();
         let watch = Signals(Mutex::new(received));
         let thread = std::thread::spawn(move || {
             server.run(RunArgs {
                 shutdown_signal: Box::new(watch),
-            })
+            });
         });
-        Running { signals, thread }
+        Self { signals, thread }
     }
 
     /// Send the server `signal`, and wait for it to finish.
@@ -359,8 +359,8 @@ struct Timed {
 }
 
 impl Timed {
-    fn leaked() -> &'static Timed {
-        Box::leak(Box::new(Timed {
+    fn leaked() -> &'static Self {
+        Box::leak(Box::new(Self {
             inner: Manager::new(usize::MAX),
             first_admission: OnceLock::new(),
         }))
@@ -416,7 +416,7 @@ impl EvictionManager for Timed {
         self.inner.increment_weight(item, delta, max_weight)
     }
     fn remove(&self, item: CacheEntryKeyRef<'_>) {
-        self.inner.remove(item)
+        self.inner.remove(item);
     }
     fn access(&self, item: &CacheEntryKey, size: usize, fresh_until: SystemTime) -> bool {
         self.inner.access(item, size, fresh_until)

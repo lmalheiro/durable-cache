@@ -46,7 +46,7 @@ impl ShardDirCache {
     /// first/second-level directories present — never to the object count.
     pub fn build(root: &Path) -> io::Result<Self> {
         let bits: Vec<AtomicU64> = (0..WORD_COUNT).map(|_| AtomicU64::new(0)).collect();
-        let cache = ShardDirCache { bits };
+        let cache = Self { bits };
 
         for first in 0..FIRST_LEVEL_COUNT {
             let first_dir = sharding::first_level_dir(root, first);

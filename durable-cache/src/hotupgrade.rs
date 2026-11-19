@@ -170,7 +170,7 @@ impl UpgradeWatcher {
         cache: &'static FsCache,
         phases: broadcast::Receiver<ExecutionPhase>,
     ) -> Self {
-        UpgradeWatcher {
+        Self {
             cache,
             phases: Mutex::new(phases),
         }

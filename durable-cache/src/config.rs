@@ -57,8 +57,8 @@ impl FsCacheConfig {
     /// `meta_headroom` bytes of growth room in each record's metadata
     /// region. Passing `None` selects the design's default, 512 bytes.
     pub fn new(root: impl Into<PathBuf>, meta_headroom: Option<u32>) -> Self {
-        let meta_headroom = meta_headroom.unwrap_or(FsCacheConfig::DEFAULT_META_HEADROOM);
-        FsCacheConfig {
+        let meta_headroom = meta_headroom.unwrap_or(Self::DEFAULT_META_HEADROOM);
+        Self {
             root: root.into(),
             meta_headroom,
             durability: Durability::default(),

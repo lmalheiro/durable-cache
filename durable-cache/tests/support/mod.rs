@@ -16,7 +16,7 @@
 
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
@@ -633,11 +633,11 @@ impl LogCapture {
     /// Install as the process logger. Only the first call in a test binary
     /// wins, so every capture in one binary shares the same buffer; tests
     /// match on their own key or metric name.
-    pub fn install() -> LogCapture {
+    pub fn install() -> Self {
         static INSTALLED: std::sync::OnceLock<LogCapture> = std::sync::OnceLock::new();
         INSTALLED
             .get_or_init(|| {
-                let capture = LogCapture::default();
+                let capture = Self::default();
                 let boxed: Box<dyn log::Log> = Box::new(capture.clone());
                 // Leaked deliberately: `log` requires a `&'static` logger.
                 let _ = log::set_logger(Box::leak(boxed));
@@ -648,7 +648,10 @@ impl LogCapture {
     }
 
     pub fn lines(&self) -> Vec<String> {
-        self.lines.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        self.lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Every captured line containing `needle`.
@@ -660,7 +663,10 @@ impl LogCapture {
     }
 
     pub fn clear(&self) {
-        self.lines.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        self.lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 }
 
@@ -672,7 +678,7 @@ impl log::Log for LogCapture {
     fn log(&self, record: &log::Record) {
         self.lines
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .push(format!("{} {}", record.level(), record.args()));
     }
 

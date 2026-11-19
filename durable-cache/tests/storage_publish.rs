@@ -174,9 +174,8 @@ async fn tc_storage_publish_02_synchronises_before_renaming() {
         .write_body(Bytes::from_static(b"body"), true)
         .await
         .unwrap();
-    let err = match handler.finish().await {
-        Err(e) => e,
-        Ok(_) => panic!("a failed synchronisation must fail the store"),
+    let Err(err) = handler.finish().await else {
+        panic!("a failed synchronisation must fail the store");
     };
     assert!(
         err.to_string().contains("SyncTemp"),

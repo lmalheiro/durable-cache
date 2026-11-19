@@ -41,7 +41,7 @@ impl Opener {
             use rustix::fs::OFlags;
 
             let flags = OFlags::RDONLY | OFlags::CLOEXEC;
-            let opener = Opener {
+            let opener = Self {
                 flags: if config.noatime() {
                     flags | OFlags::NOATIME
                 } else {
@@ -67,7 +67,7 @@ impl Opener {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = config;
-            Ok(Opener {})
+            Ok(Self {})
         }
     }
 
