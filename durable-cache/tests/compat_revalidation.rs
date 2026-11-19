@@ -5,9 +5,9 @@
 //!
 //! Step 2 (lookups concurrently with an update never see a mixture) is
 //! guaranteed by construction rather than forced here as a literal race:
-//! the header write is the sole commit point, and `crate::lookup`'s
-//! bounded retry absorbs a reader catching it mid-write (see
-//! `metaupdate.rs`'s and `lookup/mod.rs`'s own doc comments).
+//! the header write is the sole commit point, and `crate::lookup`'s bounded
+//! retry absorbs a reader catching it mid-write (see `metaupdate.rs`'s and
+//! `lookup/mod.rs`'s own doc comments).
 
 use std::time::{Duration, SystemTime};
 
@@ -281,9 +281,9 @@ async fn tc_compliance_revalidation_01_the_next_store_replaces_a_withdrawn_recor
 }
 
 /// Step 8: sixteen updates that each outgrow the region, made at once. They
-/// take the key's lock one after another: the first withdraws the record
-/// and reports `false`, and every later one finds no object stored, and
-/// reports so, as an update of an absent key does.
+/// take the key's lock one after another: the first withdraws the record and
+/// reports `false`, and every later one finds no object stored, and reports
+/// so, as an update of an absent key does.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn tc_compliance_revalidation_01_outgrown_updates_at_once_withdraw_the_record_once() {
     let (cache, _tmp) = support::leaked_cache();
@@ -365,8 +365,8 @@ async fn tc_compliance_revalidation_01_an_outgrown_update_during_a_store_from_th
 }
 
 /// Step 10: a withdrawal whose header write fails reports the error and
-/// leaves the record as it was, still served with its old metadata. The
-/// next attempt withdraws it.
+/// leaves the record as it was, still served with its old metadata. The next
+/// attempt withdraws it.
 #[tokio::test]
 async fn tc_compliance_revalidation_01_a_failed_withdrawal_leaves_the_record_as_it_was() {
     use durable_cache::hooks::FaultPoint;
@@ -591,8 +591,8 @@ async fn tc_compliance_revalidation_01_concurrent_in_place_updates_stay_readable
 /// Step 13: a `304` updates only the response it validated (RFC 9111
 /// §4.3.4). When a newer response has replaced that one since the lookup
 /// that began the revalidation, which `pingora-cache` allows once a writer
-/// outlives its cache lock, the update is not applied, and the newer response
-/// stands whole.
+/// outlives its cache lock, the update is not applied, and the newer
+/// response stands whole.
 #[tokio::test]
 async fn tc_compliance_revalidation_01_a_304_for_a_replaced_response_is_not_applied() {
     let (cache, _tmp) = support::leaked_cache();

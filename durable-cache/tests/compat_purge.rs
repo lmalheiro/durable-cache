@@ -123,9 +123,9 @@ async fn tc_compliance_purge_01_mid_stream_reader_and_racing_store() {
     );
 }
 
-/// Step 6: after a restart, the variant records the purge orphaned are
-/// still there, each admitted with its record size, so that eviction
-/// removes them like any other record (FRE-COMPLIANCE.PURGE-01).
+/// Step 6: after a restart, the variant records the purge orphaned are still
+/// there, each admitted with its record size, so that eviction removes them
+/// like any other record (FRE-COMPLIANCE.PURGE-01).
 #[tokio::test]
 async fn tc_compliance_purge_01_orphaned_variants_are_left_to_eviction() {
     let (cache, tmp) = support::leaked_cache();

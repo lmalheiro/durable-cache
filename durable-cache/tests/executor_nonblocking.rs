@@ -59,7 +59,7 @@ impl Timekeeper {
                 }
             })
         };
-        (Timekeeper { worst_us, stop }, handle)
+        (Self { worst_us, stop }, handle)
     }
 
     async fn finish(self, handle: tokio::task::JoinHandle<()>) -> Duration {
@@ -93,7 +93,8 @@ fn tc_storage_executor_02_storage_calls_do_not_stall_the_worker() {
 
         for i in 0..20 {
             let key = support::key(&format!("/executor-{i}"));
-            // Store: get_miss_handler, write_body, finish (fdatasync, rename).
+            // Store: get_miss_handler, write_body, finish (fdatasync,
+            // rename).
             let stored = support::meta();
             support::store(cache, &key, &stored, &body).await;
             // Read it back: lookup, then read_body to the end.
@@ -182,10 +183,10 @@ fn streaming_does_not_stall_the_worker(configure: fn(FsCacheConfig) -> FsCacheCo
 }
 
 /// Step 6: the restart scan frees what it removes on the blocking pool: a
-/// damaged record it reclaims, a stopped writer's temporary, and a record its
-/// own admission evicts at once, the eviction manager having no room. Each
-/// removal is held where it frees its file, and another task on the scan's
-/// single worker still runs meanwhile.
+/// damaged record it reclaims, a stopped writer's temporary, and a record
+/// its own admission evicts at once, the eviction manager having no room.
+/// Each removal is held where it frees its file, and another task on the
+/// scan's single worker still runs meanwhile.
 #[test]
 fn tc_storage_executor_02_the_restart_scan_frees_files_off_the_worker() {
     use durable_cache::hooks::PausePoint;
@@ -318,7 +319,7 @@ fn tc_storage_executor_02_the_restart_scan_yields_between_records() {
         }
         fn remove(&self, item: CacheEntryKeyRef<'_>) {
             note(&self.events, "remove");
-            self.inner.remove(item)
+            self.inner.remove(item);
         }
         fn access(&self, item: &CacheEntryKey, size: usize, fresh_until: SystemTime) -> bool {
             self.inner.access(item, size, fresh_until)
@@ -355,7 +356,8 @@ fn tc_storage_executor_02_the_restart_scan_yields_between_records() {
         let events = Arc::clone(&events);
         std::thread::spawn(move || {
             rt.block_on(async move {
-                // Another task on the scan's worker, noting each turn it gets.
+                // Another task on the scan's worker, noting each turn it
+                // gets.
                 let others = Arc::clone(&events);
                 tokio::spawn(async move {
                     loop {

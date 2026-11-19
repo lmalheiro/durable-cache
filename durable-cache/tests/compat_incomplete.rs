@@ -9,10 +9,10 @@
 //!
 //! Covers every leg of this TC's spec except a genuine `kill -9` mid-write
 //! plus process restart (an in-process `drop` can simulate an orderly
-//! abort's Drop impl running, but not the complete absence of one) --
-//! that leg is `test/compat/tests/incomplete.rs`'s, which is why the IMP
-//! marker for this TC lives there rather than here: neither file alone is
-//! a comprehensive closure, but the two together are.
+//! abort's Drop impl running, but not the complete absence of one) — that
+//! leg is `test/compat/tests/incomplete.rs`'s, which is why the IMP marker
+//! for this TC lives there rather than here: neither file alone is a
+//! comprehensive closure, but the two together are.
 
 use bytes::Bytes;
 use durable_cache::sharding::shard_path;
@@ -78,7 +78,7 @@ async fn tc_compliance_incomplete_01_aborted_store_is_never_served() {
         .await
         .unwrap();
     // Abort: dropped without finish(), simulating an upstream disconnect
-    // (or, for a real process, a crash -- see storage_publish.rs's
+    // (or, for a real process, a crash — see storage_publish.rs's
     // dropped_without_finish test for that guarantee in isolation).
     drop(handler);
 
@@ -88,10 +88,10 @@ async fn tc_compliance_incomplete_01_aborted_store_is_never_served() {
     );
 }
 
-/// A damaged record is a miss, and the lookup leaves it where it is: a
-/// later store of the same key replaces it, and the restart-time scan
-/// reclaims it, so a lookup never unlinks a path whose content may have
-/// changed since it opened it (SDS-LAYOUT.OBJECTFILE-02).
+/// A damaged record is a miss, and the lookup leaves it where it is: a later
+/// store of the same key replaces it, and the restart-time scan reclaims it,
+/// so a lookup never unlinks a path whose content may have changed since it
+/// opened it (SDS-LAYOUT.OBJECTFILE-02).
 #[tokio::test]
 async fn tc_compliance_incomplete_01_damaged_record_is_a_miss_and_left_for_the_scan() {
     let (cache, tmp) = support::leaked_cache();
@@ -176,9 +176,10 @@ async fn tc_compliance_incomplete_01_follower_of_an_aborted_store_gets_an_error(
     let read_task = tokio::spawn(async move { follower.read_body().await });
 
     // Give the follower a moment to catch up and start waiting on the next
-    // chunk before aborting -- not required for correctness (the wakeup
-    // can't be missed either way, see lookup/mod.rs), but it makes this test
-    // actually exercise the wakeup-on-abort path instead of a pre-abort read.
+    // chunk before aborting — not required for correctness (the wakeup
+    // cannot be missed either way, see lookup/mod.rs), but it makes this
+    // test actually exercise the wakeup-on-abort path instead of a pre-abort
+    // read.
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     drop(handler); // abort: no finish() ever called
 
@@ -206,7 +207,7 @@ async fn tc_compliance_incomplete_01_truncated_record_is_a_miss() {
     let canonical = shard_path(cache.root(), &key.combined()).unwrap();
     let len = std::fs::metadata(&canonical).unwrap().len();
     // Simulate a host crash that left the record's content not durably
-    // complete, out of band -- truncate short of the recorded extent.
+    // complete, out of band — truncate short of the recorded extent.
     let file = std::fs::OpenOptions::new()
         .write(true)
         .open(&canonical)

@@ -173,8 +173,8 @@ async fn tc_storage_expire_01_an_identified_exact_target_is_not_found() {
     );
 }
 
-/// Step 4: with headroom configured the expiry writes the metadata in
-/// place: same file, same length, and the body untouched.
+/// Step 4: with headroom configured the expiry writes the metadata in place:
+/// same file, same length, and the body untouched.
 #[tokio::test]
 async fn tc_storage_expire_01_takes_the_in_place_path_when_headroom_allows() {
     let (cache, _tmp) = support::leaked_cache();
@@ -365,8 +365,8 @@ async fn tc_storage_expire_01_a_streaming_reader_is_undisturbed() {
 
 /// Step 8: the read, the derivation, and the write are one critical section
 /// under the key's publication lock, so a metadata update racing an expiry
-/// cannot interleave with it. The record ends carrying one complete
-/// metadata set, never a mixture.
+/// cannot interleave with it. The record ends carrying one complete metadata
+/// set, never a mixture.
 #[tokio::test]
 async fn tc_storage_expire_01_serialises_against_a_concurrent_metadata_update() {
     let (cache, _tmp) = support::leaked_cache();
@@ -449,8 +449,8 @@ async fn tc_storage_expire_01_once_read_only_fails_and_changes_nothing() {
     );
 }
 
-/// Step 10: a record that fails the read-time validation reads as absent,
-/// as it does to a lookup, so the expiry reports `NotFound` and leaves the
+/// Step 10: a record that fails the read-time validation reads as absent, as
+/// it does to a lookup, so the expiry reports `NotFound` and leaves the
 /// record as it is, for the restart scan (FDS-STORAGE.RECLAIM-01).
 #[tokio::test]
 async fn tc_storage_expire_01_an_unreadable_record_is_not_found_and_left_alone() {
@@ -462,7 +462,7 @@ async fn tc_storage_expire_01_an_unreadable_record_is_not_found_and_left_alone()
             "a damaged record",
             Box::new(|p: &std::path::Path| {
                 let meta_start = support::read_header(p).meta_region_offset() as u64;
-                support::flip_byte_at(p, meta_start)
+                support::flip_byte_at(p, meta_start);
             }),
         ),
         (
@@ -472,13 +472,13 @@ async fn tc_storage_expire_01_an_unreadable_record_is_not_found_and_left_alone()
         (
             "a record of another format version",
             Box::new(|p: &std::path::Path| {
-                support::set_format_version(p, format::FORMAT_VERSION + 1)
+                support::set_format_version(p, format::FORMAT_VERSION + 1);
             }),
         ),
         (
             "a withdrawn record",
             Box::new(|p: &std::path::Path| {
-                support::set_format_version(p, format::WITHDRAWN_VERSION)
+                support::set_format_version(p, format::WITHDRAWN_VERSION);
             }),
         ),
     ];

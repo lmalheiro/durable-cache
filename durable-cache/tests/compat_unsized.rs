@@ -33,7 +33,7 @@ async fn store_and_verify(name: &str, chunks: &[&[u8]]) {
     for (i, chunk) in chunks.iter().enumerate() {
         let eof = i == chunks.len() - 1;
         // No Content-Length is ever passed to get_miss_handler or write_body
-        // -- the total length is learned only once the last chunk lands,
+        // — the total length is learned only once the last chunk lands,
         // exactly as FRE-COMPAT.UNSIZED-01 requires.
         handler
             .write_body(Bytes::copy_from_slice(chunk), eof)
@@ -60,16 +60,17 @@ async fn tc_compat_unsized_01_irregular_chunk_sizes() {
 
 #[tokio::test]
 async fn tc_compat_unsized_01_empty_body() {
-    // A single empty final chunk -- pingora-cache always calls write_body
-    // at least once, with eof set on the last (here, only) call, even for
+    // A single empty final chunk — `pingora-cache` always calls `write_body`
+    // at least once, with `eof` set on the last (here, only) call, even for
     // a zero-length body.
     store_and_verify("/unsized-empty", &[b""]).await;
 }
 
-/// Steps 2 and 4: whatever the body's size and however it is chunked,
-/// every chunk is in the store's temporary before its `write_body` returns:
+/// Steps 2 and 4: whatever the body's size and however it is chunked, every
+/// chunk is in the store's temporary before its `write_body` returns:
 /// after each call the file holds the header, key, and metadata region plus
-/// exactly the body bytes accepted so far, so nothing is held back in memory.
+/// exactly the body bytes accepted so far, so nothing is held back in
+/// memory.
 #[tokio::test]
 async fn tc_compat_unsized_01_every_chunk_is_written_before_write_body_returns() {
     let (cache, _tmp) = support::leaked_cache();
@@ -107,7 +108,7 @@ async fn tc_compat_unsized_01_every_chunk_is_written_before_write_body_returns()
 
 #[tokio::test]
 async fn tc_compat_unsized_01_multi_block_body() {
-    // Comfortably spans typical 4 KiB filesystem block boundaries.
+    // Comfortably spans typical 4 KiB file-system block boundaries.
     let big_chunk = vec![0xABu8; 9000];
     let chunks: Vec<&[u8]> = vec![
         &big_chunk[..3000],

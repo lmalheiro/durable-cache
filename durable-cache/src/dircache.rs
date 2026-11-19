@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! In-memory shard-directory cache, built once at construction
-//! (FDS-LAYOUT.STARTUP-01), so an ordinary store never re-checks the
-//! file system for a shard directory it has already seen.
+//! (FDS-LAYOUT.STARTUP-01), so an ordinary store never re-checks the file
+//! system for a shard directory it has already seen.
 //!
 //! One bit per possible shard (`sharding::SHARD_COUNT`), held in atomic
 //! `u64` words: the 8 KiB bitset SDS-LAYOUT.SHARDING-01 calls for. Inserts
@@ -25,8 +25,8 @@ const WORD_BITS: usize = u64::BITS as usize;
 /// Words in the bitset: one bit per shard.
 const WORD_COUNT: usize = SHARD_COUNT / WORD_BITS;
 
-// The bitset is a whole number of words. `WORD_COUNT` rounds down, so with
-// a shard count that was not a multiple of the word size, the last shards
+// The bitset is a whole number of words. `WORD_COUNT` rounds down, so with a
+// shard count that was not a multiple of the word size, the last shards
 // would have no bit, and marking one would index past the end of `bits`.
 const _: () = assert!(SHARD_COUNT % WORD_BITS == 0);
 // The bitset takes the 8 KiB SDS-LAYOUT.SHARDING-01 states. A change to the
@@ -46,7 +46,7 @@ impl ShardDirCache {
     /// first/second-level directories present — never to the object count.
     pub fn build(root: &Path) -> io::Result<Self> {
         let bits: Vec<AtomicU64> = (0..WORD_COUNT).map(|_| AtomicU64::new(0)).collect();
-        let cache = ShardDirCache { bits };
+        let cache = Self { bits };
 
         for first in 0..FIRST_LEVEL_COUNT {
             let first_dir = sharding::first_level_dir(root, first);
@@ -83,11 +83,11 @@ impl ShardDirCache {
         (self.bits[word].load(Ordering::Acquire) & (1 << bit)) != 0
     }
 
-    /// Ensure the second-level shard directory for `name` exists,
-    /// consulting the in-memory cache first. Two callers racing to create
-    /// the same new shard both succeed: the directory is created once, since
-    /// `create_dir`'s `AlreadyExists` from the losing racer is swallowed, not
-    /// propagated, and each caller sets the shard's bit.
+    /// Ensure the second-level shard directory for `name` exists, consulting
+    /// the in-memory cache first. Two callers racing to create the same new
+    /// shard both succeed: the directory is created once, since
+    /// `create_dir`'s `AlreadyExists` from the losing racer is swallowed,
+    /// not propagated, and each caller sets the shard's bit.
     pub fn ensure_shard_dir(&self, root: &Path, name: &str) -> Result<()> {
         let index = sharding::shard_index(name)
             .or_err(ErrorType::InternalError, "deriving a shard index")?;
@@ -140,8 +140,8 @@ mod tests {
         assert_eq!(count, FIRST_LEVEL_COUNT);
     }
 
-    /// The cache built at construction records exactly the shard
-    /// directories already on disk (TC-LAYOUT.DIRCACHE-01, step 1).
+    /// The cache built at construction records exactly the shard directories
+    /// already on disk (TC-LAYOUT.DIRCACHE-01, step 1).
     #[test]
     fn matches_prepopulated_second_level_dirs_exactly() {
         let tmp = tempfile::tempdir().expect("a temporary directory");
@@ -158,8 +158,8 @@ mod tests {
     }
 
     /// A directory not named as a shard directory is not recorded as one:
-    /// otherwise `+f` would stand for shard `0f`, and `B2` for shard `b2`, as
-    /// a plain `from_str_radix` reads them.
+    /// otherwise `+f` would stand for shard `0f`, and `B2` for shard `b2`,
+    /// as a plain `from_str_radix` reads them.
     #[test]
     fn ignores_directories_not_named_as_shards() {
         let tmp = tempfile::tempdir().expect("a temporary directory");
@@ -227,8 +227,8 @@ mod tests {
         );
     }
 
-    /// A fresh construction, as after a restart, finds the shard
-    /// directories earlier stores created (TC-LAYOUT.DIRCACHE-01, step 3).
+    /// A fresh construction, as after a restart, finds the shard directories
+    /// earlier stores created (TC-LAYOUT.DIRCACHE-01, step 3).
     #[test]
     fn restart_rebuilds_without_recreating_existing_shards() {
         let tmp = tempfile::tempdir().expect("a temporary directory");

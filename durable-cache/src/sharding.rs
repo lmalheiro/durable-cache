@@ -21,8 +21,8 @@ use pingora_cache::key::HashBinary;
 
 /// Hex digits naming one directory level.
 const LEVEL_DIGITS: usize = 2;
-/// The leading digits of a name that pick its shard: the first level's,
-/// then the second level's.
+/// The leading digits of a name that pick its shard: the first level's, then
+/// the second level's.
 const PREFIX_LEN: usize = LEVEL_DIGITS + LEVEL_DIGITS;
 /// The base names are written in: hex.
 pub const RADIX: u32 = 16;
@@ -55,8 +55,8 @@ type Blake2b128 = Blake2b<U16>;
 /// managers count it, but Pingora hashes only a key's primary bytes. So an
 /// untagged key is named by its hash in hex, and a tagged key by Blake2b-128
 /// over the hash followed by the tag, in hex: keys that differ only in their
-/// tag name different files. The hash has a fixed length and comes first,
-/// so the hashed input can be read only one way.
+/// tag name different files. The hash has a fixed length and comes first, so
+/// the hashed input can be read only one way.
 pub fn object_name(hash: HashBinary, user_tag: &str) -> String {
     if user_tag.is_empty() {
         return hex::encode(hash);
@@ -72,11 +72,11 @@ pub fn object_name(hash: HashBinary, user_tag: &str) -> String {
 ///
 /// Every name this backend derives is 32 hex characters, so neither variant
 /// is reachable through this crate's own call paths today. They exist so
-/// that a future caller passing something else -- or a shard constant above
-/// drifting -- surfaces as an ordinary error the backend reports as a cache
+/// that a future caller passing something else — or a shard constant above
+/// drifting — surfaces as an ordinary error the backend reports as a cache
 /// miss, rather than as a panic that would take the hosting proxy down with
 /// it.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ShardKeyError {
     #[error("name must be at least {} hex characters, got {:?}", PREFIX_LEN, .0)]
     TooShort(String),
@@ -132,7 +132,8 @@ pub fn temp_path(
     Ok(shard_dir(root, name)?.join(temp_name))
 }
 
-/// The first-level shard directory numbered `level` (`0..FIRST_LEVEL_COUNT`):
+/// The first-level shard directory numbered `level`
+/// (`0..FIRST_LEVEL_COUNT`):
 /// `<root>/<level, in LEVEL_DIGITS hex digits>`.
 pub fn first_level_dir(root: &Path, level: usize) -> PathBuf {
     root.join(format!("{level:0LEVEL_DIGITS$x}"))
@@ -177,9 +178,9 @@ fn is_name_digit(b: u8) -> bool {
 }
 
 /// Compute the flat shard index (`0..SHARD_COUNT`) for a name, used by
-/// [`crate::dircache::ShardDirCache`]'s bitset. Each level is
-/// `LEVEL_DIGITS` hex digits, so the shard prefix read as one number is
-/// already `first * SECOND_LEVEL_COUNT + second`.
+/// [`crate::dircache::ShardDirCache`]'s bitset. Each level is `LEVEL_DIGITS`
+/// hex digits, so the shard prefix read as one number is already
+/// `first * SECOND_LEVEL_COUNT + second`.
 pub fn shard_index(name: &str) -> Result<usize, ShardKeyError> {
     usize::from_str_radix(shard_prefix(name)?, RADIX)
         .map_err(|_| ShardKeyError::NotHex(name.to_owned()))
@@ -197,7 +198,7 @@ mod tests {
     #[test]
     fn splits_on_first_four_hex_chars() {
         let root = Path::new("/cache");
-        let path = shard_path(root, "a1b2c3d4e5f6").unwrap();
+        let path = shard_path(root, "a1b2c3d4e5f6").expect("a canonical name has a shard path");
         assert_eq!(path, Path::new("/cache/a1/b2/a1b2c3d4e5f6"));
     }
 
@@ -221,18 +222,24 @@ mod tests {
         ];
         for name in names {
             assert!(is_canonical_name(name), "{name} is shaped like a real name");
-            let index = shard_index(name).unwrap();
+            let index = shard_index(name).expect("a canonical name has a shard index");
             let (first, second) = (index / SECOND_LEVEL_COUNT, index % SECOND_LEVEL_COUNT);
             assert_eq!(
-                shard_dir(root, name).unwrap(),
+                shard_dir(root, name).expect("a canonical name has a shard directory"),
                 root.join(format!("{first:0LEVEL_DIGITS$x}"))
                     .join(format!("{second:0LEVEL_DIGITS$x}")),
                 "{name}"
             );
             assert_eq!(shard_index_of(first, second), index, "{name}");
         }
-        assert_eq!(shard_index(first_name).unwrap(), 0);
-        assert_eq!(shard_index(last_name).unwrap(), SHARD_COUNT - 1);
+        assert_eq!(
+            shard_index(first_name).expect("the first name has a shard index"),
+            0
+        );
+        assert_eq!(
+            shard_index(last_name).expect("the last name has a shard index"),
+            SHARD_COUNT - 1
+        );
     }
 
     /// A name whose first four characters are missing or not hex is an
@@ -266,8 +273,8 @@ mod tests {
         assert_eq!(dirs[FIRST_LEVEL_COUNT - 1], Path::new("/c/ff"));
     }
 
-    /// A shard directory's name stands for its number only if it is
-    /// exactly `LEVEL_DIGITS` lowercase hex digits, as `first_level_dir` and
+    /// A shard directory's name stands for its number only if it is exactly
+    /// `LEVEL_DIGITS` lowercase hex digits, as `first_level_dir` and
     /// `shard_dir` write it. Anything else is not a shard directory: too
     /// short or too long, uppercase, not hex, or with a sign that
     /// `from_str_radix` alone would accept.
@@ -312,8 +319,8 @@ mod tests {
     /// Pins the naming rule to exact values from an independent
     /// implementation. File names are part of the on-disk format: if a
     /// change to `object_name`, or to how Pingora hashes keys, gave a key a
-    /// different name, every object already stored would sit under a name
-    /// no lookup asks for. The expected values were computed with Python's
+    /// different name, every object already stored would sit under a name no
+    /// lookup asks for. The expected values were computed with Python's
     /// `hashlib`: `blake2b(b"/one-url", digest_size=16)` for the untagged
     /// name, then `blake2b(<that hash> + b"tenant-a", digest_size=16)` for
     /// the tagged one.

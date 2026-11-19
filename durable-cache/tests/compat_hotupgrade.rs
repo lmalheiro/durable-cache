@@ -165,13 +165,13 @@ fn tc_compat_hotupgrade_01_a_shutdown_during_the_wait_skips_the_scan() {
 /// its next entry, and the scan's summary line says why.
 #[test]
 fn tc_compat_hotupgrade_01_a_shutdown_during_the_scan_stops_it() {
+    const RECORDS: usize = 4;
     if !support::in_own_process(
         module_path!(),
         "tc_compat_hotupgrade_01_a_shutdown_during_the_scan_stops_it",
     ) {
         return;
     }
-    const RECORDS: usize = 4;
     let logs = support::LogCapture::install();
     let (cache, _tmp) = populated(RECORDS);
     let eviction = Timed::leaked();
@@ -189,13 +189,13 @@ fn tc_compat_hotupgrade_01_a_shutdown_during_the_scan_stops_it() {
 /// meanwhile stays.
 #[test]
 fn tc_compat_hotupgrade_01_a_shutdown_after_the_walk_skips_the_ghost_pass() {
+    const RECORDS: usize = 2;
     if !support::in_own_process(
         module_path!(),
         "tc_compat_hotupgrade_01_a_shutdown_after_the_walk_skips_the_ghost_pass",
     ) {
         return;
     }
-    const RECORDS: usize = 2;
     let logs = support::LogCapture::install();
     let (cache, _tmp) = populated(RECORDS);
     let eviction = Timed::leaked();
@@ -211,7 +211,8 @@ fn tc_compat_hotupgrade_01_a_shutdown_after_the_walk_skips_the_ghost_pass() {
     assert_stopped_for_shutdown(&logs, "admitted 2;");
 }
 
-// --- the recovery service --------------------------------------------------
+// --- the recovery service
+// --------------------------------------------------
 
 /// Run the helper's recovery service over `cache` until its scan reaches
 /// `point`, do `meanwhile`, shut its server down, and wait for the service
@@ -260,12 +261,13 @@ fn assert_stopped_for_shutdown(logs: &support::LogCapture, admitted: &str) {
     assert!(summary.contains(admitted), "{summary}");
 }
 
-// --- the server ------------------------------------------------------------
+// --- the server
+// ------------------------------------------------------------
 
-/// Run an ordinary server with the helper installed on `cache` until it
-/// has finished after `signal`. The signal is sent at once: the watcher
-/// subscribed to the server's phases when it was installed, and the
-/// server's one-second grace period leaves it the time to act on them.
+/// Run an ordinary server with the helper installed on `cache` until it has
+/// finished after `signal`. The signal is sent at once: the watcher
+/// subscribed to the server's phases when it was installed, and the server's
+/// one-second grace period leaves it the time to act on them.
 fn run_until(cache: &'static FsCache, signal: ShutdownSignal) {
     let eviction: &'static Manager = Box::leak(Box::new(Manager::new(usize::MAX)));
     let sockets = tempfile::tempdir().expect("a directory for the upgrade socket");
@@ -275,8 +277,8 @@ fn run_until(cache: &'static FsCache, signal: ShutdownSignal) {
     Running::start(server).stop(signal);
 }
 
-/// A server configured as an integrator's, taking its listening sockets
-/// over through `upgrade_sock` if `upgrading`.
+/// A server configured as an integrator's, taking its listening sockets over
+/// through `upgrade_sock` if `upgrading`.
 fn server(upgrading: bool, upgrade_sock: &Path) -> Server {
     let opt = Opt {
         upgrade: upgrading,
@@ -300,15 +302,15 @@ struct Running {
 }
 
 impl Running {
-    fn start(server: Server) -> Running {
+    fn start(server: Server) -> Self {
         let (signals, received) = mpsc::unbounded_channel();
         let watch = Signals(Mutex::new(received));
         let thread = std::thread::spawn(move || {
             server.run(RunArgs {
                 shutdown_signal: Box::new(watch),
-            })
+            });
         });
-        Running { signals, thread }
+        Self { signals, thread }
     }
 
     /// Send the server `signal`, and wait for it to finish.
@@ -350,7 +352,8 @@ fn record_key(i: usize) -> CacheKey {
     support::key(&format!("/hotupgrade-{i}"))
 }
 
-// --- the eviction manager --------------------------------------------------
+// --- the eviction manager
+// --------------------------------------------------
 
 /// The stock manager, noting when it first hears of an admission.
 struct Timed {
@@ -359,8 +362,8 @@ struct Timed {
 }
 
 impl Timed {
-    fn leaked() -> &'static Timed {
-        Box::leak(Box::new(Timed {
+    fn leaked() -> &'static Self {
+        Box::leak(Box::new(Self {
             inner: Manager::new(usize::MAX),
             first_admission: OnceLock::new(),
         }))
@@ -416,7 +419,7 @@ impl EvictionManager for Timed {
         self.inner.increment_weight(item, delta, max_weight)
     }
     fn remove(&self, item: CacheEntryKeyRef<'_>) {
-        self.inner.remove(item)
+        self.inner.remove(item);
     }
     fn access(&self, item: &CacheEntryKey, size: usize, fresh_until: SystemTime) -> bool {
         self.inner.access(item, size, fresh_until)

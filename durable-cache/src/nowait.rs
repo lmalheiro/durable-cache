@@ -9,8 +9,8 @@
 //! leaves the operation to the blocking pool (FDS-STORAGE.PAGECACHE-01). A
 //! read the page cache misses still starts the device's work: the kernel
 //! submits its readahead on the calling thread before it reports `EAGAIN`,
-//! so the worker pays for the submission, and the pool's read finds the
-//! data on its way.
+//! so the worker pays for the submission, and the pool's read finds the data
+//! on its way.
 //!
 //! `FsCache::new` checks once that the kernel and the cache's file system
 //! support both calls ([`check_support`]). Should one still report itself
@@ -18,21 +18,27 @@
 //! reports: a page-cache read never turns into a pool read unnoticed.
 //!
 //! With `FsCacheConfig::with_noatime`, on by default, records are opened
-//! with `O_NOATIME`, here and on the pool ([`Opener`]). A read that
-//! updates a file's access time dirties its inode, and on ext4 that starts a
-//! journal transaction, which can wait: even a read that `RWF_NOWAIT` keeps
-//! from waiting for the device updates it. With the default `relatime`, it
-//! happens on the first read of every record after it was written, as its
-//! writes leave its access time behind its modification time. The kernel
-//! refuses `O_NOATIME` on a file of another owner, and the open then fails.
+//! with `O_NOATIME`, here and on the pool (`crate::platform::Opener`). A
+//! read that updates a file's access time dirties its inode, and on ext4
+//! that starts a journal transaction, which can wait: even a read that
+//! `RWF_NOWAIT` keeps from waiting for the device updates it. With the
+//! default `relatime`, it happens on the first read of every record after it
+//! was written, as its writes leave its access time behind its modification
+//! time. The kernel refuses `O_NOATIME` on a file of another owner, and the
+//! open then fails.
 
 use std::fs::File;
 use std::io::{self, IoSliceMut};
 use std::os::fd::AsRawFd;
 use std::path::Path;
 
-use rustix::fs::{openat2, Mode, OFlags, ResolveFlags, CWD};
+use pingora_error::{ErrorType, OrErr};
+use rustix::fs::{openat2, Mode, ResolveFlags, CWD};
 use rustix::io::{preadv2, Errno, ReadWriteFlags};
+
+use crate::platform::Opener;
+use crate::writerid::{self, WriterLease};
+use crate::FsCacheConfig;
 
 /// Whether `errno`, from `openat2`, says that the call or its
 /// `RESOLVE_CACHED` flag is missing: `ENOSYS` before Linux 5.6, `EINVAL` for
@@ -74,7 +80,7 @@ pub(crate) fn check_support(
     root: &Path,
     file: &Path,
 ) -> io::Result<PageCacheReads> {
-    match opener.open_cached(root) {
+    match open_cached(opener, root) {
         Ok(_) => {}
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
         Err(e) => return Err(e),
@@ -90,17 +96,43 @@ pub(crate) fn check_support(
 /// page-cache reads, as [`check_support`] found: nothing else can make one.
 /// Each page-cache read starts with one of its two calls, a lookup's open or
 /// a body read's fill, so none can be made unless the check passed.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct PageCacheReads {
     opener: Opener,
 }
 
 impl PageCacheReads {
+    /// The page-cache reads `config` asks for, opening with `opener`, or
+    /// `None` with them switched off. It first checks that the kernel and
+    /// the cache's file system support their calls ([`check_support`]): on
+    /// the root, and on `lease`'s file, the one file the cache is sure to
+    /// hold. Fails with an `InternalError` if not.
+    pub(crate) fn new(
+        config: &FsCacheConfig,
+        lease: &WriterLease,
+        opener: Opener,
+    ) -> pingora_error::Result<Option<Self>> {
+        if !config.page_cache_reads() {
+            return Ok(None);
+        }
+        let root = config.root();
+        let lease_file = writerid::lease_path(root, &lease.id());
+        let checked = check_support(opener, root, &lease_file);
+        checked.map(Some).or_err_with(ErrorType::InternalError, || {
+            format!(
+                "checking the page-cache reads that FsCacheConfig::with_page_cache_reads asks \
+                 for under {}; switch them off where the kernel or the file system lacks them, \
+                 as tmpfs and overlayfs do",
+                root.display()
+            )
+        })
+    }
+
     /// Open `path` if every component of it is in the dentry cache
     /// (`openat2` with `RESOLVE_CACHED`); an error of kind `WouldBlock` if
     /// not.
     pub(crate) fn open(&self, path: &Path) -> io::Result<File> {
-        self.opener.open_cached(path)
+        open_cached(self.opener, path)
     }
 
     /// [`fill`] from the page cache only: an error of kind `WouldBlock` at
@@ -117,52 +149,24 @@ impl PageCacheReads {
     }
 }
 
-/// How records and temporaries are opened to read: with `O_NOATIME` if the
-/// configuration asks (`FsCacheConfig::with_noatime`), which `FsCache::new`
-/// has checked the kernel allows. The worker's open and the pool's take
-/// their flags from the same value, so they cannot drift apart.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Opener {
-    flags: OFlags,
-}
-
-impl Opener {
-    /// Opens read-only, without updating access times if `noatime`.
-    pub(crate) fn new(noatime: bool) -> Self {
-        let flags = OFlags::RDONLY | OFlags::CLOEXEC;
-        Opener {
-            flags: if noatime {
-                flags | OFlags::NOATIME
-            } else {
-                flags
-            },
+/// Open `path` with `opener`'s flags if every component of it is in the
+/// dentry cache (`openat2` with `RESOLVE_CACHED`); an error of kind
+/// `WouldBlock` if not. Only [`PageCacheReads`] and [`check_support`] call
+/// it.
+fn open_cached(opener: Opener, path: &Path) -> io::Result<File> {
+    match openat2(
+        CWD,
+        path,
+        opener.flags(),
+        Mode::empty(),
+        ResolveFlags::CACHED,
+    ) {
+        Ok(fd) => Ok(File::from(fd)),
+        Err(errno) if errno == Errno::AGAIN => Err(would_block()),
+        Err(errno) if openat2_lacking(errno) => {
+            Err(not_supported("openat2 with RESOLVE_CACHED", errno))
         }
-    }
-
-    /// Open `path` if every component of it is in the dentry cache
-    /// (`openat2` with `RESOLVE_CACHED`); an error of kind `WouldBlock` if
-    /// not. Only [`PageCacheReads`] and [`check_support`] call it.
-    fn open_cached(&self, path: &Path) -> io::Result<File> {
-        match openat2(CWD, path, self.flags, Mode::empty(), ResolveFlags::CACHED) {
-            Ok(fd) => Ok(File::from(fd)),
-            Err(errno) if errno == Errno::AGAIN => Err(would_block()),
-            Err(errno) if openat2_lacking(errno) => {
-                Err(not_supported("openat2 with RESOLVE_CACHED", errno))
-            }
-            Err(errno) => Err(errno.into()),
-        }
-    }
-
-    /// The open of the blocking pool: the flags of [`PageCacheReads::open`],
-    /// and every component of `path` looked up however long that takes.
-    pub(crate) fn open_blocking(&self, path: &Path) -> io::Result<File> {
-        loop {
-            match rustix::fs::open(path, self.flags, Mode::empty()) {
-                Ok(fd) => return Ok(File::from(fd)),
-                Err(errno) if errno == Errno::INTR => {}
-                Err(errno) => return Err(errno.into()),
-            }
-        }
+        Err(errno) => Err(errno.into()),
     }
 }
 
@@ -298,8 +302,8 @@ unsafe fn pread_nowait(
 }
 
 /// Fill `buf` from the page cache, up to the first byte that would wait for
-/// the device: how many bytes it read. The file ending first is an error
-/// of kind `UnexpectedEof`.
+/// the device: how many bytes it read. The file ending first is an error of
+/// kind `UnexpectedEof`.
 fn read_cached(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     let mut read = 0;
     while read < buf.len() {
@@ -329,6 +333,11 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::*;
+
+    /// The opener of a cache at `root`, with `O_NOATIME` if `noatime`.
+    fn opener(root: &Path, noatime: bool) -> Opener {
+        Opener::new(&FsCacheConfig::new(root, None).with_noatime(noatime)).expect("the opener")
+    }
 
     /// A file written now, its access time an hour behind its modification
     /// time, as a store leaves it: `relatime` updates it on the next read.
@@ -363,11 +372,11 @@ mod tests {
     /// Drop `file`'s pages from `offset` on out of the page cache: written,
     /// synchronised and so clean, they go, and a read of them with
     /// `RWF_NOWAIT` usually fails with `EAGAIN`. Not always: a read that
-    /// misses starts the device's work, and a device that answers within
-    /// the call, as a virtual machine's disk can, lets the read go on; so
-    /// does a page cache that keeps the file in units larger than a page.
-    /// The tests that use it hold to what is true either way, and drop the
-    /// pages again before each read.
+    /// misses starts the device's work, and a device that answers within the
+    /// call, as a virtual machine's disk can, lets the read go on; so does a
+    /// page cache that keeps the file in units larger than a page. The tests
+    /// that use it hold to what is true either way, and drop the pages again
+    /// before each read.
     fn uncache_from(file: &File, offset: u64) {
         file.sync_data().expect("the file is synchronised");
         rustix::fs::fadvise(file, offset, None, rustix::fs::Advice::DontNeed)
@@ -416,8 +425,8 @@ mod tests {
     /// The reads of a record on the worker read what the page cache holds:
     /// `read_at_most` at least the cached prefix; with nothing cached,
     /// `read_at_most` and `read_exact_at` fail with `WouldBlock`, unless the
-    /// device answers within the call (see [`uncache_from`]). What they
-    /// read is the file's bytes.
+    /// device answers within the call (see [`uncache_from`]). What they read
+    /// is the file's bytes.
     #[test]
     fn record_reads_on_the_worker_read_what_the_page_cache_holds() {
         let dir = crate::integration_tests::support::tempdir();
@@ -468,8 +477,8 @@ mod tests {
     /// On a file system without non-blocking reads, each read on the worker
     /// fails with an error of kind `Unsupported` naming the call, whichever
     /// kind the standard library gives `EOPNOTSUPP` (`Uncategorized` in Rust
-    /// 1.85). `/dev/shm` is a tmpfs, which lacks them as of Linux 6.12; where
-    /// it has them, or there is no `/dev/shm`, nothing can tell.
+    /// 1.85). `/dev/shm` is a tmpfs, which lacks them as of Linux 6.12;
+    /// where it has them, or there is no `/dev/shm`, nothing can tell.
     #[test]
     fn reads_the_file_system_lacks_are_unsupported() {
         let Ok(dir) = tempfile::tempdir_in("/dev/shm") else {
@@ -519,8 +528,12 @@ mod tests {
             return;
         }
         uncache_from(&file, 0);
-        check_support(Opener::new(false), dir.path(), &dir.path().join("body"))
-            .expect("the calls are supported");
+        check_support(
+            opener(dir.path(), false),
+            dir.path(),
+            &dir.path().join("body"),
+        )
+        .expect("the calls are supported");
     }
 
     /// `fill` reads the range asked for, and carries on from the bytes a
@@ -552,8 +565,8 @@ mod tests {
         }
     }
 
-    /// The file ending before the range is an error of kind
-    /// `UnexpectedEof`, and the bytes read until then stay in the buffer.
+    /// The file ending before the range is an error of kind `UnexpectedEof`,
+    /// and the bytes read until then stay in the buffer.
     #[test]
     fn fill_past_the_end_of_the_file_is_unexpected_eof() {
         let dir = crate::integration_tests::support::tempdir();
@@ -586,15 +599,14 @@ mod tests {
         let path = dir.path().join("record");
         written_an_hour_after_access(&path);
         let before = accessed(&path);
-        Opener::new(true)
+        opener(dir.path(), true)
             .open_blocking(&path)
             .and_then(|f| f.read_exact_at(&mut buf, 0))
             .expect("the record reads on the pool");
         // The open just made puts the path in the dentry cache, and the
         // write put the file in the page cache.
-        let file = Opener::new(true)
-            .open_cached(&path)
-            .expect("the path is in the dentry cache");
+        let file =
+            open_cached(opener(dir.path(), true), &path).expect("the path is in the dentry cache");
         match read_exact_at(&file, &mut buf, 4096) {
             Err(e) if e.kind() == io::ErrorKind::Unsupported => {
                 eprintln!("no non-blocking reads here: only the pool's read is checked");

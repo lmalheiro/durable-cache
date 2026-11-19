@@ -3,13 +3,26 @@
 
 //! Test hooks: the pause points, fault injection, hash injection, and
 //! instrumentation the test cases name in their Setup. The module exists
-//! only in this crate's own test build (`cfg(test)`). Every call into it is
-//! wrapped in `test_hook!`, and everything else that reaches it is a
-//! `#[cfg(test)]` item: `FsCache`'s `hooks` field, `with_test_hooks` and
-//! `hooks`, the test build's `map_name`, the test-only parameters of
-//! `close_removed_file` and of the discard's synchronisations, and the
-//! test-build line of `on_worker!` in `lookup/page_cache.rs`. So no other build contains a hook, a hook call, or
-//! anything a hook call's arguments compute.
+//! only in this crate's own test build (`cfg(test)`). Every other build has
+//! an empty, zero-sized `Hooks` in its place (in `lib.rs`), so `FsCache`'s
+//! `hooks` field and the parameters that carry it down to a hook are there
+//! in every build, without a gate; a function whose parameter only a hook
+//! uses discards it in the other builds (`let _ = …`). Every call into the
+//! hooks is wrapped in `test_hook!`, the arguments it computes included, and
+//! the rest of the code that reaches them is `#[cfg(test)]`:
+//!
+//! - `FsCache::with_test_hooks` and `FsCache::hooks`;
+//! - the imports of the hook types;
+//! - `crashdiscard::injected`, which turns an injected fault into an I/O
+//!   error;
+//! - the values a hook needs before the call that uses it: the boot
+//!   identity's path in `FsCache::build`, the owned path that
+//!   `close_removed_file` hands its pause, and the cache that a body chunk's
+//!   write moves into its pool task (`miss.rs`);
+//! - the test-build line of `on_worker!` in `lookup/page_cache.rs`.
+//!
+//! So no other build contains a hook, a hook call, or anything a hook call's
+//! arguments compute.
 //!
 //! Hooks are per [`crate::FsCache`] instance, so tests running in parallel
 //! in one binary never see each other's pauses or faults.
@@ -17,31 +30,36 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
+
+#[cfg(target_os = "linux")]
+mod worker;
+
+#[cfg(target_os = "linux")]
+pub use self::worker::WorkerCall;
 
 /// A place in the backend where a test can hold an operation.
 ///
 /// A test arms a pause with [`Hooks::arm_pause`], naming the point and,
-/// optionally, the path the operation works on. The first operation to
-/// reach that point, on that path, stops there until the test releases it;
-/// the pause is then used up. Each point below says where it is, which path
-/// it is given, and the test cases whose tests pause there, or the design,
-/// for a point only regression tests use.
+/// optionally, the path the operation works on. The first operation to reach
+/// that point, on that path, stops there until the test releases it; the
+/// pause is then used up. Each point below says where it is, which path it
+/// is given, and the test cases whose tests pause there, or the design, for
+/// a point only regression tests use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PausePoint {
     /// Reclaim, during the restart scan: after a record is found
-    /// reclaimable, before the key's publication lock is taken to unlink
-    /// it, or before a stopped writer's temporary is unlinked. Path: the
-    /// record or the temporary (TC-STORAGE.RECLAIM-01,
-    /// TC-STORAGE.EXECUTOR-02).
+    /// reclaimable, before the key's publication lock is taken to unlink it,
+    /// or before a stopped writer's temporary is unlinked. Path: the record
+    /// or the temporary (TC-STORAGE.RECLAIM-01, TC-STORAGE.EXECUTOR-02).
     ReclaimBeforeUnlink,
     /// Restart scan: after a record is read, before it is checked again
     /// under the key's publication lock and admitted to the eviction
     /// manager. Path: the record (TC-EVICTION.RECONSTRUCT-01).
     RecoverBeforeAdmit,
-    /// Restart scan: after a record is admitted, before the next one.
-    /// Path: the record (TC-COMPAT.HOTUPGRADE-01).
+    /// Restart scan: after a record is admitted, before the next one. Path:
+    /// the record (TC-COMPAT.HOTUPGRADE-01).
     RecoverAfterAdmit,
     /// Restart scan: after every record has been read, before the pass that
     /// removes from the eviction manager the objects whose record has gone
@@ -82,8 +100,8 @@ pub enum PausePoint {
     /// record replaced or purged while a hit read it, or a removed temporary
     /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-02).
     BeforeClosingRemovedFile,
-    /// Store: at the start of its miss handler's `Drop`. A test holds a store
-    /// here to see on which thread its handler is dropped. Path: the
+    /// Store: at the start of its miss handler's `Drop`. A test holds a
+    /// store here to see on which thread its handler is dropped. Path: the
     /// canonical record (FDS-STORAGE.EXECUTOR-02).
     StoreDropping,
 }
@@ -92,8 +110,8 @@ pub enum PausePoint {
 /// make it fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FaultPoint {
-    /// Writing to a store's temporary: its fixed part as the store opens,
-    /// or a body chunk (TC-COMPAT.WRITEFAIL-01, TC-COMPAT.ABORTSPACE-01).
+    /// Writing to a store's temporary: its fixed part as the store opens, or
+    /// a body chunk (TC-COMPAT.WRITEFAIL-01, TC-COMPAT.ABORTSPACE-01).
     WriteTemp,
     /// Synchronising a store's temporary before it is renamed into place
     /// (TC-COMPAT.WRITEFAIL-01, TC-STORAGE.PUBLISH-02).
@@ -115,27 +133,10 @@ pub enum FaultPoint {
     SyncFileSystem,
 }
 
-/// A call on the async worker, from the page cache only, that a test can
-/// make fail: report that it would wait for the device, or that the system
-/// does not support it (TC-STORAGE.PAGECACHE-01). Linux only, as those calls
-/// are.
-#[cfg(target_os = "linux")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkerCall {
-    /// A lookup's open of a record or of a store's temporary. Path: that
-    /// file.
-    Open,
-    /// A lookup's read of a record's fixed part. Path: the record or
-    /// temporary.
-    RecordRead,
-    /// A read of a body chunk. Path: the record or temporary read.
-    BodyRead,
-}
-
 type NameOverride = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|p| p.into_inner())
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[derive(Default)]
@@ -166,7 +167,7 @@ impl PauseHandle {
             .gate
             .cv
             .wait_timeout_while(guard, timeout, |s| !s.reached)
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(PoisonError::into_inner);
         guard.reached
     }
 
@@ -180,8 +181,8 @@ impl PauseHandle {
 impl Drop for PauseHandle {
     fn drop(&mut self) {
         // Never leave the backend blocked behind a test that gave up. A
-        // pause released unreached is discarded by the next operation
-        // that reaches its point.
+        // pause released unreached is discarded by the next operation that
+        // reaches its point.
         self.release();
     }
 }
@@ -194,27 +195,17 @@ struct Armed {
 /// Configuration fixed at construction.
 #[derive(Clone, Default)]
 pub struct HookConfig {
-    /// Maps the name a key's files would have to the one the backend
-    /// uses for its path (TC-LAYOUT.SHARDING-01).
+    /// Maps the name a key's files would have to the one the backend uses
+    /// for its path (TC-LAYOUT.SHARDING-01).
     pub object_name: Option<NameOverride>,
-    /// The file the backend reads the current boot's identity from, in
-    /// place of `/proc/sys/kernel/random/boot_id`
+    /// The file the backend reads the current boot's identity from, in place
+    /// of `/proc/sys/kernel/random/boot_id`
     /// (TC-PERSISTENCE.CRASHDISCARD-01).
     pub boot_id_path: Option<PathBuf>,
     /// Faults armed from the start, for the operations construction makes:
     /// the next `times` operations at each point fail, as
     /// [`Hooks::inject_fault`] arms them later.
     pub faults: Vec<(FaultPoint, usize)>,
-}
-
-/// One armed worker fault: the call to make fail, on which file, after how
-/// many such calls go through, and with what kind of error.
-#[cfg(target_os = "linux")]
-struct WorkerFault {
-    call: WorkerCall,
-    path: PathBuf,
-    skip: usize,
-    kind: std::io::ErrorKind,
 }
 
 /// The runtime hooks of one backend instance.
@@ -225,7 +216,7 @@ pub struct Hooks {
     faults: Mutex<HashMap<FaultPoint, usize>>,
     meta_decodes: AtomicU64,
     #[cfg(target_os = "linux")]
-    worker_faults: Mutex<Vec<WorkerFault>>,
+    worker_faults: Mutex<Vec<worker::WorkerFault>>,
     handoffs: AtomicU64,
     marker_writes: AtomicU64,
 }
@@ -233,7 +224,7 @@ pub struct Hooks {
 impl Hooks {
     pub(crate) fn new(config: HookConfig) -> Self {
         let faults = config.faults.iter().copied().collect();
-        Hooks {
+        Self {
             config,
             faults: Mutex::new(faults),
             ..Default::default()
@@ -246,8 +237,8 @@ impl Hooks {
     /// A pause blocks the thread that reaches it until the test releases it.
     /// When that thread is a worker of the test's own runtime, as for the
     /// restart scan's reads, the runtime needs a second worker for the test
-    /// to go on meanwhile: `#[tokio::test(flavor = "multi_thread",
-    /// worker_threads = 2)]`.
+    /// to go on meanwhile:
+    /// `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`.
     pub fn arm_pause(&self, point: PausePoint, path: Option<&Path>) -> PauseHandle {
         let gate = Arc::new(Gate::default());
         lock(&self.pauses).entry(point).or_default().push(Armed {
@@ -279,7 +270,7 @@ impl Hooks {
         state.reached = true;
         gate.cv.notify_all();
         while !state.released {
-            state = gate.cv.wait(state).unwrap_or_else(|p| p.into_inner());
+            state = gate.cv.wait(state).unwrap_or_else(PoisonError::into_inner);
         }
     }
 
@@ -309,60 +300,6 @@ impl Hooks {
 
     pub(crate) fn count_meta_decode(&self) {
         self.meta_decodes.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Make one `call` on the worker, on the file at `path`, report that it
-    /// would wait: the first after `skip` such calls go through.
-    #[cfg(target_os = "linux")]
-    pub fn arm_worker_wait(&self, call: WorkerCall, path: &Path, skip: usize) {
-        self.arm_worker_fault(call, path, skip, std::io::ErrorKind::WouldBlock);
-    }
-
-    /// Make one `call` on the worker, on the file at `path`, report that the
-    /// system does not support it: the first after `skip` such calls go
-    /// through.
-    #[cfg(target_os = "linux")]
-    pub fn arm_worker_unsupported(&self, call: WorkerCall, path: &Path, skip: usize) {
-        self.arm_worker_fault(call, path, skip, std::io::ErrorKind::Unsupported);
-    }
-
-    /// Make one `call` on the worker, on the file at `path`, report that the
-    /// file does not exist, as when it is removed just before: the first
-    /// after `skip` such calls go through.
-    #[cfg(target_os = "linux")]
-    pub fn arm_worker_missing(&self, call: WorkerCall, path: &Path, skip: usize) {
-        self.arm_worker_fault(call, path, skip, std::io::ErrorKind::NotFound);
-    }
-
-    #[cfg(target_os = "linux")]
-    fn arm_worker_fault(
-        &self,
-        call: WorkerCall,
-        path: &Path,
-        skip: usize,
-        kind: std::io::ErrorKind,
-    ) {
-        lock(&self.worker_faults).push(WorkerFault {
-            call,
-            path: path.to_path_buf(),
-            skip,
-            kind,
-        });
-    }
-
-    /// The error this `call` on `path` is to fail with, if a test armed one.
-    #[cfg(target_os = "linux")]
-    pub(crate) fn worker_fault(&self, call: WorkerCall, path: &Path) -> Option<std::io::Error> {
-        let mut faults = lock(&self.worker_faults);
-        let i = faults
-            .iter()
-            .position(|w| w.call == call && w.path == path)?;
-        if faults[i].skip > 0 {
-            faults[i].skip -= 1;
-            return None;
-        }
-        let kind = faults.remove(i).kind;
-        Some(std::io::Error::new(kind, format!("injected at {call:?}")))
     }
 
     /// How many lookups and body reads this backend has handed to the

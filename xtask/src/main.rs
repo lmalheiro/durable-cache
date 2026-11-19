@@ -15,6 +15,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 mod bench;
+mod cfg_matrix;
 
 #[derive(Parser)]
 struct Cli {
@@ -85,6 +86,17 @@ enum Cmd {
         /// does.
         #[arg(long)]
         check: bool,
+    },
+    /// Lint and test durable-cache in every build its `#[cfg]` gates select:
+    /// clippy for each feature set and for a release build, and nextest with
+    /// the default features and with all of them. On Linux, and again on a
+    /// copy of the workspace in which the Linux gates select their other-Unix
+    /// side, since no CI job builds another system. Each step's whole log is
+    /// kept under `<target>/xtask/cfg-matrix/logs`.
+    CfgMatrix {
+        /// Lint only: skip nextest.
+        #[arg(long)]
+        no_tests: bool,
     },
     /// Benchmark the cache against nginx and its `proxy_cache`, locally:
     /// throughput and latency of cache hits, and of filling the cache, for
@@ -165,6 +177,7 @@ fn main() -> Result<()> {
         Cmd::Headers => check_headers(),
         Cmd::Fmt { check } => fmt(check),
         Cmd::ReadmeLinks { check } => readme_links(check),
+        Cmd::CfgMatrix { no_tests } => cfg_matrix::cfg_matrix(&workspace_root()?, !no_tests),
         Cmd::Bench {
             nginx,
             oha,

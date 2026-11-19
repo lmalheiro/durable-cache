@@ -4,11 +4,11 @@
 //! The backend's counters (ADR-OBSERVABILITY.METRICS-01): registered in the
 //! `prometheus` default registry, the one the `pingora-prometheus` exporter
 //! gathers from, but only when the `metrics` feature is enabled. It is off
-//! by default. The feature gates the dependency as well as the
-//! registration: without it the crate links neither `pingora-prometheus`
-//! nor `prometheus`, and the logs beside the counters are the only record
-//! of what they count: a warning for each withdrawal, and the restart
-//! scan's summary line for what it reclaimed.
+//! by default. The feature gates the dependency as well as the registration:
+//! without it the crate links neither `pingora-prometheus` nor `prometheus`,
+//! and the logs beside the counters are the only record of what they count:
+//! a warning for each withdrawal, and the restart scan's summary line for
+//! what it reclaimed.
 //!
 //! The counters are registered through the `prometheus` crate that
 //! `pingora-prometheus` re-exports, so they are in the registry its exporter
@@ -100,11 +100,10 @@ mod imp {
         ReclaimClass::Withdrawn,
     ];
 
-    /// Register every counter, with each reclaim class's series, at zero,
-    /// so that the exporter serves them from the start rather than from
-    /// their first event (FDS-OBSERVABILITY.HEADROOM-01,
-    /// FDS-STORAGE.RECLAIM-01). [`crate::FsCache::new`] calls it; calling it
-    /// again changes nothing.
+    /// Register every counter, with each reclaim class's series, at zero, so
+    /// that the exporter serves them from the start rather than from their
+    /// first event (FDS-OBSERVABILITY.HEADROOM-01, FDS-STORAGE.RECLAIM-01).
+    /// [`crate::FsCache::new`] calls it; calling it again changes nothing.
     pub fn register() {
         headroom_exceeded();
         for counter in [reclaimed_files(), reclaimed_bytes()].into_iter().flatten() {

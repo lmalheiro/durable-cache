@@ -9,11 +9,11 @@
 //! directory, synchronises its data to stable storage ([`sync_temp`]), and
 //! then, under the key's lock, renames it over the canonical name
 //! ([`rename`]). The directory is not synchronised after the rename: a host
-//! crash may lose the publication, but the name never refers to data that
-//! is not on stable storage. A temporary that will not be published is removed
+//! crash may lose the publication, but the name never refers to data that is
+//! not on stable storage. A temporary that will not be published is removed
 //! ([`discard_temp`]). The record that a rename replaces, or that a purge's
-//! unlink removes, is held open across that call ([`hold_open`]), so that
-//! it is freed after the lock is released rather than under it.
+//! unlink removes, is held open across that call ([`hold_open`]), so that it
+//! is freed after the lock is released rather than under it.
 
 use std::fs::File;
 use std::io;
@@ -26,10 +26,10 @@ pub fn sync_temp(file: &File) -> io::Result<()> {
     file.sync_data()
 }
 
-/// Publish `temp_path` as `canonical_path` with one `rename`, which
-/// replaces any record already there in the same step. The temporary is
-/// always in the canonical name's own directory, so the rename is atomic by
-/// placement (ADR-STORAGE.ATOMICPUBLISH-01).
+/// Publish `temp_path` as `canonical_path` with one `rename`, which replaces
+/// any record already there in the same step. The temporary is always in the
+/// canonical name's own directory, so the rename is atomic by placement
+/// (ADR-STORAGE.ATOMICPUBLISH-01).
 ///
 /// The caller holds the key's publication lock and the read-only gate.
 pub fn rename(temp_path: &Path, canonical_path: &Path) -> io::Result<()> {
@@ -40,9 +40,8 @@ pub fn rename(temp_path: &Path, canonical_path: &Path) -> io::Result<()> {
 /// so that the kernel frees it when the returned file is dropped, rather
 /// than inside that call. The caller makes that call under the key's
 /// publication lock, and freeing a large file can take a long time,
-/// depending on the file system and the device, so it must not happen
-/// while the lock is held: the caller drops the file once the lock is
-/// released.
+/// depending on the file system and the device, so it must not happen while
+/// the lock is held: the caller drops the file once the lock is released.
 ///
 /// `None` if there is no record at `path`. If it cannot be opened, that is
 /// logged as a warning and `None` is returned: the rename or unlink then
@@ -63,10 +62,10 @@ pub fn hold_open(path: &Path) -> Option<File> {
 }
 
 /// Remove a temporary that will never be published: a store's, when the
-/// store failed, was abandoned, or completed once the backend was
-/// read-only. Best effort: a temporary already gone is not an error, any
-/// other failure is only logged, and the restart-time scan reclaims what is
-/// left (FDS-STORAGE.RECLAIM-01).
+/// store failed, was abandoned, or completed once the backend was read-only.
+/// Best effort: a temporary already gone is not an error, any other failure
+/// is only logged, and the restart-time scan reclaims what is left
+/// (FDS-STORAGE.RECLAIM-01).
 pub fn discard_temp(temp_path: &Path) {
     if let Err(e) = std::fs::remove_file(temp_path) {
         if e.kind() != io::ErrorKind::NotFound {

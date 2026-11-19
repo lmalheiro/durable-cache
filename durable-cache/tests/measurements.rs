@@ -23,7 +23,8 @@
 //!   --lib -- --ignored --nocapture measurements::tc_performance_lookup
 //! ```
 //!
-//! They refuse to run on an unoptimised build: see [`require_optimised_build`].
+//! They refuse to run on an unoptimised build: see
+//! [`require_optimised_build`].
 //!
 //! The defaults are a hundredth of those figures, so the harness itself
 //! stays exercisable; the assertions that carry a requirement's bound are
@@ -73,9 +74,9 @@ fn resident_bytes() -> u64 {
     pages * 4096
 }
 
-/// TC-PERSISTENCE.CAPACITY-01: the cache holds, and serves, a set of
-/// objects whose total size exceeds the RAM of its host, with the process's
-/// own resident memory staying far below it.
+/// TC-PERSISTENCE.CAPACITY-01: the cache holds, and serves, a set of objects
+/// whose total size exceeds the RAM of its host, with the process's own
+/// resident memory staying far below it.
 #[tokio::test]
 #[ignore = "a capacity measurement: set DURABLE_CACHE_RAM_BYTES and give it disk"]
 async fn tc_persistence_capacity_01_cache_larger_than_host_ram() {
@@ -144,9 +145,10 @@ async fn tc_persistence_capacity_01_cache_larger_than_host_ram() {
     }
 }
 
-/// TC-EFFICIENCY.SPACE-01: measure the on-disk overhead HLR-EFFICIENCY.SPACE-01
-/// defines — allocated blocks minus the objects' own metadata and body
-/// bytes, over those bytes — for the three loads the test case names.
+/// TC-EFFICIENCY.SPACE-01: measure the on-disk overhead
+/// HLR-EFFICIENCY.SPACE-01 defines — allocated blocks minus the objects' own
+/// metadata and body bytes, over those bytes — for the three loads the test
+/// case names.
 #[tokio::test]
 #[ignore = "a space measurement: set DURABLE_CACHE_SPACE_OBJECTS for the full 10^5"]
 async fn tc_efficiency_space_01_overhead_per_load() {
@@ -173,8 +175,9 @@ async fn tc_efficiency_space_01_overhead_per_load() {
             let header = support::read_header(&support::canonical_path(cache, &key));
             // The objects' own bytes: the metadata segments the record
             // holds, plus the body.
-            object_bytes +=
-                header.internal_len() as u64 + header.header_len() as u64 + header.body_len();
+            object_bytes += u64::from(header.internal_len())
+                + u64::from(header.header_len())
+                + header.body_len();
         }
         let occupied = support::tree_disk_usage(tmp.path());
         let overhead = (occupied as f64 - object_bytes as f64) / object_bytes as f64 * 100.0;

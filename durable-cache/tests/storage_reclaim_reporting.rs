@@ -93,7 +93,8 @@ async fn tc_storage_reclaim_01_reports_every_class() {
             .filter(|line| fragments.iter().all(|f| line.contains(f.as_str())))
             .count(),
         1,
-        "exactly one summary line must report every class of this scan ({fragments:?}): {summaries:?}"
+        "exactly one summary line must report every class of this scan \
+         ({fragments:?}): {summaries:?}"
     );
 
     let files = |class: &str| {
@@ -121,8 +122,8 @@ async fn tc_storage_reclaim_01_reports_every_class() {
 }
 
 /// Steps 6 and 7, before the scan: once the backend is built, both reclaim
-/// counters are served, with every class at zero, rather than from the
-/// first reclaim of that class; without the `metrics` feature neither is
+/// counters are served, with every class at zero, rather than from the first
+/// reclaim of that class; without the `metrics` feature neither is
 /// registered.
 #[test]
 fn tc_storage_reclaim_01_the_counters_read_zero_once_the_backend_is_built() {
@@ -186,8 +187,8 @@ async fn tc_storage_reclaim_01_a_read_only_scan_says_it_stopped() {
 }
 
 /// Step 9: a shard directory the scan cannot list and a record it cannot
-/// open are skipped, each named in a warning, and counted, in the report
-/// and in the summary line. Every other record is admitted.
+/// open are skipped, each named in a warning, and counted, in the report and
+/// in the summary line. Every other record is admitted.
 #[tokio::test]
 async fn tc_storage_reclaim_01_reports_what_it_could_not_read() {
     use std::os::unix::fs::PermissionsExt;

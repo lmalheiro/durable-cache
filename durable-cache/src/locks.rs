@@ -7,12 +7,12 @@
 //! **Changes** are a store's final rename, a metadata update or an expiry
 //! (written in place, or withdrawing or removing the record), a purge's
 //! unlink, and the restart scan's removals of records, temporaries and
-//! leases: the *durable* changes, which other readers of the cache
-//! directory see. The restart scan's admission checks count as changes too,
-//! though they change only this process's eviction manager. Lookups change
-//! nothing. One takes a key's publication lock only to read once more a
-//! record whose checksums kept failing ([`ChangeLocks::lock_key`]), and
-//! never enters the gate.
+//! leases: the *durable* changes, which other readers of the cache directory
+//! see. The restart scan's admission checks count as changes too, though
+//! they change only this process's eviction manager. Lookups change nothing.
+//! One takes a key's publication lock only to read once more a record whose
+//! checksums kept failing ([`ChangeLocks::lock_key`]), and never enters the
+//! gate.
 //!
 //! **The read-only gate** (FDS-COMPAT.READONLY-02) decides whether this
 //! process may still make changes. Every change enters it and stays inside,
@@ -29,9 +29,9 @@
 //! changes check a key's canonical file and then act on what they found, and
 //! the file must not change in between:
 //!
-//! - a metadata update or an expiry opens and reads the record, decides,
-//!   and writes the new metadata into it in place, or withdraws or removes
-//!   the record;
+//! - a metadata update or an expiry opens and reads the record, decides, and
+//!   writes the new metadata into it in place, or withdraws or removes the
+//!   record;
 //! - the reclaim scan confirms that the name still refers to the file it
 //!   found reclaimable, then unlinks it;
 //! - the restart scan confirms that the name still refers to the file it
@@ -83,7 +83,6 @@
 //! to one directory only during a hot upgrade, before the old one becomes
 //! read-only, and FDS-STORAGE.METAUPDATE-01 accepts the race there.
 
-#[cfg(debug_assertions)]
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
@@ -98,11 +97,10 @@ const STRIPE_DIGITS: usize = 3;
 /// finish. Each stripe takes 8 bytes on Linux, 32 KiB in all.
 ///
 /// The stripes are packed, eight to a 64-byte cache line, and deliberately
-/// not padded apart. Two keys' stripes share a line only by chance too, 1
-/// in 512, and a lock writes its line only as it is taken and released, so
-/// the line seldom moves between cores. Measured, padding each stripe to a
-/// line of its own gained about 2%, in a synthetic load that took a lock
-/// 335,000 times a second, for eight times the memory.
+/// not padded apart. Two keys' stripes share a line only by chance too, 1 in
+/// 512, and a lock writes its line only as it is taken and released, so the
+/// line seldom moves between cores. Padding each stripe to a line of its own
+/// would spare even that, at eight times the memory.
 const STRIPES: usize = (RADIX as usize).pow(STRIPE_DIGITS as u32);
 
 // The count the documentation states: a change to the constants above that
@@ -110,8 +108,8 @@ const STRIPES: usize = (RADIX as usize).pow(STRIPE_DIGITS as u32);
 const _: () = assert!(STRIPES == 4096);
 
 /// The locks that order changes: the read-only gate, and the publication
-/// locks, one per key, in a fixed table of stripes that keys share
-/// according to their names' first digits.
+/// locks, one per key, in a fixed table of stripes that keys share according
+/// to their names' first digits.
 pub struct ChangeLocks {
     /// The read-only gate's flag, `true` once the backend is read-only.
     /// Changes hold the gate shared; `set_read_only` takes it exclusively.
@@ -122,17 +120,17 @@ pub struct ChangeLocks {
 
 impl Default for ChangeLocks {
     fn default() -> Self {
-        ChangeLocks {
+        Self {
             read_only: RwLock::new(false),
             stripes: (0..STRIPES).map(|_| Mutex::new(())).collect(),
         }
     }
 }
 
-/// A change in progress: the publication lock of its key, if it has one,
-/// and the read-only gate, both held until it is dropped, which releases
-/// the key first, then the gate. Bind it to a name for as long as the
-/// change runs: `let Some(_) = …` would drop it, and its locks, at once.
+/// A change in progress: the publication lock of its key, if it has one, and
+/// the read-only gate, both held until it is dropped, which releases the key
+/// first, then the gate. Bind it to a name for as long as the change runs:
+/// `let Some(_) = …` would drop it, and its locks, at once.
 #[must_use = "a change holds its locks only while it is kept"]
 pub struct Change<'a> {
     // Fields are dropped in the order they are declared: the key's lock
@@ -141,17 +139,29 @@ pub struct Change<'a> {
     _gate: RwLockReadGuard<'a, bool>,
 }
 
-#[cfg(debug_assertions)]
 thread_local! {
-    /// Whether this thread holds a [`Change`], in a debug build: the module
-    /// doc's third rule.
+    /// Whether this thread holds a [`Change`], kept in a debug build only:
+    /// the module doc's third rule, which [`assert_no_change`] checks.
     static IN_CHANGE: Cell<bool> = const { Cell::new(false) };
 }
 
-#[cfg(debug_assertions)]
+/// Record, in a debug build, whether this thread holds a change.
+fn set_in_change(held: bool) {
+    if cfg!(debug_assertions) {
+        IN_CHANGE.with(|in_change| in_change.set(held));
+    }
+}
+
+/// In a debug build, panic with `what` if this thread holds a change: the
+/// module doc's third rule. The panic names the caller's line.
+#[track_caller]
+fn assert_no_change(what: &str) {
+    debug_assert!(!IN_CHANGE.with(Cell::get), "{what}");
+}
+
 impl Drop for Change<'_> {
     fn drop(&mut self) {
-        IN_CHANGE.with(|in_change| in_change.set(false));
+        set_in_change(false);
     }
 }
 
@@ -173,13 +183,7 @@ impl ChangeLocks {
     /// Make the backend read-only. Returns once no change that began before
     /// this call is still in progress; none can begin after it. Idempotent.
     pub fn set_read_only(&self) {
-        #[cfg(debug_assertions)]
-        IN_CHANGE.with(|in_change| {
-            assert!(
-                !in_change.get(),
-                "set_read_only called while this thread holds a change"
-            );
-        });
+        assert_no_change("set_read_only called while this thread holds a change");
         // Never poisoned today; if it is, reported and cleared as in
         // `read_gate`.
         let mut read_only = self.read_only.write().unwrap_or_else(|poisoned| {
@@ -204,8 +208,7 @@ impl ChangeLocks {
         }
         // The gate first, then the key: the module doc's first rule.
         let key = name.map(|name| self.lock_key(name));
-        #[cfg(debug_assertions)]
-        IN_CHANGE.with(|in_change| in_change.set(true));
+        set_in_change(true);
         Some(Change {
             _key: key,
             _gate: gate,
@@ -223,13 +226,7 @@ impl ChangeLocks {
     /// the stripes do. Several threads can hold the gate shared at once, so
     /// more than one of them may report it.
     fn read_gate(&self) -> RwLockReadGuard<'_, bool> {
-        #[cfg(debug_assertions)]
-        IN_CHANGE.with(|in_change| {
-            assert!(
-                !in_change.get(),
-                "entered the read-only gate while this thread holds a change"
-            );
-        });
+        assert_no_change("entered the read-only gate while this thread holds a change");
         self.read_only.read().unwrap_or_else(|poisoned| {
             log::error!("an earlier panic poisoned the read-only gate; it stays in use");
             self.read_only.clear_poison();
@@ -251,21 +248,15 @@ impl ChangeLocks {
     /// begin none until the lock is released. A debug build checks the
     /// first.
     pub fn lock_key(&self, name: &str) -> MutexGuard<'_, ()> {
-        #[cfg(debug_assertions)]
-        IN_CHANGE.with(|in_change| {
-            assert!(
-                !in_change.get(),
-                "took a key's lock while this thread holds a change"
-            );
-        });
+        assert_no_change("took a key's lock while this thread holds a change");
         // A panic while a stripe is held poisons it, and the stripe stays
         // usable anyway. What the lock protects is the key's files, not the
         // `()` it guards, and a panic leaves them as a crash at the same
         // point would, which the design already handles. Each change made
-        // under the lock is a single rename or unlink, which is atomic, except
-        // the in-place metadata update: it writes the metadata region, then
-        // the header, and a stop between the two leaves a record whose
-        // metadata checksum fails, which reads as a miss
+        // under the lock is a single rename or unlink, which is atomic,
+        // except the in-place metadata update: it writes the metadata
+        // region, then the header, and a stop between the two leaves a
+        // record whose metadata checksum fails, which reads as a miss
         // (ADR-PERSISTENCE.DURABILITY-02, TC-PERSISTENCE.CRASHSAFE-02). The
         // restart scan's admission checks change no file.
         //
@@ -439,8 +430,8 @@ mod tests {
     /// `set_read_only` returns only once the changes in progress have ended.
     /// The barrier makes sure the other thread is about to call it when the
     /// sleep starts. Were that thread kept off the processor for the whole
-    /// sleep, the test would pass without testing anything, but it can
-    /// never fail falsely.
+    /// sleep, the test would pass without testing anything, but it can never
+    /// fail falsely.
     #[test]
     fn set_read_only_waits_for_changes_in_progress() {
         let locks = Arc::new(ChangeLocks::default());
@@ -485,8 +476,8 @@ mod tests {
         assert!(locks.begin(&name).is_none(), "still read-only");
     }
 
-    /// In a debug build, a thread that holds a change and begins another,
-    /// on any key, fails an assertion at once, instead of risking a deadlock
+    /// In a debug build, a thread that holds a change and begins another, on
+    /// any key, fails an assertion at once, instead of risking a deadlock
     /// behind a waiting `set_read_only`.
     #[cfg(debug_assertions)]
     #[test]

@@ -81,8 +81,8 @@ mod tests {
     const VARIANCE: HashBinary = [9; HASH_LEN];
     /// Where the variance flag lies: right after the primary hash.
     const FLAG_AT: usize = HASH_LEN;
-    /// Right after the one-byte flag: where the variance hash starts when the
-    /// flag is 1, and the tag when it is 0.
+    /// Right after the one-byte flag: where the variance hash starts when
+    /// the flag is 1, and the tag when it is 0.
     const AFTER_FLAG: usize = FLAG_AT + 1;
 
     fn key(variance: Option<HashBinary>, user_tag: &str) -> CompactCacheKey {

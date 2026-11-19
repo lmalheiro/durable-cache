@@ -3,10 +3,10 @@
 
 //! TC-LAYOUT.KEYSEGMENT-01 — Key segment round trip.
 //!
-//! Steps 1 and 2 exercise the encoder and decoder directly, as unit tests
-//! in `src/key_codec.rs`. This file covers step 3: a record whose stored
-//! key does not decode is reclaimed by the restart-time scan as damaged,
-//! and never admitted.
+//! Steps 1 and 2 exercise the encoder and decoder directly, as unit tests in
+//! `src/key_codec.rs`. This file covers step 3: a record whose stored key
+//! does not decode is reclaimed by the restart-time scan as damaged, and
+//! never admitted.
 
 use durable_cache::recovery::recover;
 use pingora_cache::eviction::simple_lru::Manager;

@@ -13,14 +13,14 @@
 //!   and leaves the backend writable: no incoming process takes over the
 //!   cache, so stores that complete while sessions drain should still be
 //!   published.
-//! - **Flushing.** The same watcher flushes the backend
-//!   ([`FsCache::flush`], FDS-PERSISTENCE.CRASHDISCARD-01) on the blocking
-//!   pool: once it has made the backend read-only, and once the server
-//!   announces `ShutdownRuntimes`, at the end of a shutdown's grace period,
-//!   the last moment a server that ends with `run_forever` gives. A store
-//!   published after that writes its unsynchronised-store marker again, and
-//!   a flush the runtime shutdown cuts short leaves the marker: either way
-//!   the next start after a host restart discards the cache, the safe side.
+//! - **Flushing.** The same watcher flushes the backend ([`FsCache::flush`],
+//!   FDS-PERSISTENCE.CRASHDISCARD-01) on the blocking pool: once it has made
+//!   the backend read-only, and once the server announces
+//!   `ShutdownRuntimes`, at the end of a shutdown's grace period, the last
+//!   moment a server that ends with `run_forever` gives. A store published
+//!   after that writes its unsynchronised-store marker again, and a flush
+//!   the runtime shutdown cuts short leaves the marker: either way the next
+//!   start after a host restart discards the cache, the safe side.
 //! - **Incoming side.** The recovery service runs [`crate::recover`] as a
 //!   background service. In a process that takes over from an outgoing one,
 //!   it starts only once the server holds the listening sockets and a
@@ -51,13 +51,13 @@ use crate::{recovery, FsCache};
 /// How long the incoming process of a hot upgrade waits, once it holds the
 /// listening sockets, before its restart scan: until the outgoing process's
 /// backend is read-only (ADR-COMPAT.READONLY-01). The outgoing process
-/// starts that switch when its server announces the upgrade, before it
-/// sends the sockets, and `set_read_only` then waits only for the changes
-/// in progress, each of which holds the read-only gate for a rename, an
-/// unlink or two `pwrite`s, never an `fdatasync`. The switch takes
-/// milliseconds, and the wait leaves ample margin. The figure is the
-/// `CLOSE_TIMEOUT` of `pingora-core`, which keeps it private: how long both
-/// processes accept connections after the hand-over.
+/// starts that switch when its server announces the upgrade, before it sends
+/// the sockets, and `set_read_only` then waits only for the changes in
+/// progress, each of which holds the read-only gate for a rename, an unlink
+/// or two `pwrite`s, never an `fdatasync`. The switch takes milliseconds,
+/// and the wait leaves ample margin. The figure is the `CLOSE_TIMEOUT` of
+/// `pingora-core`, which keeps it private: how long both processes accept
+/// connections after the hand-over.
 pub(crate) const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Makes the backend read-only when the server announces the upgrade
@@ -66,8 +66,8 @@ pub(crate) struct UpgradeWatcher {
     cache: &'static FsCache,
     /// Subscribed when the watcher is built, so no phase announced before
     /// the service starts can be missed. `start` gets only `&self`, so it
-    /// reaches the receiver through a lock, which it holds for as long as
-    /// it watches: tokio's, which no panic can poison.
+    /// reaches the receiver through a lock, which it holds for as long as it
+    /// watches: Tokio's, which no panic can poison.
     phases: Mutex<broadcast::Receiver<ExecutionPhase>>,
 }
 
@@ -85,8 +85,8 @@ impl BackgroundService for UpgradeWatcher {
                 Ok(_) => continue,
                 // This subscriber fell behind: a missed phase may have been
                 // the upgrade, and leaving the backend writable is the
-                // unsafe direction, so treat a lag as the signal it may
-                // have carried.
+                // unsafe direction, so treat a lag as the signal it may have
+                // carried.
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     log::warn!(
                         "missed {n} execution phase(s); \
@@ -159,8 +159,8 @@ async fn shutting_down(shutdown: &mut ShutdownWatch) {
 
 /// The two services' names, which also name their runtimes' threads. Linux
 /// keeps a thread's name in `TASK_COMM_LEN` (16) bytes, its terminating NUL
-/// among them: 15 characters, the `BG ` prefix Pingora adds included, so
-/// the two differ within their first 12.
+/// among them: 15 characters, the `BG ` prefix Pingora adds included, so the
+/// two differ within their first 12.
 const WATCHER_NAME: &str = "upgrade watcher";
 const RECOVERY_NAME: &str = "eviction recovery";
 
@@ -170,7 +170,7 @@ impl UpgradeWatcher {
         cache: &'static FsCache,
         phases: broadcast::Receiver<ExecutionPhase>,
     ) -> Self {
-        UpgradeWatcher {
+        Self {
             cache,
             phases: Mutex::new(phases),
         }
@@ -212,9 +212,8 @@ pub(crate) fn recovery_service(
 /// listening sockets. A direct [`Server::bootstrap`] call takes them over
 /// before any service starts: pass `None` for `bootstrap`. A server that
 /// bootstraps as a service instead must pass the handle
-/// [`Server::bootstrap_as_a_service`] returned, and recovery then waits
-/// for that service to report ready, which it does once it holds the
-/// sockets.
+/// [`Server::bootstrap_as_a_service`] returned, and recovery then waits for
+/// that service to report ready, which it does once it holds the sockets.
 ///
 /// ```no_run
 /// # use pingora_core::prelude::Server;

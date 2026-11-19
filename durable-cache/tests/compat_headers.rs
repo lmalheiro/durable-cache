@@ -4,10 +4,10 @@
 //! TC-COMPLIANCE.HEADERS-01 — Header fields round-trip faithfully.
 //!
 //! Purely a `ResponseHeader` round-trip property, covered directly against
-//! `Storage::get_miss_handler`/`lookup` -- no HTTP needed. `case_header_iter`
-//! is used for comparison rather than `headers` directly: it's the one
-//! accessor pingora_http itself documents as preserving both original case
-//! and, for repeated names, insertion order -- exactly the two properties
+//! `Storage::get_miss_handler`/`lookup` — no HTTP needed. `case_header_iter`
+//! is used for comparison rather than `headers` directly: it is the one
+//! accessor `pingora_http` itself documents as preserving both original case
+//! and, for repeated names, insertion order — exactly the two properties
 //! this TC requires and a case-insensitive/unordered map could silently
 //! paper over.
 
@@ -50,7 +50,7 @@ fn wrap(header: ResponseHeader) -> CacheMeta {
 }
 
 /// `(case-preserved name bytes, value bytes)` pairs in the exact order
-/// `case_header_iter` visits them -- the strongest comparison pingora_http
+/// `case_header_iter` visits them — the strongest comparison `pingora_http`
 /// exposes, per its own doc: case retained, same-name entries in insertion
 /// order.
 fn header_fingerprint(meta: &CacheMeta) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -150,10 +150,10 @@ async fn tc_compliance_headers_01_oversized_header_set_round_trips() {
 }
 
 /// Metadata regions left exactly full: with no headroom, a region's capacity
-/// is its segments' own length, so its last byte is the one before the
-/// body. Header sets of eight consecutive serialised sizes put that boundary
-/// at every offset modulo 8, where an off-by-one in the region's capacity
-/// or in the body's offset would show (SDS-LAYOUT.OBJECTFILE-02).
+/// is its segments' own length, so its last byte is the one before the body.
+/// Header sets of eight consecutive serialised sizes put that boundary at
+/// every offset modulo 8, where an off-by-one in the region's capacity or in
+/// the body's offset would show (SDS-LAYOUT.OBJECTFILE-02).
 #[tokio::test]
 async fn tc_compliance_headers_01_exactly_full_metadata_regions_round_trip() {
     let (cache, _tmp) = support::leaked_cache_with_headroom(0);

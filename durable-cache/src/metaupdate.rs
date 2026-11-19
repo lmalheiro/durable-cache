@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `Storage::update_meta` (FDS-STORAGE.METAUPDATE-01): a metadata update
-//! writes the new metadata into the record's metadata region, in place,
-//! when it fits the region's headroom. When it does not, the update
-//! withdraws the record instead: every lookup then misses, so the next
-//! request fetches the object again, and its store, sized for the new
-//! metadata, replaces the file. Either way a header write, made last,
-//! commits the change, and the body is never read or moved.
+//! writes the new metadata into the record's metadata region, in place, when
+//! it fits the region's headroom. When it does not, the update withdraws the
+//! record instead: every lookup then misses, so the next request fetches the
+//! object again, and its store, sized for the new metadata, replaces the
+//! file. Either way a header write, made last, commits the change, and the
+//! body is never read or moved.
 //!
 //! The update is visible to lookups when `update_meta` returns, which is
 //! when `HttpCache` releases the key's write lock.
@@ -61,8 +61,8 @@ pub(crate) fn prepare(
 }
 
 /// Synchronous throughout: the read-only gate and publication lock are held
-/// across the durable part, and neither may be held across an `.await`.
-/// Runs on the blocking pool. Returns `true` once the update is visible to
+/// across the durable part, and neither may be held across an `.await`. Runs
+/// on the blocking pool. Returns `true` once the update is visible to
 /// lookups, and `false` when it is not applied: the key holds another
 /// response than the one the update freshens, or the new metadata outgrew
 /// the record, which is then withdrawn.
@@ -81,32 +81,32 @@ pub(crate) fn update_meta(cache: &'static FsCache, prepared: PreparedUpdate) -> 
     }
     let canonical = cache.canonical_path(&name)?;
 
-    // Under the key's publication lock, this opens and reads the record, then
-    // writes the new metadata into it in place, or, when the new metadata no
-    // longer fits, withdraws the record.
+    // Under the key's publication lock, this opens and reads the record,
+    // then writes the new metadata into it in place, or, when the new
+    // metadata no longer fits, withdraws the record.
     //
     // The open needs the lock because every change that replaces or removes
     // the key's record (a store's rename, a purge's or the reclaim's unlink)
-    // holds this lock while it does. Opened before the lock, the record could
-    // lose its name in between, and this update would change a file that no
-    // lookup reads any more, yet report success. Opened under the lock, it is
-    // the record the key holds now.
+    // holds this lock while it does. Opened before the lock, the record
+    // could lose its name in between, and this update would change a file
+    // that no lookup reads any more, yet report success. Opened under the
+    // lock, it is the record the key holds now.
     //
     // The read needs the lock because of how an update or expiry writes a
-    // record's metadata: first the metadata, then the header, which holds its
-    // lengths and checksum. A read between the two writes finds a checksum
-    // that does not match, just as in a damaged record. Under the lock, no
-    // such write is half done, so a mismatch means real damage. Without the
-    // lock, a healthy record caught between the two writes would be taken
-    // for a damaged one, and this update would report that the key holds no
-    // object.
+    // record's metadata: first the metadata, then the header, which holds
+    // its lengths and checksum. A read between the two writes finds a
+    // checksum that does not match, just as in a damaged record. Under the
+    // lock, no such write is half done, so a mismatch means real damage.
+    // Without the lock, a healthy record caught between the two writes would
+    // be taken for a damaged one, and this update would report that the key
+    // holds no object.
     //
     // The write needs the lock too: the header it writes is built from the
     // one just read, and two updates of this key must not interleave their
     // writes (see `write_in_place`).
     //
-    // A lookup does not take the lock to read. It re-reads instead, and takes
-    // the lock only for a last read when the checksums keep failing
+    // A lookup does not take the lock to read. It re-reads instead, and
+    // takes the lock only for a last read when the checksums keep failing
     // (SDS-LAYOUT.OBJECTFILE-02).
     test_hook! { cache.hooks.pause(PausePoint::UpdateBeforeLock, &canonical); }
     let Some(_change) = cache.locks.begin(&name) else {
@@ -115,14 +115,14 @@ pub(crate) fn update_meta(cache: &'static FsCache, prepared: PreparedUpdate) -> 
 
     let file = match OpenOptions::new().read(true).write(true).open(&canonical) {
         Ok(file) => file,
-        // Nothing is stored under this key: it was never stored, or it
-        // has been purged or evicted. FRE-COMPLIANCE.METAABSENT-01 asks
-        // for two things here. First, an error, so that the caller knows
-        // nothing was applied; `KEY_NOT_FOUND` also says why. Second, the
-        // key must still hold no object afterwards. An update brings
-        // metadata but no body, and a record made from it alone would let
-        // a later lookup serve a response without its body. The file is
-        // opened without `create`, so this open cannot make one.
+        // Nothing is stored under this key: it was never stored, or it has
+        // been purged or evicted. FRE-COMPLIANCE.METAABSENT-01 asks for two
+        // things here. First, an error, so that the caller knows nothing was
+        // applied; `KEY_NOT_FOUND` also says why. Second, the key must still
+        // hold no object afterwards. An update brings metadata but no body,
+        // and a record made from it alone would let a later lookup serve a
+        // response without its body. The file is opened without `create`, so
+        // this open cannot make one.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Error::e_explain(
                 KEY_NOT_FOUND,
@@ -170,10 +170,10 @@ pub(crate) fn update_meta(cache: &'static FsCache, prepared: PreparedUpdate) -> 
     };
 
     // A `304` updates only the response it validated (RFC 9111 §4.3.4),
-    // which the new metadata names by its creation time. A stored
-    // response created at another time has replaced that one since the
-    // lookup that began the revalidation, so the update is not applied,
-    // and the newer response stands whole (FDS-STORAGE.METAUPDATE-01).
+    // which the new metadata names by its creation time. A stored response
+    // created at another time has replaced that one since the lookup that
+    // began the revalidation, so the update is not applied, and the newer
+    // response stands whole (FDS-STORAGE.METAUPDATE-01).
     let stored = cache.decode_meta(&parsed.internal_bytes, &parsed.header_bytes)?;
     if stored.created() != created {
         log::debug!(
@@ -185,12 +185,8 @@ pub(crate) fn update_meta(cache: &'static FsCache, prepared: PreparedUpdate) -> 
     }
 
     if let Some(shortfall) = shortfall(&parsed, &new_internal, &new_header)? {
-        withdraw(
-            &file,
-            &parsed,
-            #[cfg(test)]
-            cache,
-        )?;
+        test_hook! { cache.hooks.fault(FaultPoint::WithdrawRecord)?; }
+        withdraw(&file, &parsed)?;
         report_outgrown(&canonical, shortfall);
         return Ok(false);
     }
@@ -199,9 +195,7 @@ pub(crate) fn update_meta(cache: &'static FsCache, prepared: PreparedUpdate) -> 
         &parsed,
         &new_internal,
         &new_header,
-        #[cfg(test)]
         cache,
-        #[cfg(test)]
         &canonical,
     )?;
     Ok(true)
@@ -217,10 +211,10 @@ fn shortfall(parsed: &ParsedRecord, new_internal: &[u8], new_header: &[u8]) -> R
 }
 
 /// Rewrite the segments within the reserved region, then commit with the
-/// header block, with the read-only gate and the key's publication lock already
-/// held by the caller. Two updates of one key interleaving their region and
-/// header writes could otherwise leave a header whose checksum describes the
-/// other's region, which no reader could accept
+/// header block, with the read-only gate and the key's publication lock
+/// already held by the caller. Two updates of one key interleaving their
+/// region and header writes could otherwise leave a header whose checksum
+/// describes the other's region, which no reader could accept
 /// (FRE-COMPLIANCE.METAATOMIC-01). A lookup that finds the record between
 /// the two writes re-reads, and at last waits for the lock
 /// (SDS-LAYOUT.OBJECTFILE-02). The segments must fit the region
@@ -229,14 +223,19 @@ fn shortfall(parsed: &ParsedRecord, new_internal: &[u8], new_header: &[u8]) -> R
 /// Nothing is synchronised: after a host crash the region holds the old
 /// metadata, the new, or a torn mixture, and the metadata checksum rejects
 /// the mixture (ADR-PERSISTENCE.DURABILITY-02).
+///
+/// `cache` and `canonical`, the record's path, select the test build's pause
+/// point between the two writes.
 pub(crate) fn write_in_place(
     file: &File,
     parsed: &ParsedRecord,
     new_internal: &[u8],
     new_header: &[u8],
-    #[cfg(test)] cache: &FsCache,
-    #[cfg(test)] canonical: &Path,
+    cache: &FsCache,
+    canonical: &Path,
 ) -> Result<()> {
+    #[cfg(not(test))]
+    let _ = (cache, canonical);
     let meta_start = parsed.header.meta_region_offset() as u64;
     let mut region = Vec::with_capacity(new_internal.len() + new_header.len());
     region.extend_from_slice(new_internal);
@@ -246,8 +245,8 @@ pub(crate) fn write_in_place(
         "writing the metadata region in place",
     )?;
     // Bytes between the new content's end and `meta_capacity` are inert: a
-    // reader only ever reads `internal_len`/`header_len` bytes, both
-    // updated below.
+    // reader only ever reads `internal_len`/`header_len` bytes, both updated
+    // below.
     test_hook! { cache.hooks.pause(PausePoint::InPlaceBetweenWrites, canonical); }
 
     let mut header = parsed.header;
@@ -276,18 +275,17 @@ pub(crate) fn write_in_place(
 /// Nothing is synchronised, as for an update in place: a withdrawal that a
 /// host crash undoes leaves the record as it was, stale, and the next
 /// revalidation withdraws it again (ADR-PERSISTENCE.DURABILITY-02).
-fn withdraw(file: &File, parsed: &ParsedRecord, #[cfg(test)] cache: &FsCache) -> Result<()> {
+fn withdraw(file: &File, parsed: &ParsedRecord) -> Result<()> {
     let mut header = parsed.header;
     header.edit().withdraw();
-    test_hook! { cache.hooks.fault(FaultPoint::WithdrawRecord)?; }
     file.write_all_at(header.as_bytes(), 0)
         .or_err(ErrorType::FileWriteError, "withdrawing the record")
 }
 
-/// Log and count an update whose new metadata outgrew its record's
-/// headroom by `shortfall` bytes, so that the record at `canonical` was
-/// withdrawn (FDS-OBSERVABILITY.HEADROOM-01). The path's file name is the
-/// key's hex-encoded hash.
+/// Log and count an update whose new metadata outgrew its record's headroom
+/// by `shortfall` bytes, so that the record at `canonical` was withdrawn
+/// (FDS-OBSERVABILITY.HEADROOM-01). The path's file name is the key's
+/// hex-encoded hash.
 fn report_outgrown(canonical: &Path, shortfall: u32) {
     log::warn!(
         "{} of {} exceeded its reserved headroom by {shortfall} byte(s), so the record was \

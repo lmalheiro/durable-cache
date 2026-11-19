@@ -20,13 +20,21 @@ use pingora_error::{ErrorType, OrErr, Result};
 use crate::config::FsCacheConfig;
 use crate::crashdiscard::{self, Marker};
 use crate::dircache::ShardDirCache;
-#[cfg(test)]
 use crate::hooks::Hooks;
 use crate::inflight::InFlightRegistry;
 use crate::locks::ChangeLocks;
+use crate::platform::Opener;
 use crate::writerid::WriterLease;
 use crate::{metrics, sharding};
 
+/// The cache: a `pingora-cache` `Storage` that keeps each object in a file
+/// of its own under the cache root, where it outlives the process.
+///
+/// Build one with [`FsCache::new`] and keep it for the life of the process,
+/// as a `&'static` reference, as a `Storage` must be. At start, run
+/// [`crate::recover`] to fill the eviction manager from what the root holds;
+/// on a Pingora server, [`crate::hotupgrade::install`] does that, and makes
+/// the cache read-only on a hot upgrade.
 pub struct FsCache {
     pub(crate) config: FsCacheConfig,
     pub(crate) dir_cache: ShardDirCache,
@@ -40,58 +48,18 @@ pub struct FsCache {
     /// This instance's unsynchronised-store marker, written only with the
     /// discard after a host restart on (FDS-PERSISTENCE.CRASHDISCARD-01).
     pub(crate) marker: Marker,
-    /// How records and temporaries are opened to read, with `O_NOATIME`
-    /// if the configuration asks and the check at construction passed.
-    #[cfg(target_os = "linux")]
-    pub(crate) opener: crate::nowait::Opener,
+    /// How records and temporaries are opened to read: on Linux, with
+    /// `O_NOATIME` if the configuration asks and the check at construction
+    /// passed.
+    pub(crate) opener: Opener,
     /// The page-cache reads the configuration asks for, which the check at
     /// construction found the kernel and the file system support; `None`
     /// with them switched off.
     #[cfg(target_os = "linux")]
     pub(crate) page_cache_reads: Option<crate::nowait::PageCacheReads>,
-    /// The test hooks of this instance; only in the crate's own test build.
-    #[cfg(test)]
+    /// The test hooks of this instance: an empty stand-in outside the
+    /// crate's own test build (see `crate::hooks`).
     pub(crate) hooks: Hooks,
-}
-
-/// With `FsCacheConfig::with_noatime`, check that the kernel lets this
-/// process open the cache's files with `opener`, which does not update their
-/// access time: it allows `O_NOATIME` only to a file's owner, and the owner
-/// of the root stands for the owner of the files under it.
-#[cfg(target_os = "linux")]
-fn check_noatime(root: &Path, opener: crate::nowait::Opener) -> Result<()> {
-    opener
-        .open_blocking(root)
-        .map(drop)
-        .or_err_with(ErrorType::FileOpenError, || {
-            format!(
-                "opening {} without updating its access time, as FsCacheConfig::with_noatime \
-                 asks; switch it off where this process does not own the cache's files",
-                root.display()
-            )
-        })
-}
-
-/// With `FsCacheConfig::with_page_cache_reads`, check that the kernel and
-/// the cache's file system support the calls those reads make: on the root,
-/// and on this instance's lease, the one file the cache is sure to hold. The
-/// reads it returns open with `opener`.
-#[cfg(target_os = "linux")]
-fn check_page_cache_reads(
-    root: &Path,
-    lease: &WriterLease,
-    opener: crate::nowait::Opener,
-) -> Result<crate::nowait::PageCacheReads> {
-    let lease_file = crate::writerid::lease_path(root, &lease.id());
-    let checked = crate::nowait::check_support(opener, root, &lease_file);
-    checked.or_err_with(ErrorType::InternalError, || {
-        format!(
-            "checking the page-cache reads that FsCacheConfig::with_page_cache_reads asks for \
-             under {}; switch them off where the kernel or the file system lacks them, as \
-             tmpfs and overlayfs do",
-            root.display()
-        )
-    })
 }
 
 /// `built`, a construction of the cache at `root`, with its failure logged
@@ -101,11 +69,13 @@ fn logged(root: &Path, built: Result<FsCache>) -> Result<FsCache> {
 }
 
 impl FsCache {
-    /// Build a cache rooted at `config.root()`. Runs FDS-LAYOUT.STARTUP-01's
-    /// construction-time shard scan; does *not* run Eviction Recovery
-    /// (see [`crate::recover`]) — that's a separate call the
-    /// integrator makes explicitly, since it needs the `EvictionManager`
-    /// instance too, which this constructor has no opinion about.
+    /// Build a cache rooted at `config.root()`.
+    ///
+    /// It runs the construction-time shard scan of FDS-LAYOUT.STARTUP-01,
+    /// but *not* Eviction Recovery (see [`crate::recover`]): that is a
+    /// separate call the integrator makes explicitly, since it needs the
+    /// `EvictionManager` instance too, which this constructor has no opinion
+    /// about.
     ///
     /// With the `metrics` feature, it also registers the backend's counters,
     /// at zero (ADR-OBSERVABILITY.METRICS-01).
@@ -117,98 +87,88 @@ impl FsCache {
     /// (FDS-PERSISTENCE.CRASHDISCARD-01). The discarded files are removed in
     /// the background.
     ///
-    /// Fails with a `FileCreateError` if the shard tree cannot be created or
-    /// listed under the root, or this instance's lease cannot be created and
-    /// locked (ADR-STORAGE.WRITERID-01); with a `FileReadError` if the
-    /// markers cannot be listed, or, with
-    /// [`FsCacheConfig::with_discard_after_host_restart`], if the boot
-    /// identity cannot be read; and with a `FileWriteError` if a discard
-    /// fails. On Linux, with the default
-    /// configuration, it also fails with a `FileOpenError` if the kernel
-    /// refuses to open the root without updating its access time, as it does
-    /// when this process does not own it (see
-    /// [`FsCacheConfig::with_noatime`]); and with an `InternalError` if the
-    /// kernel or the file system under the root does not support the calls
-    /// that page-cache reads make (see
-    /// [`FsCacheConfig::with_page_cache_reads`]). Every failure is also
-    /// logged as an error, so that a cache that cannot start says why even
-    /// where the caller only exits.
+    /// # Errors
+    ///
+    /// - A `FileCreateError` if the shard tree cannot be created or listed
+    ///   under the root, or this instance's lease cannot be created and
+    ///   locked (ADR-STORAGE.WRITERID-01).
+    /// - A `FileReadError` if the markers cannot be listed, or, with
+    ///   [`FsCacheConfig::with_discard_after_host_restart`], if the boot
+    ///   identity cannot be read.
+    /// - A `FileWriteError` if a discard fails.
+    /// - On Linux, with the default configuration, a `FileOpenError` if the
+    ///   kernel refuses to open the root without updating its access time,
+    ///   as it does when this process does not own it (see
+    ///   [`FsCacheConfig::with_noatime`]).
+    /// - On Linux, with the default configuration, an `InternalError` if the
+    ///   kernel or the file system under the root does not support the calls
+    ///   that page-cache reads make (see
+    ///   [`FsCacheConfig::with_page_cache_reads`]).
+    ///
+    /// Every failure is also logged as an error, so that a cache that cannot
+    /// start says why even where the caller only exits.
     pub fn new(config: FsCacheConfig) -> Result<Self> {
         let root = config.root().to_path_buf();
-        logged(
-            &root,
-            Self::build(
-                config,
-                #[cfg(test)]
-                Hooks::default(),
-            ),
-        )
+        logged(&root, Self::build(config, Hooks::default()))
     }
 
-    /// [`Self::new`], with the test build's hooks in place from the start.
-    fn build(config: FsCacheConfig, #[cfg(test)] hooks: Hooks) -> Result<Self> {
+    /// [`Self::new`], with `hooks` in place from the start.
+    fn build(config: FsCacheConfig, hooks: Hooks) -> Result<Self> {
         #[cfg(not(test))]
-        let boot_id_path = std::path::Path::new(crashdiscard::BOOT_ID_PATH);
+        let boot_id_path = Path::new(crashdiscard::BOOT_ID_PATH);
         #[cfg(test)]
         let boot_id_path = hooks
             .config
             .boot_id_path
             .as_deref()
-            .unwrap_or(std::path::Path::new(crashdiscard::BOOT_ID_PATH));
+            .unwrap_or(Path::new(crashdiscard::BOOT_ID_PATH));
         let boot_id = crashdiscard::at_construction(
             config.root(),
             crashdiscard::discard_on(&config),
             boot_id_path,
-            #[cfg(test)]
             &hooks,
         )?;
         let dir_cache = ShardDirCache::build(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating the shard tree under {}", config.root().display())
             })?;
-        #[cfg(target_os = "linux")]
-        let opener = crate::nowait::Opener::new(config.noatime());
-        #[cfg(target_os = "linux")]
-        if config.noatime() {
-            check_noatime(config.root(), opener)?;
-        }
+        let opener = Opener::new(&config)?;
         let lease = WriterLease::acquire(config.root())
             .or_err_with(ErrorType::FileCreateError, || {
                 format!("creating a writer lease under {}", config.root().display())
             })?;
         #[cfg(target_os = "linux")]
-        let page_cache_reads = if config.page_cache_reads() {
-            Some(check_page_cache_reads(config.root(), &lease, opener)?)
-        } else {
-            None
-        };
+        let page_cache_reads = crate::nowait::PageCacheReads::new(&config, &lease, opener)?;
         crashdiscard::remove_discarded(config.root());
         // With the `metrics` feature, the counters are served from here on,
         // at zero, rather than from their first event.
         metrics::register();
-        Ok(FsCache {
+        Ok(Self {
             config,
             dir_cache,
             inflight: InFlightRegistry::new(),
             locks: ChangeLocks::default(),
             lease,
             marker: Marker::new(boot_id),
-            #[cfg(target_os = "linux")]
             opener,
             #[cfg(target_os = "linux")]
             page_cache_reads,
-            #[cfg(test)]
             hooks,
         })
     }
 
     /// [`Self::new`] with test hooks (see [`crate::hooks`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::new`].
     #[cfg(test)]
     pub fn with_test_hooks(config: FsCacheConfig, hooks: crate::hooks::HookConfig) -> Result<Self> {
         let root = config.root().to_path_buf();
         logged(&root, Self::build(config, Hooks::new(hooks)))
     }
 
+    /// The root of the cache directory ([`FsCacheConfig::root`]).
     pub fn root(&self) -> &Path {
         self.config.root()
     }
@@ -224,10 +184,10 @@ impl FsCache {
     /// integrator calls this when its server announces
     /// `ExecutionPhase::GracefulUpgradeTransferringFds`, while the process
     /// drains its sessions. Callable from any thread and idempotent; when it
-    /// returns, no durable change that began before it is still running,
-    /// and none can begin after it. A restart scan ([`crate::recover`])
-    /// still running, or run later, then admits nothing: the eviction
-    /// manager it would fill is discarded when the process exits.
+    /// returns, no durable change that began before it is still running, and
+    /// none can begin after it. A restart scan ([`crate::recover`]) still
+    /// running, or run later, then admits nothing: the eviction manager it
+    /// would fill is discarded when the process exits.
     ///
     /// It does not flush the cache: call [`Self::flush`] afterwards, where
     /// blocking is allowed, as the hot-upgrade helper does
@@ -238,14 +198,16 @@ impl FsCache {
     }
 
     /// Make everything the cache holds durable, then remove this instance's
-    /// unsynchronised-store marker, and those of instances that have
-    /// stopped (FDS-PERSISTENCE.CRASHDISCARD-01). It flushes the file system
-    /// that holds the cache with `syncfs` on Linux, and elsewhere with
-    /// `sync`, which flushes every file system. It waits for the device:
+    /// unsynchronised-store marker, and those of instances that have stopped
+    /// (FDS-PERSISTENCE.CRASHDISCARD-01).
+    ///
+    /// It flushes the file system that holds the cache with `syncfs` on
+    /// Linux, and elsewhere with `sync`, which flushes every file system. It
+    /// waits for the device:
     /// call it where blocking is allowed. On systems other than Linux,
-    /// `sync` may return before the writes complete; there the flush is
-    /// best effort, and no marker depends on it, as the discard exists only
-    /// on Linux.
+    /// `sync` may return before the writes complete; there the flush is best
+    /// effort, and no marker depends on it, as the discard exists only on
+    /// Linux.
     ///
     /// With [`FsCacheConfig::with_discard_after_host_restart`], the cache
     /// must be flushed once its server stops serving: otherwise the next
@@ -256,16 +218,13 @@ impl FsCache {
     /// `Server::run` allows and `run_forever` does not. A store published
     /// without synchronisation afterwards writes the marker again.
     ///
-    /// Fails with a `FileWriteError` if the flush or a marker's removal
-    /// fails; the marker then stays.
+    /// # Errors
+    ///
+    /// A `FileWriteError` if the flush or a marker's removal fails; the
+    /// marker then stays.
     pub fn flush(&self) -> Result<()> {
         self.marker
-            .flush(
-                self.root(),
-                &self.lease.id(),
-                #[cfg(test)]
-                &self.hooks,
-            )
+            .flush(self.root(), &self.lease.id(), &self.hooks)
             .or_err_with(ErrorType::FileWriteError, || {
                 format!("flushing the cache under {}", self.root().display())
             })
@@ -285,16 +244,13 @@ impl FsCache {
         self.map_name(sharding::object_name(key.combined_bin(), key.user_tag()))
     }
 
-    #[cfg(test)]
+    /// `name`, or in the test build the name a test's hook maps it to.
     fn map_name(&self, name: String) -> String {
-        match &self.hooks.config.object_name {
-            Some(f) => f(&name),
-            None => name,
+        test_hook! {
+            if let Some(f) = &self.hooks.config.object_name {
+                return f(&name);
+            }
         }
-    }
-
-    #[cfg(not(test))]
-    fn map_name(&self, name: String) -> String {
         name
     }
 
@@ -309,15 +265,16 @@ impl FsCache {
     }
 
     /// Deserialise a record's metadata, counting the decode so
-    /// TC-COMPAT.FORMATUPGRADE-01 can show a foreign record is never decoded.
+    /// TC-COMPAT.FORMATUPGRADE-01 can show a foreign record is never
+    /// decoded.
     pub(crate) fn decode_meta(&self, internal: &[u8], header: &[u8]) -> Result<CacheMeta> {
         test_hook! { self.hooks.count_meta_decode(); }
         CacheMeta::deserialize(internal, header)
     }
 
     /// `fsync` a shard directory, so an `unlink` in it survives a host crash
-    /// (ADR-PERSISTENCE.DURABILITY-02). On Unix a directory opens like a file,
-    /// read-only, and `fsync` on its descriptor flushes its entries.
+    /// (ADR-PERSISTENCE.DURABILITY-02). On Unix a directory opens like a
+    /// file, read-only, and `fsync` on its descriptor flushes its entries.
     pub(crate) fn sync_shard_dir(&self, dir: &Path) -> Result<()> {
         test_hook! { self.hooks.fault(crate::hooks::FaultPoint::SyncDir)?; }
         std::fs::File::open(dir)
@@ -413,8 +370,7 @@ impl Storage for FsCache {
         _trace: &SpanHandle,
     ) -> Result<bool> {
         // Serialising the new metadata is CPU work and stays here; reading
-        // the record and writing it back does not
-        // (FDS-STORAGE.EXECUTOR-02).
+        // the record and writing it back does not (FDS-STORAGE.EXECUTOR-02).
         let prepared = crate::metaupdate::prepare(self, key, meta)?;
         crate::blocking::run(move || crate::metaupdate::update_meta(self, prepared)).await
     }
@@ -426,26 +382,5 @@ impl Storage for FsCache {
 
     fn as_any(&self) -> &(dyn Any + Send + Sync + 'static) {
         self
-    }
-}
-
-#[cfg(test)]
-#[cfg(target_os = "linux")]
-mod tests {
-    use super::*;
-
-    /// The kernel refuses `O_NOATIME` on a file of another owner, and the
-    /// check at construction says so, naming the option: `/` belongs to
-    /// root.
-    #[test]
-    fn the_noatime_check_fails_on_a_directory_of_another_owner() {
-        // SAFETY: `geteuid` takes no arguments and cannot fail.
-        if unsafe { libc::geteuid() } == 0 {
-            eprintln!("root opens any file without updating its access time: nothing to check");
-            return;
-        }
-        let e = check_noatime(Path::new("/"), crate::nowait::Opener::new(true))
-            .expect_err("/ belongs to root");
-        assert!(e.to_string().contains("with_noatime"), "{e}");
     }
 }

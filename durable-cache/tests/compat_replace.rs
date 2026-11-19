@@ -4,8 +4,8 @@
 //! TC-COMPLIANCE.REPLACE-01 — Stores replace atomically.
 //!
 //! `tc_compliance_replace_01_reader_of_old_object_undisturbed_during_replacement`
-//! below also closes TC-STORAGE.PUBLISH-02's step 5 (the identical
-//! scenario under a different TC ID); that TC's own IMP marker is in
+//! below also closes TC-STORAGE.PUBLISH-02's step 5 (the identical scenario
+//! under a different TC ID); that TC's own IMP marker is in
 //! `storage_publish.rs`.
 
 use bytes::Bytes;
@@ -29,7 +29,7 @@ async fn tc_compliance_replace_01_reader_of_old_object_undisturbed_during_replac
         .unwrap();
     a.finish().await.unwrap();
 
-    // Attach a reader to A while it's the only object under this key.
+    // Attach a reader to A while it is the only object under this key.
     let (_meta, mut reader) = cache.lookup(&key, &trace).await.unwrap().unwrap();
     let first_read = reader.read_body().await.unwrap().unwrap();
     assert_eq!(&first_read[..], b"AAAAAAAAAA");
@@ -57,7 +57,7 @@ async fn tc_compliance_replace_01_reader_of_old_object_undisturbed_during_replac
     b.finish().await.unwrap();
 
     // The reader opened on A before the replacement continues to read
-    // exactly A's bytes to a clean end of body -- never B's.
+    // exactly A's bytes to a clean end of body — never B's.
     assert_eq!(
         reader.read_body().await.unwrap(),
         None,
@@ -109,9 +109,9 @@ async fn tc_compliance_replace_01_racing_stores_converge_on_one_intact_winner() 
         "exactly one racing writer's bytes, whole and intact, never interleaved: {body:?}"
     );
 
-    // Restart: a fresh FsCache over the same root sees the identical
-    // winner, whole and unchanged -- the replacement is durable, not just
-    // an in-memory artifact of this process.
+    // Restart: a fresh FsCache over the same root sees the identical winner,
+    // whole and unchanged — the replacement is durable, not just an
+    // in-memory artifact of this process.
     let restarted =
         durable_cache::FsCache::new(durable_cache::FsCacheConfig::new(cache.root(), None)).unwrap();
     let restarted: &'static durable_cache::FsCache = Box::leak(Box::new(restarted));

@@ -11,10 +11,10 @@
 //! changes it is flagged instead of silently changing what stored records
 //! mean.
 //!
-//! The header compression dictionary is not part of it either: a
-//! deployment that changes the dictionary clears the cache directory or uses
-//! a new one (FRE-COMPAT.FORMATUPGRADE-01). A record of another revision is
-//! forged by rewriting its version field and resealing its header checksum.
+//! The header compression dictionary is not part of it either: a deployment
+//! that changes the dictionary clears the cache directory or uses a new one
+//! (FRE-COMPAT.FORMATUPGRADE-01). A record of another revision is forged by
+//! rewriting its version field and resealing its header checksum.
 
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
@@ -45,8 +45,8 @@ async fn store_set(cache: &'static FsCache, keys: &[pingora_cache::CacheKey]) {
     }
 }
 
-/// Steps 1 and 2: the same format revision reads back every object
-/// exactly as stored.
+/// Steps 1 and 2: the same format revision reads back every object exactly
+/// as stored.
 #[tokio::test]
 async fn tc_compat_formatupgrade_01_same_format_reads_every_object() {
     let tmp = support::tempdir();
@@ -62,9 +62,8 @@ async fn tc_compat_formatupgrade_01_same_format_reads_every_object() {
     }
 }
 
-/// Step 3: a record of another format revision is a miss, never decoded,
-/// and the restart procedure reclaims it. The directory then simply turns
-/// over.
+/// Step 3: a record of another format revision is a miss, never decoded, and
+/// the restart procedure reclaims it. The directory then simply turns over.
 #[tokio::test]
 async fn tc_compat_formatupgrade_01_another_format_revision_is_a_miss_never_decoded() {
     let tmp = support::tempdir();

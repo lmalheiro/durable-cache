@@ -242,8 +242,10 @@ test scaffolding, or tooling.
 │   │   ├── miss.rs              write path: get_miss_handler / HandleMiss
 │   │   ├── lookup/
 │   │   │   ├── mod.rs           read path: lookup / HandleHit, incl. partial hits
-│   │   │   └── page_cache.rs    Linux: lookups and body reads tried first on
-│   │   │                        the worker, from the page cache
+│   │   │   ├── body_check.rs    the read-time body check (feature `body-crc-verify`)
+│   │   │   ├── page_cache.rs    Linux: lookups and body reads tried first on
+│   │   │   │                    the worker, from the page cache
+│   │   │   └── noop_page_cache.rs  elsewhere: its stand-in, every read on the pool
 │   │   ├── publish.rs           sync, atomic rename, discard; holds the old record open
 │   │   ├── crashdiscard.rs      unsynchronised-store markers, flush, and the discard
 │   │   │                        after a host restart
@@ -262,7 +264,9 @@ test scaffolding, or tooling.
 │   │   │                        the service worker (Linux page-cache reads aside)
 │   │   ├── nowait.rs            Linux: page-cache reads on the worker, which
 │   │   │                        fail rather than wait for the device
-│   │   ├── hooks.rs             test-only pauses, faults and instrumentation
+│   │   ├── platform.rs          the calls that differ between Linux and other
+│   │   │                        Unix systems: opening, reading on the pool, flushing
+│   │   ├── hooks/               test-only pauses, faults and instrumentation
 │   │   └── metrics.rs           prometheus counters (feature `metrics`)
 │   └── tests/                 integration tests against the real Storage trait
 │                              (no HTTP); named tc_<requirement-id>_*. Built into
@@ -293,7 +297,7 @@ test scaffolding, or tooling.
 │   └── rfc9110/9111/3864        the standards the compliance chapter cites
 │
 ├── xtask/                     cargo xtask cache-tests | trace-report | headers |
-│                              fmt | readme-links | bench
+│                              fmt | readme-links | bench | cfg-matrix
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
 ├── .github/workflows/         ci.yml, compliance.yml, deny.yml, pr-title.yml and
 │                              release-plz.yml (see below)
@@ -333,6 +337,7 @@ cargo test -p compat                  # end-to-end through a real fixture-proxy
 cargo test -p caching-proxy           # the example, in front of a mock origin
 cargo xtask trace-report              # every test case has a test fn or IMP marker
 cargo xtask cache-tests               # the RFC 9111 suite (needs Node + submodule)
+cargo xtask cfg-matrix                # every cfg build, on Linux and other Unix
 cargo deny --manifest-path durable-cache/Cargo.toml --exclude-dev check
                                       # advisories, licences, duplicates, sources
 ```
@@ -341,6 +346,16 @@ cargo deny --manifest-path durable-cache/Cargo.toml --exclude-dev check
 committed: build the specification first (see
 [The specification](#the-specification)), and rebuild it after editing a
 `.tex` file, or the report checks a stale list of test cases.
+
+**Other Unix systems.** No CI job builds durable-cache for a system other
+than Linux. `cargo xtask cfg-matrix` lints and tests it here in every build
+its `#[cfg]` gates select: clippy for each feature set and for a release
+build, and nextest with the default features and with all of them, first in
+the workspace, then in a copy under the target directory whose Linux gates
+select their other-Unix side. `--no-tests` lints only. Each step's whole log
+stays under `<target>/xtask/cfg-matrix/logs` until the next run. What it
+cannot catch is code outside the Linux gates that calls what only Linux has
+in std (`std::os::linux`) or in libc: the copy still builds for Linux.
 
 **Other targets.** CI builds for 64-bit glibc only. The 32-bit glibc and
 the musl code (`durable-cache/src/nowait.rs`) can be checked on an amd64

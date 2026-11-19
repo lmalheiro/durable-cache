@@ -1,27 +1,33 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `Storage::lookup` / `HandleHit` — the read side (SDS-LAYOUT.OBJECTFILE-02,
-//! FDS-STORAGE.PARTIAL-01).
+//! `Storage::lookup` / `HandleHit` — the read side
+//! (SDS-LAYOUT.OBJECTFILE-02, FDS-STORAGE.PARTIAL-01).
 //!
-//! A store in flight takes precedence over the published record: a lookup
-//! is answered with a partial hit of the most recently opened store of the
-//! key that no invalidating purge has ended. A lookup carrying
-//! the `pingora-cache` streaming write tag is answered with the store the tag
+//! A store in flight takes precedence over the published record: a lookup is
+//! answered with a partial hit of the most recently opened store of the key
+//! that no invalidating purge has ended. A lookup carrying the
+//! `pingora-cache` streaming write tag is answered with the store the tag
 //! names, even an ended one, or with nothing. A damaged, foreign, or
 //! wrong-key record is a miss, never a corrupt read, and the file is left
-//! where it is: a later store replaces it and the restart-time scan
-//! reclaims it. The exception is a damaged temporary that a tagged lookup
-//! names, which is an error (see `lookup`).
+//! where it is: a later store replaces it and the restart-time scan reclaims
+//! it. The exception is a damaged temporary that a tagged lookup names,
+//! which is an error (see `lookup`).
 //!
-//! On Linux, unless `FsCacheConfig::with_page_cache_reads` turns them off,
-//! a lookup and each read of a hit's body first try the page cache on the
+//! On Linux, unless `FsCacheConfig::with_page_cache_reads` turns them off, a
+//! lookup and each read of a hit's body first try the page cache on the
 //! async worker (`page_cache`, FDS-STORAGE.PAGECACHE-01). The worker answers
 //! a hit, a missing file, and a call the system lacks. The blocking pool
 //! does the rest: a lookup again from the start, with the file if the worker
 //! opened it, and the rest of a body read, from where the worker stopped.
+//! Elsewhere, `page_cache` is a stand-in (`noop_page_cache.rs`) that leaves
+//! it all to the pool.
 
+mod body_check;
 #[cfg(target_os = "linux")]
+mod page_cache;
+#[cfg(not(target_os = "linux"))]
+#[path = "noop_page_cache.rs"]
 mod page_cache;
 
 use std::any::Any;
@@ -40,18 +46,33 @@ use pingora_cache::trace::SpanHandle;
 use pingora_cache::{CacheKey, CacheMeta};
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
-#[cfg(target_os = "linux")]
-use self::page_cache::OnWorker;
+use self::body_check::BodyCheck;
 use crate::inflight::{InFlightWriter, WriteOutcome};
-#[cfg(target_os = "linux")]
-use crate::nowait;
 use crate::record::{self, ReadError, RecordError, RecordKind};
-use crate::{blocking, key_codec, FsCache};
+use crate::{blocking, key_codec, platform, FsCache};
 
 // IMP-STORAGE.LOOKUP-01: satisfy SDS-LAYOUT.OBJECTFILE-02 -- the read
 // protocol (validation order, retry, optional body check, seek); miss.rs's
 // IMP-STORAGE.PUBLISH-02 covers the writer half.
 // IMP-STORAGE.PARTIAL-01: satisfy FDS-STORAGE.PARTIAL-01
+
+/// What an operation tried on the worker (`page_cache`) came to.
+#[cfg_attr(
+    not(target_os = "linux"),
+    expect(
+        dead_code,
+        reason = "elsewhere than on Linux, the worker answers nothing"
+    )
+)]
+enum OnWorker<T> {
+    /// Its answer.
+    Done(T),
+    /// The pool takes over, with the file if the worker opened it: so that
+    /// the pool does not open it again, and the worker does not close it. A
+    /// close can free a file that a store, a purge or an abort has just
+    /// removed, if it was its last descriptor (see `FsHitHandler`'s `Drop`).
+    ToPool(Option<File>),
+}
 
 /// The most body one read delivers. A larger chunk takes fewer reads and
 /// fewer trips through Pingora for a large body, but more memory per read.
@@ -91,11 +112,11 @@ enum ReadSource {
 }
 
 pub struct FsHitHandler {
-    /// Shared so a blocking read can own a handle without reopening the
-    /// file (FDS-STORAGE.EXECUTOR-02). `read_exact_at` takes `&self`, so a
-    /// shared descriptor is all a reader ever needs. Taken only as the
-    /// handler is dropped, to close it where its close cannot stall an async
-    /// worker (see `Drop`).
+    /// Shared so a blocking read can own a handle without reopening the file
+    /// (FDS-STORAGE.EXECUTOR-02). `read_exact_at` takes `&self`, so a shared
+    /// descriptor is all a reader ever needs. Taken only as the handler is
+    /// dropped, to close it where its close cannot stall an async worker
+    /// (see `Drop`).
     file: Option<Arc<File>>,
     /// Where the body comes from, and how far it has been read.
     source: ReadSource,
@@ -105,47 +126,9 @@ pub struct FsHitHandler {
     /// The backend: its configuration, for the body reads (`fill`), and in
     /// the test build its hooks, for `Drop`.
     cache: &'static FsCache,
-    /// The read-time body check, while one runs: switched on in the
-    /// configuration, for a published record that carries a checksum, until
-    /// the read seeks (ADR-PERSISTENCE.DURABILITY-02).
-    #[cfg(feature = "body-crc-verify")]
-    check: Option<BodyCheck>,
-}
-
-/// A body check in progress (ADR-PERSISTENCE.DURABILITY-02).
-#[cfg(feature = "body-crc-verify")]
-struct BodyCheck {
-    /// CRC-32C over the bytes delivered so far.
-    running: u32,
-    /// The record's `body_crc`.
-    stored: u32,
-}
-
-#[cfg(feature = "body-crc-verify")]
-impl BodyCheck {
-    /// A check of a record whose header stores `stored`, if `cache` has
-    /// checking switched on. A stored zero is not checked: it is what a
-    /// build without the `body-crc` feature records, and the checksum of an
-    /// empty body.
-    fn start(cache: &FsCache, stored: u32) -> Option<BodyCheck> {
-        (cache.config.body_crc_verification() && stored != 0)
-            .then_some(BodyCheck { running: 0, stored })
-    }
-
-    /// Log a mismatch once the whole body has been delivered. The response
-    /// still ends normally: its bytes are already on their way to the
-    /// client, and an error now could only cut the connection.
-    fn finish(self, path: &Path) {
-        if self.running != self.stored {
-            log::error!(
-                "the body of {} does not match its stored checksum \
-                 (stored {:#010x}, computed {:#010x}); it was served as read",
-                path.display(),
-                self.stored,
-                self.running
-            );
-        }
-    }
+    /// The read-time body check, with the `body-crc-verify` feature
+    /// (ADR-PERSISTENCE.DURABILITY-02).
+    check: BodyCheck,
 }
 
 /// Answer a lookup. A `streaming_write_tag` names a store in flight:
@@ -191,9 +174,9 @@ pub(crate) async fn lookup(
             InFlightTemp::Hit(meta, hit) => return Ok(Some((meta, hit))),
             // The store wrote this fixed part in full before registering,
             // and a read torn by its header update is retried, so this is
-            // damage or a bug. With a tag it is an error rather than a
-            // miss: `pingora-cache` panics when this lookup finds nothing,
-            // and an error fails only this request.
+            // damage or a bug. With a tag it is an error rather than a miss:
+            // `pingora-cache` panics when this lookup finds nothing, and an
+            // error fails only this request.
             InFlightTemp::Unreadable(e) if tag.is_some() => {
                 return Error::e_because(
                     ErrorType::FileReadError,
@@ -208,8 +191,8 @@ pub(crate) async fn lookup(
         }
     }
     // A tagged lookup is answered with the store its tag names or with
-    // nothing, as `Storage::lookup_streaming_write`'s doc asks. Never
-    // from the published record, even once the named store has published:
+    // nothing, as `Storage::lookup_streaming_write`'s doc asks. Never from
+    // the published record, even once the named store has published:
     // the record there may be a newer store's.
     if tag.is_some() {
         return Ok(None);
@@ -218,19 +201,16 @@ pub(crate) async fn lookup(
     let canonical = cache.canonical_path(&name)?;
     // On Linux, from the page cache on this worker when nothing has to wait
     // for the device (`page_cache`); on the pool otherwise.
-    #[cfg(target_os = "linux")]
     let opened = match page_cache::open_published(cache, &canonical, &key_bytes) {
         OnWorker::Done(answer) => return answer,
         OnWorker::ToPool(opened) => opened,
     };
-    #[cfg(not(target_os = "linux"))]
-    let opened = None;
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
     // (FDS-STORAGE.EXECUTOR-02).
     test_hook! { cache.hooks.count_handoff(); }
-    blocking::run(move || open_published(cache, &name, canonical, key_bytes, opened)).await
+    blocking::run(move || open_published(cache, &name, canonical, &key_bytes, opened)).await
 }
 
 /// Open and validate the published record at `canonical`, the record of the
@@ -241,10 +221,10 @@ fn open_published(
     cache: &'static FsCache,
     name: &str,
     canonical: PathBuf,
-    key_bytes: Vec<u8>,
+    key_bytes: &[u8],
     opened: Option<File>,
 ) -> Result<Option<(CacheMeta, FsHitHandler)>> {
-    let file = match opened.map_or_else(|| open_to_read(cache, &canonical), Ok) {
+    let file = match opened.map_or_else(|| cache.opener.open_blocking(&canonical), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
@@ -255,7 +235,7 @@ fn open_published(
             )
         }
     };
-    let mut read = record::read_published_blocking(&file, &key_bytes);
+    let mut read = record::read_published_blocking(&file, key_bytes);
     // Checksums that kept failing may be an in-place metadata update caught
     // between its two writes, by an updater the scheduler stopped there.
     // Every in-place update holds the key's publication lock from its first
@@ -266,7 +246,7 @@ fn open_published(
     // change meanwhile, as `ChangeLocks::lock_key` requires.
     if matches!(&read, Err(ReadError::Record(e)) if e.is_retryable()) {
         let _key = cache.locks.lock_key(name);
-        read = record::read_published_once(&file, &key_bytes);
+        read = record::read_published_once(&file, key_bytes);
     }
     let parsed = match read {
         Ok(parsed) => parsed,
@@ -308,7 +288,6 @@ fn published_hit(
         },
         path,
         cache,
-        #[cfg(feature = "body-crc-verify")]
         check: BodyCheck::start(cache, parsed.header.body_crc()),
     }
 }
@@ -325,35 +304,32 @@ enum InFlightTemp {
 }
 
 /// Open a partial hit on `writer`'s temporary: on Linux from the page cache
-/// on this worker first, as the store has just written it (`page_cache`);
-/// on the blocking pool otherwise, with the file the worker opened, if any.
+/// on this worker first, as the store has just written it (`page_cache`); on
+/// the blocking pool otherwise, with the file the worker opened, if any.
 async fn open_in_flight(
     cache: &'static FsCache,
     writer: &Arc<InFlightWriter>,
     key_bytes: &[u8],
 ) -> Result<InFlightTemp> {
-    #[cfg(target_os = "linux")]
     let opened = match page_cache::open_partial_hit(cache, writer, key_bytes) {
         OnWorker::Done(found) => return found,
         OnWorker::ToPool(opened) => opened,
     };
-    #[cfg(not(target_os = "linux"))]
-    let opened = None;
     test_hook! { cache.hooks.count_handoff(); }
     let writer = Arc::clone(writer);
     let key_bytes = key_bytes.to_vec();
     blocking::run(move || open_partial_hit(cache, writer, &key_bytes, opened)).await
 }
 
-/// Open a partial hit on `writer`'s temporary; `opened` is the temporary,
-/// if the worker opened it already.
+/// Open a partial hit on `writer`'s temporary; `opened` is the temporary, if
+/// the worker opened it already.
 fn open_partial_hit(
     cache: &'static FsCache,
     writer: Arc<InFlightWriter>,
     key_bytes: &[u8],
     opened: Option<File>,
 ) -> Result<InFlightTemp> {
-    let file = match opened.map_or_else(|| open_to_read(cache, &writer.temp_path), Ok) {
+    let file = match opened.map_or_else(|| cache.opener.open_blocking(&writer.temp_path), Ok) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(InFlightTemp::Gone),
         Err(e) => {
@@ -406,25 +382,9 @@ fn partial_hit(
             },
             path,
             cache,
-            #[cfg(feature = "body-crc-verify")]
-            check: None,
+            check: BodyCheck::none(),
         },
     )
-}
-
-/// Open a record, or a store's temporary, to read it on the blocking pool:
-/// on Linux without updating its access time if the configuration asks
-/// (`crate::nowait::Opener`).
-fn open_to_read(cache: &FsCache, path: &Path) -> std::io::Result<File> {
-    #[cfg(target_os = "linux")]
-    {
-        cache.opener.open_blocking(path)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = cache;
-        File::open(path)
-    }
 }
 
 /// Read `file` into `buf`, past the bytes it holds, until it holds `end`,
@@ -441,34 +401,16 @@ async fn fill(
     base: u64,
     path: &Path,
 ) -> Result<Vec<u8>> {
-    #[cfg(target_os = "linux")]
     if page_cache::fill(cache, file, &mut buf, end, base, path)? {
         return Ok(buf);
     }
-    #[cfg(not(target_os = "linux"))]
-    let _ = cache;
     test_hook! { cache.hooks.count_handoff(); }
     let file = Arc::clone(file);
-    blocking::run(move || Ok(fill_waiting(&file, &mut buf, end, base).map(|()| buf)))
+    blocking::run(move || Ok(platform::fill_blocking(&file, &mut buf, end, base).map(|()| buf)))
         .await?
         .or_err_with(ErrorType::FileReadError, || {
             format!("reading {}", path.display())
         })
-}
-
-/// The read of [`fill`] on the pool: on Linux into bytes not zeroed first
-/// (`crate::nowait`), elsewhere into zeroed bytes.
-fn fill_waiting(file: &File, buf: &mut Vec<u8>, end: usize, base: u64) -> std::io::Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        nowait::fill_blocking(file, buf, end, base)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let start = buf.len();
-        buf.resize(end, 0);
-        std::os::unix::fs::FileExt::read_exact_at(file, &mut buf[start..], base + start as u64)
-    }
 }
 
 impl FsHitHandler {
@@ -490,10 +432,7 @@ impl FsHitHandler {
                 ..
             } => {
                 if *pos >= *end {
-                    #[cfg(feature = "body-crc-verify")]
-                    if let Some(check) = self.check.take() {
-                        check.finish(&self.path);
-                    }
+                    self.check.finish(&self.path);
                     return Ok(None);
                 }
                 let len = (*end - *pos).min(CHUNK_SIZE) as usize;
@@ -516,10 +455,7 @@ impl FsHitHandler {
                     let base = *body_offset + *pos;
                     Bytes::from(fill(self.cache, &file, buf, len, base, &self.path).await?)
                 };
-                #[cfg(feature = "body-crc-verify")]
-                if let Some(check) = &mut self.check {
-                    check.running = crc32c::crc32c_append(check.running, &buf);
-                }
+                self.check.update(&buf);
                 *pos += len as u64;
                 if *pos >= prefetched.len() as u64 {
                     // Passed: release the lookup's read.
@@ -534,8 +470,8 @@ impl FsHitHandler {
             } => loop {
                 // Register for the next notification *before* checking
                 // state, so an append/finish landing in between is never
-                // missed (tokio::sync::Notify's documented pattern:
-                // notified() snapshots the notify_waiters() count at
+                // missed (the documented pattern of `tokio::sync::Notify`:
+                // `notified()` snapshots the `notify_waiters()` count at
                 // creation, not at first poll).
                 let notified = writer.notify.notified();
 
@@ -555,13 +491,12 @@ impl FsHitHandler {
                     Some(WriteOutcome::Completed { body_len }) => {
                         if *read_so_far >= body_len {
                             // The store completed, published or discarded
-                            // alike: end normally
-                            // (FRE-COMPAT.STREAMEND-01). This descriptor
-                            // stays valid either way.
+                            // alike: end normally (FRE-COMPAT.STREAMEND-01).
+                            // This descriptor stays valid either way.
                             return Ok(None);
                         }
-                        // valid_len has not caught up with body_len in this
-                        // load yet (a benign race right at completion);
+                        // `valid_len` has not caught up with `body_len` in
+                        // this load yet (a benign race right at completion);
                         // loop rather than trust a stale value.
                     }
                     // FRE-COMPLIANCE.PARTIALABORT-01: never a clean end.
@@ -605,9 +540,9 @@ impl HandleHit for FsHitHandler {
     }
 
     /// Read `start..end` of the body next. As in `MemCache`, the in-memory
-    /// backend of `pingora-cache`, `start` must fall inside the
-    /// body, so an empty body cannot be sought at all, while an `end` past
-    /// the last byte reads to the end.
+    /// backend of `pingora-cache`, `start` must fall inside the body, so an
+    /// empty body cannot be sought at all, while an `end` past the last byte
+    /// reads to the end.
     fn seek(&mut self, start: usize, end: Option<usize>) -> Result<()> {
         match &mut self.source {
             ReadSource::Complete {
@@ -630,12 +565,9 @@ impl HandleHit for FsHitHandler {
                 // An end past the last byte is allowed: deliver what is
                 // there.
                 *read_end = end.map_or(*body_len, |e| (e as u64).min(*body_len));
-                // A sought read is not checked: the stored checksum covers
-                // a whole body only.
-                #[cfg(feature = "body-crc-verify")]
-                {
-                    self.check = None;
-                }
+                // A sought read is not checked: the stored checksum covers a
+                // whole body only.
+                self.check.abandon();
                 Ok(())
             }
             ReadSource::Partial { .. } => Error::e_explain(
@@ -738,12 +670,6 @@ impl Drop for FsHitHandler {
             drop(file);
             return;
         }
-        blocking::close_removed_file(
-            file,
-            #[cfg(test)]
-            self.cache,
-            #[cfg(test)]
-            self.path.clone(),
-        );
+        blocking::close_removed_file(file, self.cache, &self.path);
     }
 }

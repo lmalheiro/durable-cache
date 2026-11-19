@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! FDS-STORAGE.RECLAIM-01: classifying what the restart-time scan reclaims
-//! — crash-orphaned temporaries and their stopped writers' leases, and
+//! FDS-STORAGE.RECLAIM-01: classifying what the restart-time scan reclaims —
+//! crash-orphaned temporaries and their stopped writers' leases, and
 //! damaged, foreign or withdrawn canonical records — and removing it safely
 //! under live traffic. The tree walk these ride is
 //! `crate::recovery::recover`'s, the same pass FDS-EVICTION.STARTUP-01
@@ -19,8 +19,8 @@ use crate::{sharding, writerid, FsCache};
 // IMP-STORAGE.RECLAIM-01: satisfy FDS-STORAGE.RECLAIM-01
 
 /// The class of a file the restart scan reclaims: what `RecoveryReport`
-/// counts by, and the label on the reclaim counters
-/// (FDS-STORAGE.RECLAIM-01, "Reporting").
+/// counts by, and the label on the reclaim counters (FDS-STORAGE.RECLAIM-01,
+/// "Reporting").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReclaimClass {
     /// A crash-orphaned temporary.
@@ -46,16 +46,16 @@ pub fn temp_writer_may_be_running(root: &Path, temp: &writerid::TempName<'_>) ->
 
 /// Unlink a canonical record the scan has classified as reclaimable.
 ///
-/// Never by path alone: a live store may publish a fresh record at this
-/// path at any moment, so the file's identity is confirmed under the key's
+/// Never by path alone: a live store may publish a fresh record at this path
+/// at any moment, so the file's identity is confirmed under the key's
 /// publication lock and the entry is skipped if the path now names a
 /// different file. Returns the bytes reclaimed, or `None` if the entry was
 /// skipped.
 ///
-/// The caller still has the record open, from reading it, and closes it
-/// only after this returns: the kernel then frees the record at that close,
-/// after the lock, rather than inside the unlink, under the lock. The scan
-/// does both on the blocking pool (FDS-STORAGE.EXECUTOR-02).
+/// The caller still has the record open, from reading it, and closes it only
+/// after this returns: the kernel then frees the record at that close, after
+/// the lock, rather than inside the unlink, under the lock. The scan does
+/// both on the blocking pool (FDS-STORAGE.EXECUTOR-02).
 pub(crate) fn reclaim_canonical(
     cache: &FsCache,
     name: &str,
@@ -89,8 +89,8 @@ pub(crate) fn reclaim_canonical(
 }
 
 /// Remove the leases of writers that have stopped: a lease, or a lease left
-/// half-created, whose lock the scan can take (ADR-STORAGE.WRITERID-01).
-/// The lock is held across the removal, so a live writer's lease is never
+/// half-created, whose lock the scan can take (ADR-STORAGE.WRITERID-01). The
+/// lock is held across the removal, so a live writer's lease is never
 /// removed: its lock is taken before it is renamed into place. Runs after
 /// the tree walk, though the order does not matter: a temporary whose lease
 /// is missing belongs to a stopped writer too. Returns how many were
@@ -132,8 +132,8 @@ pub(crate) fn reclaim_leases(cache: &FsCache) -> u64 {
 }
 
 /// Unlink a crash-orphaned temporary. No identity check is needed: nothing
-/// is ever renamed onto a temporary's name. Nothing holds the temporary of
-/// a stopped writer open either, so the unlink frees it, and the scan calls
+/// is ever renamed onto a temporary's name. Nothing holds the temporary of a
+/// stopped writer open either, so the unlink frees it, and the scan calls
 /// this on the blocking pool (FDS-STORAGE.EXECUTOR-02).
 pub(crate) fn reclaim_temp(cache: &FsCache, path: &Path, size: u64) -> Option<u64> {
     test_hook! { cache.hooks.pause(PausePoint::ReclaimBeforeUnlink, path); }

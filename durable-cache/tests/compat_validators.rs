@@ -6,7 +6,7 @@
 //! Purely a `CacheMeta`/`ResponseHeader` round-trip property (`ETag` and
 //! `Last-Modified` are ordinary response header fields to this backend, no
 //! different from any other), so covered directly against
-//! `Storage::get_miss_handler`/`lookup`/`update_meta` -- no HTTP needed.
+//! `Storage::get_miss_handler`/`lookup`/`update_meta` — no HTTP needed.
 
 use std::time::{Duration, SystemTime};
 

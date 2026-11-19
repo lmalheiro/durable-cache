@@ -3,11 +3,11 @@
 
 //! TC-STORAGE.RECLAIM-01 — Orphan reclaim at restart.
 //!
-//! The restart-time scan reclaims a temporary exactly when its writer is
-//! not running, and a damaged, foreign or withdrawn record — never
-//! admitting what it reclaims, never reclaiming a `Vary` variant, whatever
-//! its primary holds, never unlinking a record a live store has just
-//! replaced, and reporting what it reclaimed.
+//! The restart-time scan reclaims a temporary exactly when its writer is not
+//! running, and a damaged, foreign or withdrawn record — never admitting
+//! what it reclaims, never reclaiming a `Vary` variant, whatever its primary
+//! holds, never unlinking a record a live store has just replaced, and
+//! reporting what it reclaimed.
 
 use std::time::{Duration, SystemTime};
 
@@ -124,9 +124,9 @@ async fn tc_storage_reclaim_01_damaged_foreign_and_withdrawn_records_are_reclaim
 }
 
 /// Step 3, continued: a record found anywhere but at its own key's path is
-/// reclaimed as damaged, and not admitted: one key's record at another
-/// key's path, and a record under its own name in a shard directory that
-/// name does not select. The records at their own paths are admitted.
+/// reclaimed as damaged, and not admitted: one key's record at another key's
+/// path, and a record under its own name in a shard directory that name does
+/// not select. The records at their own paths are admitted.
 #[tokio::test]
 async fn tc_storage_reclaim_01_misplaced_records_are_reclaimed() {
     let (cache, _tmp) = support::leaked_cache();
@@ -174,9 +174,9 @@ async fn tc_storage_reclaim_01_misplaced_records_are_reclaimed() {
     }
 }
 
-/// Step 4: a variant is admitted like any other record, whatever its
-/// primary holds: absent, damaged, created later than the variant, or
-/// created no later. Only the damaged primary is reclaimed.
+/// Step 4: a variant is admitted like any other record, whatever its primary
+/// holds: absent, damaged, created later than the variant, or created no
+/// later. Only the damaged primary is reclaimed.
 #[tokio::test]
 async fn tc_storage_reclaim_01_variants_are_admitted_whatever_their_primary() {
     let (cache, _tmp) = support::leaked_cache();

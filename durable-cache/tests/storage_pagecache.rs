@@ -5,11 +5,11 @@
 //!
 //! On Linux, the lookup and the body reads of a record the page cache holds
 //! complete on the worker, without a handoff to the blocking pool; each
-//! falls back to the pool when a call would wait, and the answer is the
-//! same either way (FDS-STORAGE.PAGECACHE-01). The test hooks count the
-//! lookups and body reads handed to the pool, and make a chosen call on the
-//! worker report that it would wait. The records were just written, so the
-//! page cache holds them.
+//! falls back to the pool when a call would wait, and the answer is the same
+//! either way (FDS-STORAGE.PAGECACHE-01). The test hooks count the lookups
+//! and body reads handed to the pool, and make a chosen call on the worker
+//! report that it would wait. The records were just written, so the page
+//! cache holds them.
 
 use bytes::Bytes;
 use durable_cache::hooks::{PausePoint, WorkerCall};
@@ -95,8 +95,8 @@ async fn tc_storage_pagecache_01_a_read_that_would_wait_goes_to_the_pool() {
 
 /// Step 4: a key never stored is a miss, and so is a record whose metadata
 /// checksum fails, reached through the pool's locked re-read. Looked up
-/// again, the key never stored is a miss the worker answers: the pool's
-/// open of the first lookup left its path in the kernel's lookup cache as
+/// again, the key never stored is a miss the worker answers: the pool's open
+/// of the first lookup left its path in the kernel's lookup cache as
 /// missing, which a file system on disk keeps (tmpfs does not).
 #[tokio::test]
 async fn tc_storage_pagecache_01_misses_are_the_same_on_either_path() {
@@ -122,8 +122,8 @@ async fn tc_storage_pagecache_01_misses_are_the_same_on_either_path() {
     let path = support::canonical_path(cache, &key);
     let meta_start = support::read_header(&path).meta_region_offset() as u64;
     support::flip_byte_at(&path, meta_start + 1);
-    // The pool's re-read of a record whose checksums keep failing takes
-    // the key's publication lock: held here, the lookup waits for it.
+    // The pool's re-read of a record whose checksums keep failing takes the
+    // key's publication lock: held here, the lookup waits for it.
     let name = cache.object_name(&key);
     let (locked, is_locked) = std::sync::mpsc::channel();
     let (release, on_release) = std::sync::mpsc::channel::<()>();
