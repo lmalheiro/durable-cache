@@ -38,9 +38,13 @@ between the worker and the pool thread.
 
 On Linux, the reads that the page cache answers no longer pay it
 (\reqref{ADR-STORAGE.PAGECACHE-01}); stores still do. A store makes at
-least three handoffs: one to create its temporary and write the record's
-fixed part, one per body chunk, and one to publish it
-(\reqref{FDS-STORAGE.EXECUTOR-02}). A synchronised store is dominated by its
+least two handoffs: one to create its temporary and write the record's
+fixed part, one per body chunk but the last, and one to publish it, which
+also writes the last chunk (\reqref{FDS-STORAGE.EXECUTOR-02},
+\reqref{ADR-STORAGE.LASTCHUNK-01}).
+\texttt{pingora-proxy} hands a store the body bytes that arrive with the
+response's headers as a chunk of their own, so even a 4~KiB body comes in
+two chunks, and its store makes three handoffs. A synchronised store is dominated by its
 \texttt{fdatasync}, which held a pool thread for 16 to 25~ms on this host.
 Without it (\reqref{ADR-PERSISTENCE.UNSYNCED-01}), the handoffs are a large
 share of what a store costs.

@@ -755,13 +755,23 @@
 
   \textbf{Write-through.} The backend shall write each chunk to the
   temporary before its \texttt{write\_body} call returns, holding no body
-  bytes beyond the chunk being written (\reqref{FRE-COMPAT.UNSIZED-01}).
-  Only then does the valid length advance, so a partial-hit reader, which
-  sees only bytes already in the file, is woken as soon as the chunk is
-  there (\reqref{FDS-STORAGE.PARTIAL-01}).
+  bytes beyond the chunk being written (\reqref{FRE-COMPAT.UNSIZED-01}), but
+  for the last: the backend shall keep the chunk that \texttt{write\_body}
+  receives with \texttt{eof} set, for \texttt{finish} to write
+  (\reqref{ADR-STORAGE.LASTCHUNK-01}). Only once a chunk is written does the
+  valid length advance, so
+  a partial-hit reader, which sees only bytes already in the file, is woken
+  as soon as the chunk is there (\reqref{FDS-STORAGE.PARTIAL-01}). IF
+  \texttt{write\_body} receives a chunk while the backend keeps the last
+  one, THEN the call shall return an error, and the store is treated as
+  aborted: \texttt{pingora-cache} sends no chunk after the one with
+  \texttt{eof} set,\footnote{\pgsrc{pingora-cache/src/storage.rs}{357}{\texttt{HandleMiss::write\_body(data,~eof)}}
+  sets \texttt{eof} on the final call only.} so a caller that does cannot
+  be trusted with the body.
 
   \textbf{Publishing.} WHEN a store completes, \texttt{finish} shall, in
-  order: patch \texttt{body\_len} and \texttt{body\_crc}, recompute
+  order: write the last chunk, if the backend kept it, and advance the valid
+  length; patch \texttt{body\_len} and \texttt{body\_crc}, recompute
   \texttt{header\_crc}, synchronise the temporary's data to stable storage
   (\reqref{ADR-PERSISTENCE.DURABILITY-02}) unless stores are unsynchronised
   (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and rename the temporary over the
@@ -846,7 +856,8 @@
         \begin{call}{HttpCache}{write\_body(chunk, eof)}{Storage}{}
           \postlevel
           \postlevel
-          \begin{callself}{Storage}{{\small \shortstack{append to temporary; update body CRC;\\advance valid length; wake readers}}}{}
+          \postlevel
+          \begin{callself}{Storage}{{\small \shortstack{update body CRC; append to temporary,\\or keep the last chunk for finish;\\advance valid length; wake readers}}}{}
           \end{callself}
         \end{call}
         \begin{call}{Follower}{read\_body() (concurrent partial hit)}{Storage}{chunk}
@@ -856,7 +867,8 @@
         \postlevel
         \postlevel
         \postlevel
-        \begin{callself}{Storage}{{\small \shortstack{patch body\_len, body\_crc, header\_crc;\\fdatasync temporary;\\rename over canonical name}}}{}
+        \postlevel
+        \begin{callself}{Storage}{{\small \shortstack{append the kept last chunk; advance\\valid length; wake readers;\\patch body\_len, body\_crc, header\_crc;\\fdatasync temporary;\\rename over canonical name}}}{}
         \end{callself}
       \end{call}
     \end{sequencediagram}
@@ -867,9 +879,9 @@
     region, and registers the write for partial hits
     (\reqref{FDS-STORAGE.PARTIAL-01}); each \texttt{write\_body} call appends
     a chunk and advances the valid length a concurrent \texttt{Follower}
-    streams from; and \texttt{finish} patches the header, synchronises the
-    temporary unless stores are unsynchronised, and renames it over the
-    canonical name --- the object's
+    streams from, but for the last, which it keeps; and \texttt{finish}
+    appends that chunk, patches the header, synchronises the temporary unless
+    stores are unsynchronised, and renames it over the canonical name --- the object's
     durable publication --- returning the record size.}\label{fig:fds-publish-seq}
   \end{figure}
 
@@ -882,6 +894,7 @@
   \refine{ADR-STORAGE.ATOMICPUBLISH-01}
   \refine{ADR-STORAGE.WRITERID-01}
   \refine{ADR-PERSISTENCE.DURABILITY-02}
+  \refine{ADR-STORAGE.LASTCHUNK-01}
   \satisfy{FRE-COMPAT.CONCURRENT-01}
   \satisfy{FRE-COMPLIANCE.INCOMPLETE-02}
   \satisfy{FRE-COMPLIANCE.REPLACE-01}
@@ -928,10 +941,13 @@
 
   \textbf{Partial-hit readers.} A partial hit's reader opens its own
   descriptor on the store's temporary and delivers the bytes up to the valid
-  length, then waits on the store's notification channel. WHEN
-  \texttt{write\_body} appends a chunk, the backend shall advance the valid
-  length and wake every reader of that store before \texttt{write\_body}
-  returns, so that each reader can deliver the chunk within the latency bound
+  length, then waits on the store's notification channel. WHEN the backend
+  appends a chunk to the temporary, it shall advance the valid length and
+  wake every reader of that store before the call that appended the chunk
+  goes on: before \texttt{write\_body} returns, or, for the last chunk, which
+  \texttt{finish} writes (\reqref{FDS-STORAGE.PUBLISH-02}), before
+  \texttt{finish} patches the header and synchronises the temporary. Each
+  reader can then deliver the chunk within the latency bound
   \reqref{FRE-COMPAT.STREAMDELIVERY-01} sets. WHEN the store completes ---
   whether it is published, or removed once the backend is read-only or a
   purge has ended it --- each
@@ -1993,8 +2009,10 @@
       on the integrator.
     \item[--] One thread handoff per storage operation, which is charged
       against every lookup and every body chunk whether or not the data was
-      in the page cache; on Linux, \reqref{ADR-STORAGE.PAGECACHE-01} keeps
-      the reads the page cache answers on the worker.
+      in the page cache. On Linux, \reqref{ADR-STORAGE.PAGECACHE-01} keeps
+      the reads the page cache answers on the worker; on any system,
+      \reqref{ADR-STORAGE.LASTCHUNK-01} has a store's last chunk written in
+      the handoff that publishes it.
     \item[--] The blocking pool is shared with everything else in the process
       that uses it, and its size is the runtime's to decide, not this
       backend's.
@@ -2034,9 +2052,11 @@
       (\reqref{FDS-STORAGE.PARTIAL-01});
     \item \texttt{get\_miss\_handler} --- creating the per-writer temporary
       and writing the record's fixed part (\reqref{FDS-STORAGE.PUBLISH-02});
-    \item \texttt{write\_body} --- writing a chunk to the temporary;
-    \item \texttt{finish} --- patching the header, the \texttt{fdatasync}
-      unless stores are unsynchronised
+    \item \texttt{write\_body} --- writing a chunk to the temporary, but for
+      the last chunk, which the backend keeps for \texttt{finish}
+      (\reqref{FDS-STORAGE.PUBLISH-02}) at no handoff of its own;
+    \item \texttt{finish} --- writing that last chunk, patching the
+      header, the \texttt{fdatasync} unless stores are unsynchronised
       (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and the rename
       (\reqref{ADR-PERSISTENCE.DURABILITY-02}), then
       dropping the miss handler, whose close frees the store's file if the
@@ -2350,6 +2370,118 @@
   \trace{FDS-STORAGE.EXECUTOR-02}
   \trace{FDS-STORAGE.PARTIAL-01}
   \trace{SDS-LAYOUT.OBJECTFILE-02}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.LASTCHUNK-01}[draft][designConstraint]{Last chunk written by finish}
+
+  \localreqdiagram*{adrlastchunk01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{ADR-STORAGE.EXECUTOR-02} runs a store's file
+  work on the blocking pool, one handoff per operation: one to open the
+  store, one per body chunk, and one for \texttt{finish}. A handoff costs
+  about 20~microseconds of processor time under load
+  (Appendix~\ref{app:executor-cost}), and without synchronisation
+  (\reqref{ADR-PERSISTENCE.UNSYNCED-01}) the handoffs are a large share of
+  what a store costs. A body also comes in more chunks than its size
+  suggests. \texttt{pingora-core} reads an HTTP/1 response's headers into a
+  4~KiB buffer, and hands the body bytes that buffer holds over as a chunk
+  of their
+  own,\footnote{\pgsrc{pingora-core/src/protocols/http/v1/client.rs}{247}{\texttt{HttpSession::read\_response}}
+  reads the headers into a buffer it grows by
+  \pgsrc{pingora-core/src/protocols/http/v1/common.rs}{29}{\texttt{INIT\_HEADER\_BUF\_SIZE}},
+  4096 bytes (\pgsrc{pingora-core/src/protocols/http/v1/client.rs}{385}{L385}),
+  and keeps the bytes past the headers as the start of the body
+  (\pgsrc{pingora-core/src/protocols/http/v1/client.rs}{337}{L337}).} so a
+  4~KiB body comes in two chunks, and its store makes four handoffs.
+
+  The body's last chunk is marked: \texttt{write\_body} receives it with
+  \texttt{eof} set, and \texttt{pingora-proxy} calls \texttt{finish} as soon
+  as that call returns.\footnote{\pgsrc{pingora-proxy/src/proxy_cache.rs}{744}{\texttt{HttpProxy::cache\_http\_task}}
+  calls \texttt{finish\_miss\_handler\_best\_effort} right after it
+  (\pgsrc{pingora-proxy/src/proxy_cache.rs}{746}{L746}).} The last chunk's
+  handoff and \texttt{finish}'s therefore follow each other, with nothing
+  between them.
+
+  \textbf{Decision:} Keep the chunk that \texttt{write\_body} receives with
+  \texttt{eof} set, once it is folded into the body's CRC-32C on the worker,
+  and write it in \texttt{finish}'s handoff, before the header is patched. A
+  partial-hit reader is woken as soon as the chunk is written, before the
+  store is synchronised (\reqref{FDS-STORAGE.PARTIAL-01}). Every store does
+  so, with one handoff fewer: three for a 4~KiB body. No option selects it.
+
+  Under \reqref{HLR-SCOPE.V1-02} the two alternatives tie: writing the last
+  chunk in \texttt{finish} builds no component, public interface, background
+  task, or on-disk structure. It was chosen for the fills it raises.
+  Measured on 19~November~2026 with the benchmark of
+  \reqref{TC-PERFORMANCE.STORERATE-01} (four workers, 64 connections, an XFS
+  file system, two runs of five rounds each), unsynchronised fills rose by
+  3.7\,\% for 4~KiB bodies and by 2.9\,\% for 64~KiB bodies, from 50 to 51\,\%
+  and from 61 to 63\,\% of \texttt{MemCache}, and each store took about
+  14~microseconds less processor time. Synchronised fills of those sizes,
+  which wait on their \texttt{fdatasync}, moved by less than one percent.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Keep the last chunk's own handoff}, as every other chunk's:
+      the store holds no chunk past its \texttt{write\_body} call, and a
+      partial-hit reader receives the last chunk when that call returns,
+      rather than when \texttt{finish} writes it. Not adopted:
+      \texttt{finish} follows at once, so a reader waits at most one handoff
+      longer, against a handoff saved on every store.
+    \item \emph{A configuration option between the two}, so that an
+      integrator that calls \texttt{finish} later could keep the last
+      chunk's own handoff. Rejected under \reqref{HLR-SCOPE.V1-02}: a public
+      interface, for an alternative that improves a measured figure by 4\,\%
+      at most, not by the 20\,\% the rule asks.
+    \item \emph{Publish the store from the \texttt{write\_body} call that
+      ends the body}, saving \texttt{finish}'s handoff instead. Rejected: the
+      \texttt{HandleMiss} contract has \texttt{finish} complete a store, and
+      counts a miss handler dropped without it as a failed
+      write;\footnote{\pgsrc{pingora-cache/src/storage.rs}{363}{\texttt{HandleMiss::finish}}.}
+      a store published before \texttt{finish} could no longer fail.
+    \item \emph{Keep a small body whole, and write it in \texttt{finish}'s
+      handoff}, which would save the handoffs of all its chunks. Rejected: it
+      holds a buffer per store in flight, which
+      \reqref{FRE-COMPAT.UNSIZED-01} rules out, and a partial-hit reader
+      would wait for the whole body.
+    \item \emph{Write a store's chunks on the worker}, the direction
+      Appendix~\ref{app:executor} favours, which saves every handoff. Left
+      to a decision of its own: a write the page cache absorbs still waits
+      for the device once the host's dirty data reaches its limit, so the
+      worker needs a bound on the writes it takes.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] One handoff fewer per store: three instead of four for a 4~KiB
+      body.
+    \item[--] The store holds its last chunk from the \texttt{write\_body}
+      call that delivers it until \texttt{finish} writes it: one chunk, as
+      \reqref{FRE-COMPAT.UNSIZED-01} allows.
+    \item[--] A partial-hit reader receives the last chunk once
+      \texttt{finish} has written it, one handoff after the
+      \texttt{write\_body} call that delivered it; an integrator that called
+      \texttt{finish} later would delay it as much
+      (\reqref{FRE-COMPAT.STREAMDELIVERY-01}).
+    \item[--] A failure to write the last chunk is returned by
+      \texttt{finish} rather than by \texttt{write\_body}, which
+      \reqref{FRE-COMPAT.WRITEFAIL-01} allows.
+    \item[--] A chunk sent after the last fails the store, where it was
+      appended before; \texttt{pingora-cache} sends none.
+    \item[--] A body chunk is written in two places, in a \texttt{write\_body}
+      handoff and in \texttt{finish}'s, which must stay equivalent.
+  \end{itemize}
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-02}{Specify which chunk the store
+  keeps, when finish writes it, and what a chunk sent after it does.}
+
+  \refine{ADR-STORAGE.EXECUTOR-02}
+  \trace{FRE-COMPAT.UNSIZED-01}
+  \trace{FRE-COMPAT.STREAMDELIVERY-01}
+  \trace{HLR-PERFORMANCE.STORERATE-01}
+  \trace{HLR-SCOPE.V1-02}
 \end{requirement}
 
 \begin{requirement}{ADR-STORAGE.RECLAIM-01}[draft][designConstraint]{Reclaim via the restart-time scan}

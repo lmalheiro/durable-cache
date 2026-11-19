@@ -1021,9 +1021,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
       store is in flight; confirm each returns a partial hit backed by that
       same temporary object.
     \item Observe the followers' streams as the second writer appends,
-      timestamping each chunk's \texttt{write\_body} return and each
-      follower's \texttt{read\_body} return with that chunk, before that
-      store completes.
+      timestamping each chunk's \texttt{write\_body} return --- for the
+      last chunk, the start of \texttt{finish}, if later --- and each
+      follower's \texttt{read\_body} return with that chunk.
     \item Let the second store complete; drain the followers' streams
       (across the concluding atomic rename) and compare the received bodies
       to its upstream body.
@@ -1038,8 +1038,8 @@ stock run is the reference: a test that fails on both runs is a limitation of
   several same-key writes are in flight resolves to the most recently opened one, never an earlier
   writer. Followers receive body chunks as that writer writes them, with at
   least 99\,\% of all chunk deliveries, across every follower, within 10~ms
-  of the chunk's \texttt{write\_body} return --- no follower waits for the
-  whole object; every follower's body is
+  of the chunk's timestamp --- no follower waits for the whole object;
+  every follower's body is
   byte-identical to its upstream response and ends with a normal end of
   body, including for followers still reading when the object is renamed to
   its canonical name; each writer's upstream is fetched exactly
@@ -1061,10 +1061,12 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \localreqdiagram*{tc19}{\reqid}{\reqdesc}
 
   \textbf{Objective:} A body whose total length is not declared when the
-  store begins is persisted completely, and every chunk is in the store's
-  temporary before its \texttt{write\_body} call returns, so the backend
-  holds no body bytes beyond the chunk being written, as
-  \reqref{FRE-COMPAT.UNSIZED-01} requires.
+  store begins is persisted completely, and the backend holds no more of it
+  in memory than one chunk, as \reqref{FRE-COMPAT.UNSIZED-01} requires:
+  every chunk but the last is in the store's temporary before its
+  \texttt{write\_body} call returns, and the last one, which the backend
+  keeps for \texttt{finish} (\reqref{ADR-STORAGE.LASTCHUNK-01}), once
+  \texttt{finish} returns.
 
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
   interface by a test harness that can read the store's temporary in the
@@ -1074,22 +1076,25 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \begin{enumerate}
     \item Open a store and stream a body in irregular, unevenly-sized chunks
       without declaring its length, so the total length is unknowable when
-      the store opens.
+      the store opens; set \texttt{eof} on the last \texttt{write\_body}
+      call only.
     \item After each \texttt{write\_body} call returns, compare the
       temporary's length with the length of its header, key, and metadata
       region plus the body bytes streamed so far.
-    \item Once the stream ends, retrieve the object and compare its persisted
-      length and bytes to the total streamed.
+    \item Call \texttt{finish}, then retrieve the object and compare its
+      persisted length and bytes to the total streamed.
     \item Repeat with a body whose size happens to be zero (empty), and with
       bodies large enough to span multiple write chunks and file-system block
       boundaries.
   \end{enumerate}
 
-  \textbf{Expected result:} Every store succeeds; after every
+  \textbf{Expected result:} Every store succeeds. After every
   \texttt{write\_body} call the temporary holds exactly the header, key,
-  metadata region, and the body bytes streamed so far; the persisted
-  object's length and bytes equal exactly what was streamed in every case,
-  including the empty-body and multi-chunk boundary cases.
+  metadata region, and the body bytes streamed so far, except after the
+  call with \texttt{eof} set: the temporary then lacks that call's chunk,
+  and only that. The persisted object's length and bytes equal exactly what
+  was streamed in every case, including the empty-body and multi-chunk
+  boundary cases.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
@@ -1313,7 +1318,8 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \textbf{Objective:} The per-writer temporary and rename publish atomically,
   keep concurrent writers isolated, never reuse another writer's file,
   synchronise before publishing unless stores are unsynchronised, report the
-  record size, and publish nothing once the backend is read-only.
+  record size, publish nothing once the backend is read-only, and fail a
+  store sent a chunk after its last.
 
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
   interface, with system calls traced (e.g.\ with \texttt{strace}).
@@ -1345,20 +1351,26 @@ stock run is the reference: a test that fails on both runs is a limitation of
     \item With stores unsynchronised (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}),
       make the synchronisation of a temporary fail, and let a store run to
       completion.
+    \item Open a store, write a chunk with \texttt{eof} set, then write
+      another chunk; finish the store, and look the key up.
   \end{enumerate}
 
   \textbf{Expected result:} Concurrent writers' bytes are never interleaved;
   the pre-existing file at the temporary name is left untouched and the store
-  uses the next counter value; the temporary's data is synchronised before the
-  rename, and \texttt{finish} reports the published file's full length; a
+  uses the next counter value; \texttt{finish} writes the last chunk and
+  patches the header before it synchronises the temporary's data, and
+  synchronises it before the rename, and \texttt{finish} reports the
+  published file's full length; a
   crash leaves no promoted incomplete object; the rename is the sole point of
   visibility; replacement converges to a single winner without disturbing
   in-flight readers of the old object; the store completing once the backend
   is read-only
   reports success, publishes nothing, and leaves no temporary; the inspection
-  finds no cross-directory staging and no copy-based publication; and the
+  finds no cross-directory staging and no copy-based publication; the
   unsynchronised store publishes its whole record without reaching the
-  synchronisation made to fail.
+  synchronisation made to fail; and the chunk written after the one with
+  \texttt{eof} set fails, as does the \texttt{finish} that follows it, so
+  the lookup reports a miss.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 

@@ -387,14 +387,16 @@
   hands the backend the \texttt{CacheMeta} directly, before any body bytes
   arrive.} --- the
   \texttt{CacheMeta} is available then; body
-  chunks are appended as they stream in, each folded into a running CRC-32C
-  kept in memory unless the build leaves out the \texttt{body-crc} feature.
-  While the per-writer temporary grows
+  chunks are appended as they stream in, but for the last, which is
+  appended at completion (\reqref{FDS-STORAGE.PUBLISH-02}), each folded
+  into a running CRC-32C kept in memory unless the build leaves out the
+  \texttt{body-crc} feature. While the per-writer temporary grows
   (\reqref{SDS-LAYOUT.SHARDING-01}), the valid length lives in the in-memory
   in-flight registry that backs streaming partial hits
   (\reqref{FDS-STORAGE.PARTIAL-01}); the on-disk header is \emph{not}
   the source of truth for readers of an in-flight write. At completion the
-  backend patches \texttt{body\_len} and \texttt{body\_crc}, recomputes
+  backend appends that last chunk, patches \texttt{body\_len} and
+  \texttt{body\_crc}, recomputes
   \texttt{header\_crc}, synchronises the file's data to stable storage unless
   stores are unsynchronised (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}), and
   renames the temporary to the canonical name

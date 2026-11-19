@@ -14,17 +14,20 @@
   carries no \texttt{Content-Length} to declare.
 
   WHEN a store begins without the body's total length being declared, the
-  backend shall persist the complete body while holding in process memory no
-  more of that body than the chunk its current \texttt{write\_body} call is
-  writing, independent of the body's length.
+  backend shall persist the complete body while holding in process memory,
+  at any moment, no more of that body than one chunk as a
+  \texttt{write\_body} call received it, independent of the body's length.
 
   The bound rules out buffering a whole body before writing it, and any
-  per-store buffer besides: the operating system's page cache already
-  batches writes to the device, so a buffer in the backend would save only
-  system calls, at the cost of memory per concurrent store. The chunk being
-  written is allowed because \texttt{pingora-cache} has already allocated
-  it when the backend receives it, and its size depends on the
-  upstream protocol --- HTTP/1 bodies
+  per-store buffer of more than one chunk: the operating system's page cache
+  already batches writes to the device, so a larger buffer in the backend
+  would save only system calls, at the cost of memory per concurrent store.
+  One chunk is allowed because \texttt{pingora-cache} has already allocated
+  it when the backend receives it. It is the chunk a \texttt{write\_body}
+  call is writing, or the body's last chunk, which the backend may keep
+  until \texttt{finish} writes it (\reqref{ADR-STORAGE.LASTCHUNK-01}), since
+  no other chunk follows it. Its size depends on the upstream protocol ---
+  HTTP/1 bodies
   are read through a 64~KiB buffer,\footnote{\pgsrc{pingora-core/src/protocols/http/v1/body.rs}{31}{\texttt{BODY\_BUFFER\_SIZE}}
   is \texttt{1024 * 64}.} while an HTTP/2 data frame can be larger.
 
@@ -347,15 +350,24 @@
   shall deliver the body bytes that store had already written, followed by
   the chunks the store subsequently appends, with at least 99\,\% of those
   appended chunks delivered within 10~ms of their \texttt{write\_body} call
-  returning.
+  returning, or, for the body's last chunk, of the store's \texttt{finish}
+  call starting, if that comes later.
 
   A chunk is delivered when the reader's \texttt{read\_body} call returns it;
   the bound applies on a host that is not CPU-saturated. The follower thus
   streams the body as the leader writes it, without waiting for the store to
-  finish. The bound is a percentile rather than a worst case so that a single
-  scheduling delay does not violate it, while still excluding designs that
-  poll the file or batch notifications, whose delays are typically an order
-  of magnitude longer.
+  finish. The last chunk is the exception: the backend may keep it until
+  \texttt{finish} writes it (\reqref{FRE-COMPAT.UNSIZED-01}), and
+  \texttt{pingora-cache} calls \texttt{finish} as soon as the
+  \texttt{write\_body} call that ends the body
+  returns.\footnote{\pgsrc{pingora-proxy/src/proxy_cache.rs}{585}{\texttt{HttpProxy::cache\_http\_task}}
+  calls \texttt{write\_body} with \texttt{end\_stream}
+  (\pgsrc{pingora-proxy/src/proxy_cache.rs}{744}{L744}), then, when it is
+  set, \texttt{finish\_miss\_handler\_best\_effort}
+  (\pgsrc{pingora-proxy/src/proxy_cache.rs}{746}{L746}).} The bound is a
+  percentile rather than a worst case so that a single scheduling delay does
+  not violate it, while still excluding designs that poll the file or batch
+  notifications, whose delays are typically an order of magnitude longer.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
