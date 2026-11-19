@@ -12,7 +12,7 @@
 //! stores whatever `CacheMeta`/`ResponseHeader` it is given, verbatim). So
 //! this TC's obligation on the backend is to round-trip those numeric
 //! fields exactly, and the raw header bytes they were derived from
-//! (`compat_headers.rs`'s concern) alongside them -- both covered here,
+//! (`compat_headers.rs`'s concern) alongside them — both covered here,
 //! directly against `Storage`, no HTTP needed.
 
 use std::time::{Duration, SystemTime};
@@ -32,7 +32,7 @@ struct FreshnessInputs {
     created: SystemTime,
     stale_while_revalidate_sec: u32,
     stale_if_error_sec: u32,
-    /// Raw header text carried alongside -- proves the opaque bytes these
+    /// Raw header text carried alongside — proves the opaque bytes these
     /// numbers were nominally derived from round-trip too, un-normalised.
     raw_headers: &'static [(&'static str, &'static str)],
 }
@@ -165,7 +165,7 @@ fn scenarios() -> Vec<(&'static str, FreshnessInputs)> {
             FreshnessInputs {
                 // The backend never parses Expires itself; an invalid value
                 // is just opaque header bytes to it (compat_headers.rs's
-                // concern) -- freshness here comes from whatever numeric
+                // concern) — freshness here comes from whatever numeric
                 // fields the caller supplied regardless.
                 fresh_until: now + Duration::from_secs(5),
                 created: now,

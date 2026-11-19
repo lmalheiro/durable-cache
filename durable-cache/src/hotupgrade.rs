@@ -67,7 +67,7 @@ pub(crate) struct UpgradeWatcher {
     /// Subscribed when the watcher is built, so no phase announced before
     /// the service starts can be missed. `start` gets only `&self`, so it
     /// reaches the receiver through a lock, which it holds for as long as
-    /// it watches: tokio's, which no panic can poison.
+    /// it watches: Tokio's, which no panic can poison.
     phases: Mutex<broadcast::Receiver<ExecutionPhase>>,
 }
 

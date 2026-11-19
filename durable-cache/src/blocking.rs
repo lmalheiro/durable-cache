@@ -61,9 +61,9 @@ where
 {
     // The pool is the calling runtime's, which Pingora builds from its
     // `ServerConf`: `max_blocking_threads` caps the threads (unset keeps
-    // tokio's 512; once all are busy, further operations queue rather than
+    // Tokio's 512; once all are busy, further operations queue rather than
     // fail) and `blocking_threads_ttl_seconds` sets how long an idle one
-    // lives (unset keeps tokio's 10 s). With `work_stealing` on, a service
+    // lives (unset keeps Tokio's 10 s). With `work_stealing` on, a service
     // shares one pool among its workers; with it off, each worker thread has
     // a pool of its own.
     match tokio::task::spawn_blocking(f).await {

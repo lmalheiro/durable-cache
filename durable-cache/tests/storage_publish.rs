@@ -24,7 +24,7 @@ use super::support;
 // IMP-TC.STORAGE.PUBLISH-02: satisfy TC-STORAGE.PUBLISH-02
 
 /// Step 1: each writer writes its own temporary, named with this process's
-/// writer identity and a distinct counter, and neither's bytes appear in
+/// writer identity and a distinct counter, and the bytes of neither appear in
 /// the other's file.
 #[tokio::test]
 async fn tc_storage_publish_02_concurrent_writers_use_their_own_temporaries() {

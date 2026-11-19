@@ -99,9 +99,8 @@ const STRIPE_DIGITS: usize = 3;
 /// The stripes are packed, eight to a 64-byte cache line, and deliberately
 /// not padded apart. Two keys' stripes share a line only by chance too, 1
 /// in 512, and a lock writes its line only as it is taken and released, so
-/// the line seldom moves between cores. Measured, padding each stripe to a
-/// line of its own gained about 2%, in a synthetic load that took a lock
-/// 335,000 times a second, for eight times the memory.
+/// the line seldom moves between cores. Padding each stripe to a line of
+/// its own would spare even that, at eight times the memory.
 const STRIPES: usize = (RADIX as usize).pow(STRIPE_DIGITS as u32);
 
 // The count the documentation states: a change to the constants above that

@@ -4,9 +4,9 @@
 //! TC-COMPLIANCE.BODY-01 — Body round-trips byte for byte.
 //!
 //! Steps 1-2 (full-read fidelity at boundary sizes, including a restart)
-//! and step 3 (seeked reads, which a published record supports per
+//! and step 3 (reads after a seek, which a published record supports per
 //! SDS-LAYOUT.OBJECTFILE-02) are covered directly against
-//! `Storage::get_miss_handler`/`lookup` -- no HTTP needed.
+//! `Storage::get_miss_handler`/`lookup` — no HTTP needed.
 
 use bytes::Bytes;
 use durable_cache::lookup::CHUNK_SIZE;
@@ -52,7 +52,7 @@ async fn store_and_read_back(cache: &'static FsCache, name: &str, body: &[u8]) -
 }
 
 fn random_body(len: usize, seed: u64) -> Vec<u8> {
-    // A small xorshift PRNG -- deterministic, no extra dev-dependency, and
+    // A small xorshift PRNG — deterministic, no extra dev-dependency, and
     // exercises genuinely non-repeating binary content rather than a
     // pattern that could mask an off-by-one against itself.
     let mut state = seed | 1;
@@ -86,7 +86,7 @@ async fn tc_compliance_body_01_boundary_sizes_round_trip_through_the_pool() {
 }
 
 async fn boundary_sizes_round_trip(cache: &'static FsCache) {
-    // Empty, one byte, either side of a 4 KiB filesystem block boundary,
+    // Empty, one byte, either side of a 4 KiB file-system block boundary,
     // either side of the backend's read-chunk boundary, and a large
     // multi-chunk body.
     let chunk = CHUNK_SIZE as usize;
@@ -137,8 +137,8 @@ async fn tc_compliance_body_01_survives_a_restart() {
     assert_eq!(read, body);
 }
 
-/// Step 3: a published record advertises seek support, and each seeked
-/// read delivers exactly the requested slice, so range responses built from
+/// Step 3: a published record advertises seek support, and each read
+/// after a seek delivers exactly the requested slice, so range responses built from
 /// the reader carry precisely the stored bytes.
 #[tokio::test]
 async fn tc_compliance_body_01_seeked_reads_deliver_exactly_the_requested_slice() {

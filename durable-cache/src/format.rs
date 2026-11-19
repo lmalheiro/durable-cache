@@ -141,7 +141,7 @@ const _: () = {
     assert!(BODY_CRC_OFFSET == 36);
     assert!(HEADER_CRC_OFFSET == 40);
     // No interior or trailing padding: the header is exactly its fields.
-    // Padding would mean bytes that no field owns -- silent dead space in a
+    // Padding would mean bytes that no field owns — silent dead space in a
     // format meant to be exhaustive.
     // Nine u32 fields and one u64, and nothing else.
     assert!(HEADER_LEN == 9 * size_of::<u32>() + size_of::<u64>());

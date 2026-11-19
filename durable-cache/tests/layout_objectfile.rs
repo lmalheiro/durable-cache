@@ -227,7 +227,7 @@ async fn tc_layout_objectfile_01_the_body_check_logs_only_a_whole_mismatched_bod
     assert_eq!(mismatches(), 0, "a sought read is not checked");
 }
 
-/// Step 8: a header whose lengths don't fit is a miss that leaves the file in
+/// Step 8: a header whose lengths do not fit is a miss that leaves the file in
 /// place, even though its CRC verifies: metadata segments that exceed
 /// `meta_capacity`, and a `key_len` that puts the key and the body past the
 /// end of the file. Both are caught before the reader sizes any read by a

@@ -241,7 +241,7 @@ pub fn tempdir() -> tempfile::TempDir {
 
 /// Leaked (intentionally never freed, matching how a real process holds its
 /// one `FsCache` for its whole lifetime) `'static` cache rooted at a fresh
-/// temp dir. Returns the `TempDir` too so it isn't dropped/cleaned up out
+/// temp dir. Returns the `TempDir` too so it is not dropped/cleaned up out
 /// from under the test while `cache` is still in use.
 pub fn leaked_cache() -> (&'static FsCache, tempfile::TempDir) {
     let tmp = tempdir();

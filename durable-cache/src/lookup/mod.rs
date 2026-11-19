@@ -470,8 +470,8 @@ impl FsHitHandler {
             } => loop {
                 // Register for the next notification *before* checking
                 // state, so an append/finish landing in between is never
-                // missed (tokio::sync::Notify's documented pattern:
-                // notified() snapshots the notify_waiters() count at
+                // missed (the documented pattern of `tokio::sync::Notify`:
+                // `notified()` snapshots the `notify_waiters()` count at
                 // creation, not at first poll).
                 let notified = writer.notify.notified();
 
@@ -496,7 +496,7 @@ impl FsHitHandler {
                             // stays valid either way.
                             return Ok(None);
                         }
-                        // valid_len has not caught up with body_len in this
+                        // `valid_len` has not caught up with `body_len` in this
                         // load yet (a benign race right at completion);
                         // loop rather than trust a stale value.
                     }

@@ -93,7 +93,8 @@ async fn tc_storage_reclaim_01_reports_every_class() {
             .filter(|line| fragments.iter().all(|f| line.contains(f.as_str())))
             .count(),
         1,
-        "exactly one summary line must report every class of this scan ({fragments:?}): {summaries:?}"
+        "exactly one summary line must report every class of this scan \
+         ({fragments:?}): {summaries:?}"
     );
 
     let files = |class: &str| {

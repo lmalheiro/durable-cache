@@ -72,8 +72,8 @@ pub fn object_name(hash: HashBinary, user_tag: &str) -> String {
 ///
 /// Every name this backend derives is 32 hex characters, so neither variant
 /// is reachable through this crate's own call paths today. They exist so
-/// that a future caller passing something else -- or a shard constant above
-/// drifting -- surfaces as an ordinary error the backend reports as a cache
+/// that a future caller passing something else — or a shard constant above
+/// drifting — surfaces as an ordinary error the backend reports as a cache
 /// miss, rather than as a panic that would take the hosting proxy down with
 /// it.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]

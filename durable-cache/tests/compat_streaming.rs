@@ -55,7 +55,7 @@ async fn tc_compat_streaming_01_follower_streams_as_leader_writes() {
     let first = follower.read_body().await.unwrap();
     assert_eq!(first, Some(Bytes::from_static(b"chunk1-")));
 
-    // The next read has nothing available yet, so it must wait -- run it on
+    // The next read has nothing available yet, so it must wait — run it on
     // a spawned task and let the leader's next write wake it.
     let read_task = tokio::spawn(async move {
         let second = follower.read_body().await.unwrap();
@@ -74,7 +74,8 @@ async fn tc_compat_streaming_01_follower_streams_as_leader_writes() {
     assert_eq!(second, Some(Bytes::from_static(b"chunk2")));
     assert_eq!(
         third, None,
-        "the reader must remain valid across the concluding rename and terminate as a clean end of body"
+        "the reader must remain valid across the concluding rename and terminate as a \
+         clean end of body"
     );
 
     // No more reads after a clean end of body.
@@ -112,7 +113,7 @@ async fn tc_compat_streaming_01_lookup_resolves_to_the_most_recently_opened_writ
         "lookup must resolve to the most recently opened writer, never an earlier one"
     );
 
-    // Let both writers finish so the test doesn't leave a dangling
+    // Let both writers finish so the test does not leave a dangling
     // in-flight entry behind (last rename wins; either outcome is fine
     // here, only the *lookup* resolution above is under test).
     first_writer.write_body(Bytes::new(), true).await.unwrap();
@@ -293,7 +294,7 @@ async fn tc_compat_streaming_01_multiple_concurrent_followers_see_the_same_write
     writer.finish().await.unwrap();
 
     // Once published, plain repeated lookups are still just complete hits
-    // -- this exercises that concurrent lookups of the same now-published
+    // — this exercises that concurrent lookups of the same now-published
     // key all see the identical, whole object.
     for _ in 0..4 {
         let (_meta, mut hit) = cache.lookup(&key, &trace).await.unwrap().unwrap();

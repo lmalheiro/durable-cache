@@ -78,7 +78,7 @@ async fn tc_compliance_incomplete_01_aborted_store_is_never_served() {
         .await
         .unwrap();
     // Abort: dropped without finish(), simulating an upstream disconnect
-    // (or, for a real process, a crash -- see storage_publish.rs's
+    // (or, for a real process, a crash — see storage_publish.rs's
     // dropped_without_finish test for that guarantee in isolation).
     drop(handler);
 
@@ -176,8 +176,8 @@ async fn tc_compliance_incomplete_01_follower_of_an_aborted_store_gets_an_error(
     let read_task = tokio::spawn(async move { follower.read_body().await });
 
     // Give the follower a moment to catch up and start waiting on the next
-    // chunk before aborting -- not required for correctness (the wakeup
-    // can't be missed either way, see lookup/mod.rs), but it makes this test
+    // chunk before aborting — not required for correctness (the wakeup
+    // cannot be missed either way, see lookup/mod.rs), but it makes this test
     // actually exercise the wakeup-on-abort path instead of a pre-abort read.
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     drop(handler); // abort: no finish() ever called
@@ -206,7 +206,7 @@ async fn tc_compliance_incomplete_01_truncated_record_is_a_miss() {
     let canonical = shard_path(cache.root(), &key.combined()).unwrap();
     let len = std::fs::metadata(&canonical).unwrap().len();
     // Simulate a host crash that left the record's content not durably
-    // complete, out of band -- truncate short of the recorded extent.
+    // complete, out of band — truncate short of the recorded extent.
     let file = std::fs::OpenOptions::new()
         .write(true)
         .open(&canonical)

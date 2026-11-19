@@ -451,7 +451,7 @@ impl Drop for FsMissHandler {
         }
         // "When self is dropped without calling [finish], the storage
         // should consider this write failed" (HandleMiss::finish's own
-        // doc) -- an orderly abort, an upstream failure, a cancellation, a
+        // doc) — an orderly abort, an upstream failure, a cancellation, a
         // write failure, or a same-process panic. The temporary goes with
         // it (FRE-COMPAT.ABORTSPACE-01); a real process crash leaves one
         // behind for FDS-STORAGE.RECLAIM-01's restart-time scan instead.

@@ -4,10 +4,10 @@
 //! TC-COMPLIANCE.HEADERS-01 — Header fields round-trip faithfully.
 //!
 //! Purely a `ResponseHeader` round-trip property, covered directly against
-//! `Storage::get_miss_handler`/`lookup` -- no HTTP needed. `case_header_iter`
-//! is used for comparison rather than `headers` directly: it's the one
-//! accessor pingora_http itself documents as preserving both original case
-//! and, for repeated names, insertion order -- exactly the two properties
+//! `Storage::get_miss_handler`/`lookup` — no HTTP needed. `case_header_iter`
+//! is used for comparison rather than `headers` directly: it is the one
+//! accessor `pingora_http` itself documents as preserving both original case
+//! and, for repeated names, insertion order — exactly the two properties
 //! this TC requires and a case-insensitive/unordered map could silently
 //! paper over.
 
@@ -50,7 +50,7 @@ fn wrap(header: ResponseHeader) -> CacheMeta {
 }
 
 /// `(case-preserved name bytes, value bytes)` pairs in the exact order
-/// `case_header_iter` visits them -- the strongest comparison pingora_http
+/// `case_header_iter` visits them — the strongest comparison `pingora_http`
 /// exposes, per its own doc: case retained, same-name entries in insertion
 /// order.
 fn header_fingerprint(meta: &CacheMeta) -> Vec<(Vec<u8>, Vec<u8>)> {

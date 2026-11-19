@@ -5,12 +5,12 @@
 //!
 //! `pingora-cache` folds the request's `Vary`-named fields into the cache
 //! key's variance *before* ever calling this backend (FRE-COMPLIANCE.VARY-01:
-//! "the backend never sees the request itself") -- so the backend's own
+//! "the backend never sees the request itself") — so the backend's own
 //! obligation is entirely about the key it is actually given: store and
 //! return exactly the object at that key, primary or variant, never
 //! conflating one with another. That's fully exercisable directly against
 //! `Storage` with pre-computed variance-augmented keys, the same technique
-//! `storage_reclaim.rs`'s variant cases already established -- no HTTP
+//! `storage_reclaim.rs`'s variant cases already established — no HTTP
 //! needed.
 
 use bytes::Bytes;

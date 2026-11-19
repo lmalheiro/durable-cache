@@ -178,7 +178,7 @@ pub(crate) async fn recover_until(
                 // The walk is blocking file-system work, and the integrator
                 // may be awaiting it on a runtime that is also serving
                 // traffic (FDS-EVICTION.STARTUP-01 allows exactly that). One
-                // entry -- a header, a key, and a metadata region -- is the
+                // entry — a header, a key, and a metadata region — is the
                 // unit of work between yields, so a scan of a large tree
                 // never holds the worker for more than a single record's
                 // reads (FDS-STORAGE.EXECUTOR-02). Unlike the request path,

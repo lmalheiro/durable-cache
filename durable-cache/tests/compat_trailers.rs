@@ -13,7 +13,7 @@
 //! own implementation.
 //!
 //! Step 2 is conditional on this backend's own on-disk format defining a
-//! trailer section — it doesn't (`format.rs`: header, key, metadata region,
+//! trailer section — it does not (`format.rs`: header, key, metadata region,
 //! then body, nothing after). The test below proves that structurally: a
 //! published record's on-disk length is exactly the body's end offset, with
 //! no further section a trailer could occupy or be confused with.
@@ -55,8 +55,8 @@ async fn tc_compliance_trailers_01_no_section_exists_beyond_the_body() {
          no trailer section, or anything else, follows it"
     );
 
-    // The returned header set is exactly what was stored -- nothing a
-    // trailer could have been folded into appears that wasn't given.
+    // The returned header set is exactly what was stored — nothing a
+    // trailer could have been folded into appears that was not given.
     let (found_meta, mut hit) = cache.lookup(&key, &trace).await.unwrap().unwrap();
     assert_eq!(
         found_meta.response_header().headers.len(),

@@ -3,7 +3,7 @@
 
 //! `Storage::purge` (FDS-STORAGE.PURGE-01): unlink the canonical path of
 //! exactly the presented target — resolved from its key's object name, so
-//! a varianced key purges that variant and a primary key its primary — and
+//! a key with a variance purges that variant and a primary key its primary — and
 //! never any other file. An invalidation also ends the key's stores in
 //! flight, so none of them lands after it (FRE-COMPLIANCE.PURGE-01), and is
 //! answered only once the shard directory has been synchronised, so that
