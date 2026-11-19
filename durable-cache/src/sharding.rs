@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn splits_on_first_four_hex_chars() {
         let root = Path::new("/cache");
-        let path = shard_path(root, "a1b2c3d4e5f6").unwrap();
+        let path = shard_path(root, "a1b2c3d4e5f6").expect("a canonical name has a shard path");
         assert_eq!(path, Path::new("/cache/a1/b2/a1b2c3d4e5f6"));
     }
 
@@ -221,18 +221,24 @@ mod tests {
         ];
         for name in names {
             assert!(is_canonical_name(name), "{name} is shaped like a real name");
-            let index = shard_index(name).unwrap();
+            let index = shard_index(name).expect("a canonical name has a shard index");
             let (first, second) = (index / SECOND_LEVEL_COUNT, index % SECOND_LEVEL_COUNT);
             assert_eq!(
-                shard_dir(root, name).unwrap(),
+                shard_dir(root, name).expect("a canonical name has a shard directory"),
                 root.join(format!("{first:0LEVEL_DIGITS$x}"))
                     .join(format!("{second:0LEVEL_DIGITS$x}")),
                 "{name}"
             );
             assert_eq!(shard_index_of(first, second), index, "{name}");
         }
-        assert_eq!(shard_index(first_name).unwrap(), 0);
-        assert_eq!(shard_index(last_name).unwrap(), SHARD_COUNT - 1);
+        assert_eq!(
+            shard_index(first_name).expect("the first name has a shard index"),
+            0
+        );
+        assert_eq!(
+            shard_index(last_name).expect("the last name has a shard index"),
+            SHARD_COUNT - 1
+        );
     }
 
     /// A name whose first four characters are missing or not hex is an

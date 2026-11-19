@@ -372,8 +372,8 @@ mod tests {
     }
 
     fn file_with(bytes: &[u8]) -> File {
-        let mut f = tempfile::tempfile().unwrap();
-        f.write_all(bytes).unwrap();
+        let mut f = tempfile::tempfile().expect("a temporary file");
+        f.write_all(bytes).expect("the record is written");
         f
     }
 
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn valid_record_passes() {
-        let parsed = read(&record_bytes(), Some(b"key")).unwrap();
+        let parsed = read(&record_bytes(), Some(b"key")).expect("a valid record reads");
         assert_eq!(parsed.internal_bytes, b"intl");
         assert_eq!(parsed.header_bytes, b"heads");
     }
@@ -475,7 +475,8 @@ mod tests {
     fn in_flight_record_skips_length_check() {
         let bytes = record_bytes();
         let file = file_with(&bytes[..bytes.len() - 4]);
-        read_record_once(&file, RecordKind::InFlight, None).unwrap();
+        read_record_once(&file, RecordKind::InFlight, None)
+            .expect("an in-flight record reads without its body length");
     }
 
     /// The record with the header field at `offset` overwritten by `value`'s
