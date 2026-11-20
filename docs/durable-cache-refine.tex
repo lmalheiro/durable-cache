@@ -1996,6 +1996,8 @@
       version floor above what Pingora itself requires, and a second I/O path
       to keep correct --- machinery \reqref{HLR-SCOPE.V1-02} asks not to build
       when a pool that ships with the runtime already closes the gap.
+      \reqref{ADR-STORAGE.IOURING-01} has since adopted it for the writes
+      of stores, where a burst of stores showed the gap the pool leaves.
   \end{itemize}
   Appendix~\ref{app:executor} records an investigation left to a later
   version: running the file I/O on the workers instead, \texttt{io\_uring},
@@ -2018,6 +2020,8 @@
       the handoff that publishes it, and
       \reqref{ADR-STORAGE.INLINEWRITES-01} runs most operations of
       unsynchronised stores on the workers, in a bounded number of slots.
+      On Linux again, \reqref{ADR-STORAGE.IOURING-01} writes most of a large
+      store's body through an \texttt{io\_uring} ring, with no handoff.
     \item[--] The blocking pool is shared with everything else in the process
       that uses it, and its size is the runtime's to decide, not this
       backend's.
@@ -2082,7 +2086,10 @@
   body, when no call has to wait for the device. On any system,
   \reqref{FDS-STORAGE.INLINEWRITES-01} runs an unsynchronised store's
   opening, chunk writes and finish on the worker when an inline slot is
-  free.
+  free. On Linux, \reqref{FDS-STORAGE.IOURING-01} writes on an
+  \texttt{io\_uring} ring, rather than here, the body chunks that end past a
+  store's first 64~KiB: the task awaits them, and its thread drives other
+  tasks meanwhile.
 
   \textbf{What stays.} Work that touches no file stays on the worker, because
   a handoff would cost more than it saves: hashing the cache key, serialising
@@ -2419,6 +2426,10 @@
   partial-hit reader is woken as soon as the chunk is written, before the
   store is synchronised (\reqref{FDS-STORAGE.PARTIAL-02}). Every store does
   so, with one handoff fewer: three for a 4~KiB body. No option selects it.
+  With the \texttt{io\_uring} ring of \reqref{ADR-STORAGE.IOURING-01} on, a
+  last chunk that ends past the body's first 64~KiB is written on the ring
+  instead, as \texttt{finish} begins, and still before the header is
+  patched.
 
   Under \reqref{HLR-SCOPE.V1-02} the two alternatives tie: writing the last
   chunk in \texttt{finish} builds no component, public interface, background
@@ -2528,7 +2539,9 @@
   while the discard after a host restart is on, since it may have to write
   and synchronise the marker (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}). A
   configuration option sets $K$, 3 by default; 0 keeps every operation on
-  the pool.
+  the pool. With the \texttt{io\_uring} ring of
+  \reqref{ADR-STORAGE.IOURING-01} on, a body chunk that ends past the
+  first 64~KiB of its store's body takes no slot: it goes on the ring.
 
   Under \reqref{HLR-SCOPE.V1-02} this takes the exception: the mechanism it
   adds --- an option, and a second place where a store's file work runs ---
@@ -2555,8 +2568,10 @@
     \item \emph{Two slots by default}: a gentler burst, but a gain below the
       bar \reqref{HLR-SCOPE.V1-02} sets for an added mechanism.
     \item \emph{Non-blocking writes} (\texttt{RWF\_NOWAIT}), which XFS
-      accepts and ext4 refuses, and \emph{\texttt{io\_uring}}: left to
-      decisions of their own (Appendix~\ref{app:executor-directions}).
+      accepts and ext4 refuses, and \emph{\texttt{io\_uring}}
+      (Appendix~\ref{app:executor-directions}): weighed in
+      \reqref{ADR-STORAGE.IOURING-01}, which adopts the second for the
+      writes past a store's first 64~KiB.
   \end{itemize}
 
   \textbf{Consequences:}
@@ -2570,11 +2585,14 @@
       4~seconds --- hits fell by 13\,\% on ext4 and 25\,\% on XFS, and
       their 99th percentile rose from 8.8 to 9.6~ms and from 8.1 to 11.9~ms;
       nginx, whose workers write the bodies themselves, stood at about
-      30~ms.
+      30~ms. With the ring of \reqref{ADR-STORAGE.IOURING-01} on, a slot
+      writes no more than a store's first 64~KiB, and hits keep within the
+      bound of \reqref{HLR-PERFORMANCE.BURSTHITS-01}.
     \item[--] It needs more than one worker: on Pingora's default of one,
       or with work stealing off, nothing changes.
     \item[--] A store's file work runs in two places, the pool and the
-      workers, which must stay equivalent. The test cases of
+      workers, and in a third, the ring of \reqref{ADR-STORAGE.IOURING-01},
+      where it is on, which must stay equivalent. The test cases of
       \reqref{FDS-STORAGE.EXECUTOR-04} run on one worker, where no slot is
       taken; \reqref{TC-STORAGE.INLINEWRITES-01} tests the slots.
     \item[--] \reqref{TC-COMPLIANCE.RFC-02} runs its differential a second
@@ -2612,6 +2630,9 @@
   runtime at each operation, so that a runtime of one worker, or a runtime
   per worker as Pingora builds with work stealing off, takes no slot; the
   backend logs, once, that it uses fewer slots than the configuration asks.
+  With the \texttt{io\_uring} ring on (\reqref{FDS-STORAGE.IOURING-01}), a
+  body chunk that ends past the first 64~KiB of its store's body takes no
+  slot: it goes on the ring.
   A slot stays taken for as long as its operation's system calls run, a
   wait in the kernel's write-back throttle, or for a lock, included: at most
   the slots, and never every worker, are held at once.
@@ -2637,6 +2658,213 @@
   \trace{FDS-STORAGE.EXECUTOR-04}
   \trace{FDS-STORAGE.PUBLISH-03}
   \trace{FDS-PERSISTENCE.CRASHDISCARD-01}
+\end{requirement}
+
+\begin{requirement}{ADR-STORAGE.IOURING-01}[draft][designConstraint]{Large-store writes on the ring}
+
+  \localreqdiagram*{adriouring01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{HLR-PERFORMANCE.BURSTHITS-01} bounds the
+  latency of hits while the cache stores new objects in a burst, and the
+  executor this version had misses the bound. Measured on 20~November~2026
+  with the benchmark of \reqref{TC-PERFORMANCE.BURSTHITS-01}, on four
+  workers and four processors, with every file operation of a store on the
+  blocking pool (\reqref{ADR-STORAGE.EXECUTOR-04}) or in inline slots
+  (\reqref{ADR-STORAGE.INLINEWRITES-01}), the hits' 99th percentile during
+  a burst of 1~MiB stores was 3.0 to 3.8 times its value without them when
+  stores were unsynchronised, and 2.2 to 2.4 times when each waited for the
+  device. The stores and the hits share the proxy's processors, and the
+  four were busy throughout: a store on the pool pays a handoff for every
+  chunk (Appendix~\ref{app:executor-cost}), and one in a slot holds its
+  worker, with the hits that worker would poll, while the kernel takes its
+  data. Appendix~\ref{app:executor-iouring} describes how
+  \texttt{io\_uring} runs such writes with neither: the kernel takes a
+  buffered write without blocking where it can, as on XFS, and hands it to
+  threads of its own where it cannot, as on ext4.
+
+  \textbf{Decision:} On Linux, the backend sets up one \texttt{io\_uring}
+  ring as it is constructed, through the \texttt{io-uring} crate, and writes
+  on it every body chunk that ends past the first 64~KiB of its store's
+  body, whatever the store's durability. Every other write --- the first
+  64~KiB, the header, a synchronised store's \texttt{fdatasync} --- and the
+  creation of the temporary and its rename stay where
+  \reqref{ADR-STORAGE.EXECUTOR-04} and \reqref{ADR-STORAGE.INLINEWRITES-01}
+  put them, so a store of up to 64~KiB writes as before: the fills of
+  \reqref{TC-PERFORMANCE.STORERATE-01} keep what the slots gave them, and a
+  synchronised store keeps its \texttt{fdatasync} on the pool, which runs
+  as many as wait, while most of a burst's bytes stay off the workers and
+  the pool. A task on the Tokio runtime that makes the first write collects
+  the ring's completions, through that runtime's reactor, and wakes the tasks
+  that wait for them; should that runtime shut down, the next write polled
+  starts the task again on its own. A configuration option, on by
+  default, chooses the ring, on the architectures the crate builds for:
+  construction fails, naming it, where the kernel refuses
+  \texttt{io\_uring}, and with it off, stores write as before.
+
+  Under \reqref{HLR-SCOPE.V1-02} this takes the exception: the mechanisms it
+  adds --- a dependency, the ring with its table of writes in flight, the
+  task that collects its completions, and an option ---
+  lowered the hits' 99th percentile during the burst that
+  \reqref{TC-PERFORMANCE.BURSTHITS-01} measures, for unsynchronised stores,
+  from 7.2~ms to 3.4--4.1~ms on XFS, and from 9.0~ms to 3.3--3.4~ms on
+  ext4: by 43 to 63\,\%. For synchronised stores it went from 5.3~ms to
+  4.5~ms on XFS, and from 5.7~ms to 4.5~ms on ext4: by 15 to 21\,\%. Hits
+  alone had 2.3 to 2.4~ms. They were measured as that test case sets out,
+  the proxy's processors at the same clock during the burst and alone, in
+  two runs of three rounds with the ring and one without.
+
+  \textbf{Alternatives considered:} They were measured on 19 and
+  20~November~2026 with prototypes, each burst run alone, with the whole
+  benchmark in one control group limited to 2~GiB.
+  \begin{itemize}
+    \item \emph{The pool and the slots as they are}: no new mechanism, but
+      they miss the bound by the figures above.
+    \item \emph{Every write on the ring}: the same burst figures, but the
+      4~KiB and 64~KiB fills lose most of what the slots gained, falling by
+      11 to 16\,\%, from 10{,}350--10{,}400 and 8{,}660--8{,}830 stores a
+      second to 8{,}750--9{,}180 and 7{,}370--7{,}670.
+    \item \emph{Writes on the worker with \texttt{RWF\_NOWAIT}}
+      (Appendix~\ref{app:executor-nowait-writes}), where the file system
+      takes it, as XFS does, and on the ring for what would wait: in place
+      of the slots for the first 64~KiB, its burst figures came within
+      6\,\% of theirs and its fills level with them, below the bar
+      \reqref{HLR-SCOPE.V1-02} sets for a second path that ext4 refuses.
+    \item \emph{Chunks of 64~KiB or more on the ring, whatever their place
+      in the body}: the same figures as the decision, but only because
+      Pingora's HTTP/1 client reads bodies 64~KiB at a time; the decision
+      bounds what a store writes on the workers however its body arrives.
+    \item \emph{A synchronised store's every write and its
+      \texttt{fdatasync} on the ring}: its fills of 4~KiB and 64~KiB ran 8
+      to 17\,\% below the pool's. The kernel runs at most 32 of the ring's
+      waits on files at once for each thread that submits them; with that
+      cap raised to 512, XFS came back within 5\,\%, on about 2{,}100
+      threads, and ext4 stayed 10 to 16\,\% below.
+    \item \emph{A synchronised store's every chunk on the ring, its
+      \texttt{fdatasync} on the pool}: within 4\,\% of the pool on XFS,
+      but its fills of 4~KiB and 64~KiB ran 7 to 9\,\% below on ext4, which
+      hands every buffered write on the ring to its threads. With the
+      decision, those stores do not touch the ring.
+    \item \emph{The reads that miss the page cache on the ring}: no gain
+      measured on cold reads, within 2\,\% of the pool.
+    \item \emph{A thread of the backend's own to collect the completions}:
+      it outlives any runtime, but every completion then wakes its task from
+      outside the runtime, on the processors the server's workers use. In
+      the burst, it held hits to 26{,}000--28{,}000 a second at a 99th
+      percentile of
+      7.1--7.4~ms, where the task gave 36{,}000--39{,}000 at 3.3--3.6~ms. The
+      task restarts instead: Pingora stops its services' runtimes one at a
+      time, and the stores of the others go on.
+    \item \emph{\texttt{tokio-uring}, or Tokio's own support}: rejected as
+      Appendix~\ref{app:executor-iouring} explains --- a runtime of its own,
+      or a build option for the integrator, and no positional writes.
+  \end{itemize}
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] Hits keep their latency while a burst of stores runs: 1.4 to
+      1.9 times their 99th percentile alone in the runs above, against 2.2 to
+      3.8 times without the ring.
+    \item[+] Most writes of a large store make no handoff and hold no
+      worker; a store of up to 64~KiB writes as before.
+    \item[--] Linux only, on the architectures the \texttt{io-uring} crate
+      builds for (x86-64, AArch64, RISC-V, LoongArch and POWER, all 64-bit),
+      and only where the process may use \texttt{io\_uring}: Docker's
+      default seccomp profile blocks it since Docker~25, and the
+      \texttt{kernel.io\_uring\_disabled} setting can disable it for a
+      whole host. There construction fails until the integrator allows it or
+      switches the option off, which the README tells.
+    \item[--] A new dependency, with \texttt{unsafe} code at its core: the
+      kernel reads a write's buffer after the call that submits it returns,
+      so the backend keeps each buffer and file until the kernel has
+      completed the operation, and dropping the backend waits for it.
+    \item[--] One runtime collects every completion. With work stealing
+      off, where Pingora runs a runtime per worker, that is one worker's,
+      which then wakes the other workers' tasks.
+    \item[--] Stores of 1~MiB, which no test case bounds, fill 13 to 15\,\%
+      slower than without the ring when unsynchronised, and 10 to 17\,\%
+      slower when synchronised.
+    \item[--] An unsynchronised store's first 64~KiB, its opening and its
+      finish still write in inline slots, on the workers. Once the proxy's
+      dirty data reaches the limit the kernel sets for it, the kernel
+      pauses every thread that writes more, a worker among them, and with
+      it the hits that worker would poll. In the burst of
+      \reqref{TC-PERFORMANCE.BURSTHITS-01}, that kept the workers waiting up
+      to 43\,\% of the time in some rounds, with the hits' 99th percentile
+      still within the bound at the processors' full clock.
+    \item[--] A store's writes run in a third place, beside the pool and the
+      slots: \reqref{TC-STORAGE.IOURING-01} tests the ring, and the other
+      test cases run with it on, as the default is.
+  \end{itemize}
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{refine}{FDS-STORAGE.IOURING-01}{Specify the ring's setup and
+  the option, which writes go on it, how completions are collected, who
+  owns a buffer while its write is in flight, and how a failed write fails
+  the store.}
+
+  \refine{ADR-STORAGE.EXECUTOR-04}
+  \satisfy{HLR-PERFORMANCE.BURSTHITS-01}
+  \trace{ADR-STORAGE.INLINEWRITES-01}
+  \trace{HLR-SCOPE.V1-02}
+\end{requirement}
+
+\begin{requirement}{FDS-STORAGE.IOURING-01}[draft][functionalRequirement]{Store writes on the ring}
+
+  \localreqdiagram*{fdsiouring01}{\reqid}{\reqdesc}
+
+  \textbf{The ring.} WHERE the configuration asks for it
+  (\texttt{FsCacheConfig::with\_io\_uring}, on by default, on Linux on the
+  architectures the \texttt{io-uring} crate builds for), the backend shall
+  set up one \texttt{io\_uring} ring as it is constructed, and fail its
+  construction, with an error naming the option, where the kernel refuses
+  the ring or lacks its write operation.
+
+  \textbf{What goes on it.} The backend shall write on the ring every body
+  chunk that ends past the first 64~KiB of its store's body, whatever the
+  store's durability. A last chunk that does is written as \texttt{finish}
+  begins, and made readable at once (\reqref{FDS-STORAGE.PARTIAL-02}). The
+  rest of a store --- its other chunks, creating its temporary and writing
+  its fixed part, the header, a synchronised store's \texttt{fdatasync},
+  the rename --- runs as \reqref{FDS-STORAGE.EXECUTOR-04},
+  \reqref{FDS-STORAGE.INLINEWRITES-01} and \reqref{FDS-STORAGE.PUBLISH-03}
+  specify, and so does every write with the option off, or where it does not
+  exist.
+
+  \textbf{Completions.} A task on the Tokio runtime that makes the ring's
+  first write shall collect the completions the ring signals, through that
+  runtime's reactor, and wake the task waiting for each. It starts with that
+  write, not at construction, which may precede the fork of a server that
+  daemonises. IF the runtime that runs it shuts down, THEN the backend shall
+  wake every write still waiting, so that the next one polled starts the
+  task again on its own runtime.
+
+  \textbf{Buffers.} A write shall own its buffer and its file until the
+  kernel completes it. A store dropped with a write in flight leaves both to
+  the completion task, which frees them once the kernel is done, and the
+  store's drop removes its temporary as before
+  (\reqref{FRE-COMPAT.ABORTSPACE-01}). Dropping the backend shall wait for
+  the kernel to complete the writes still in flight.
+
+  \textbf{Errors.} A write the kernel completes in part shall be submitted
+  again for the rest; a write that fails shall fail the store
+  (\reqref{FRE-COMPAT.WRITEFAIL-01}).
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqcover{satisfy}{IMP}
+  \reqexpect{verify}{TC-STORAGE.IOURING-01}{Verify that a store's chunks
+  past its first 64~KiB go on the ring, whatever its durability, and its
+  other writes as without the ring; that a write the kernel fails on the
+  ring fails the store; that a store dropped with a write in flight leaves
+  nothing behind; and that construction fails, naming the option, where the
+  ring cannot be set up.}
+
+  \refine{ADR-STORAGE.IOURING-01}
+  \trace{FDS-STORAGE.EXECUTOR-04}
+  \trace{FDS-STORAGE.INLINEWRITES-01}
+  \trace{FDS-STORAGE.PUBLISH-03}
+  \trace{FRE-COMPAT.WRITEFAIL-01}
 \end{requirement}
 
 \begin{requirement}{ADR-STORAGE.RECLAIM-01}[draft][designConstraint]{Reclaim via the restart-time scan}

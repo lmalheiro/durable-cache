@@ -18,8 +18,8 @@
   a throughput or lowers a latency, as measured on the host and under the
   conditions the performance test case sets
   (\reqref{TC-PERFORMANCE.LOOKUP-01}, \reqref{TC-PERFORMANCE.HITRATE-01},
-  \reqref{TC-PERFORMANCE.STORERATE-01}); a gain no such test case measures,
-  or one below 20\,\%, does not count.
+  \reqref{TC-PERFORMANCE.STORERATE-01}, \reqref{TC-PERFORMANCE.BURSTHITS-01});
+  a gain no such test case measures, or one below 20\,\%, does not count.
 
   The requirement is verified by inspection --- each architecture decision
   record's \emph{Alternatives considered} section states what an alternative
@@ -230,6 +230,46 @@
   with the benchmark of \reqref{TC-PERFORMANCE.STORERATE-01}, on a consumer
   SSD: stores ran at 15--16\,\% of \texttt{MemCache} when each waited for the
   device, and at 46--49\,\% when none did.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqcover{satisfy}{ADR}
+  \reqcover{verify}{TC}
+\end{requirement}
+
+\begin{requirement}{HLR-PERFORMANCE.BURSTHITS-01}[draft][stakeholderRequirement]{Hits during a burst of stores}
+
+  \localreqdiagram*{hlr11}{\reqid}{\reqdesc}
+
+  WHILE it stores new objects of 1~MiB over 16 concurrent connections, each
+  sending its next request as soon as its last one completes, the cache
+  shall serve cache hits on objects resident in the host's memory with a
+  99th-percentile latency of at most twice the 99th-percentile latency of
+  the same hits with no store in progress, on the same host under the same
+  load.
+
+  A cache fills in bursts --- when it starts empty, after a purge, when a
+  large object turns popular --- and serves hits all the while. The stores
+  then share the proxy's processors and the host's storage device with the
+  hits: each store copies its body into the operating system's page cache,
+  which writes it to the device in the background and holds back the
+  writers whose data outruns the device. The bound lets a hit pay for that
+  sharing, but not wait behind the stores. It holds whatever the configured
+  durability: a store that waits for the device
+  (\reqref{HLR-PERSISTENCE.CRASHSAFE-02}) leaves less data waiting to be
+  written, but its waits fall on the same processors. A store request is as
+  \reqref{HLR-PERFORMANCE.STORERATE-01} defines it, and the same load as
+  \reqref{HLR-PERFORMANCE.HITRATE-01} does.
+
+  The factor of 2 is proposed from measurements made on 20~November~2026
+  with the benchmark of \reqref{TC-PERFORMANCE.BURSTHITS-01}, on a consumer
+  SSD under ext4 and XFS. With each store's file work on the blocking pool
+  or in inline slots (\reqref{ADR-STORAGE.INLINEWRITES-01}), the hits' 99th
+  percentile during the stores was 3.0 to 3.8 times its value without them
+  when stores were unsynchronised, and 2.2 to 2.4 times when each waited for
+  the device. With the writes past each store's first 64~KiB on an
+  \texttt{io\_uring} ring (\reqref{ADR-STORAGE.IOURING-01}), it was 1.4 to
+  1.7 and 1.9 times.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
