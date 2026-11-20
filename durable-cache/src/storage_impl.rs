@@ -58,7 +58,7 @@ pub struct FsCache {
     #[cfg(target_os = "linux")]
     pub(crate) page_cache_reads: Option<crate::nowait::PageCacheReads>,
     /// The inline slots: how many operations of unsynchronised stores run
-    /// on the async workers at once (ADR-STORAGE.INLINEWRITES-01).
+    /// on the async workers at once (ADR-STORAGE.INLINEWRITES-02).
     pub(crate) inline_slots: crate::blocking::InlineSlots,
     /// The test hooks of this instance: an empty stand-in outside the
     /// crate's own test build (see `crate::hooks`).
@@ -242,7 +242,7 @@ impl FsCache {
 
     /// Whether a store's operations may run in an inline slot, on the worker
     /// that polls them: those of an unsynchronised store, which wait for no
-    /// device by nature (ADR-STORAGE.INLINEWRITES-01). A match, so that a
+    /// device by nature (ADR-STORAGE.INLINEWRITES-02). A match, so that a
     /// durability mode added later must say here whether its stores may.
     pub(crate) fn store_ops_may_run_inline(&self) -> bool {
         match self.config.durability() {
@@ -332,9 +332,9 @@ impl Storage for FsCache {
     ) -> Result<MissHandler> {
         // Hash the key and serialise the metadata here (pure CPU), then let
         // the blocking pool create the temporary and write the record's
-        // fixed part (FDS-STORAGE.EXECUTOR-04), or, for an unsynchronised
+        // fixed part (FDS-STORAGE.EXECUTOR-05), or, for an unsynchronised
         // store, this worker if an inline slot is free
-        // (ADR-STORAGE.INLINEWRITES-01).
+        // (ADR-STORAGE.INLINEWRITES-02).
         let prepared = crate::miss::FsMissHandler::prepare(self, key, meta)?;
         crate::blocking::run_store_op(self, self.store_ops_may_run_inline(), move |_| {
             crate::miss::FsMissHandler::open(self, prepared)
@@ -359,7 +359,7 @@ impl Storage for FsCache {
         //
         // The target is resolved here because it borrows the caller's key;
         // the unlink and any `fsync` behind it go to the blocking pool
-        // (FDS-STORAGE.EXECUTOR-04).
+        // (FDS-STORAGE.EXECUTOR-05).
         let Some(key) = crate::purge::resolve(target) else {
             return Ok(PurgeOutcome::NotFound);
         };
@@ -390,7 +390,7 @@ impl Storage for FsCache {
         _trace: &SpanHandle,
     ) -> Result<bool> {
         // Serialising the new metadata is CPU work and stays here; reading
-        // the record and writing it back does not (FDS-STORAGE.EXECUTOR-04).
+        // the record and writing it back does not (FDS-STORAGE.EXECUTOR-05).
         let prepared = crate::metaupdate::prepare(self, key, meta)?;
         crate::blocking::run(move || crate::metaupdate::update_meta(self, prepared)).await
     }

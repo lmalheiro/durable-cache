@@ -11,7 +11,7 @@ This appendix expands the alternatives weighed by
 \reqref{ADR-PERSISTENCE.MECHANISM-01}: how each design organises bytes on
 disk, what storing a streamed HTTP response looks like in it, and why it
 lost to the plain file system for a first version
-(\reqref{HLR-SCOPE.V1-02}).
+(\reqref{HLR-SCOPE.V1-03}).
 
 \section{Raw Device / Cyclone Store: Apache Traffic Server}
 \label{app:alt-ats}
@@ -56,7 +56,7 @@ release notes}: the rock slot size defaults to, and is at most, 32\,KB, with
 ``new support for larger than 32KB objects in both rock type cache and
 shared memory cache.''} Rebuilding machinery of either class from scratch is
 the largest bespoke surface among the alternatives
-(\reqref{HLR-SCOPE.V1-02}).
+(\reqref{HLR-SCOPE.V1-03}).
 
 \section{Embeddable Cache Engine: Meta's CacheLib}
 \label{app:alt-cachelib}

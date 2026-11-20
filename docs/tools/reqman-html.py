@@ -60,7 +60,7 @@ def _load_reqman():
 
 REQMAN = _load_reqman()
 
-# Artifact-ID shape, e.g. FDS-STORAGE.EXECUTOR-04. Used both to link
+# Artifact-ID shape, e.g. FDS-STORAGE.EXECUTOR-05. Used both to link
 # cross-references and to recognise a requirement's own heading.
 ID_RE = re.compile(r"\b([A-Z]{2,4}-[A-Z0-9]+(?:\.[A-Z0-9]+)?-\d{2})\b")
 

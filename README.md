@@ -109,7 +109,7 @@ identical path.
 
 **Threads.** Every storage operation is a blocking syscall, so the backend
 runs each one on tokio's blocking pool rather than on the worker Pingora
-polls it from (ADR-STORAGE.EXECUTOR-04). That matters because
+polls it from (ADR-STORAGE.EXECUTOR-05). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
 or a page-cache miss. On Linux, hits are the exception when what they read
@@ -203,7 +203,7 @@ data passes the kernel's limit, the kernel throttles writers, for up to
 runtime's workers less one write at once: on Pingora's default of one worker
 (`ServerConf::threads`), or with `work_stealing` off, none do. With the
 discard after a host restart on, publication stays on the pool, since it may
-have to write the marker (ADR-STORAGE.INLINEWRITES-01).
+have to write the marker (ADR-STORAGE.INLINEWRITES-02).
 
 **Features.** `body-crc` (on by default) computes each body's CRC-32C as it
 is stored and records it in the header; without it (`default-features =

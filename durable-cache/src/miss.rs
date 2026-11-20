@@ -76,7 +76,7 @@ pub struct FsMissHandler {
     body_written: u64,
     /// The last body chunk, which `write_body` received with `eof` set and
     /// kept for `finish` to write, in the handoff that publishes the store
-    /// (ADR-STORAGE.LASTCHUNK-01). The only body bytes the store holds
+    /// (ADR-STORAGE.LASTCHUNK-02). The only body bytes the store holds
     /// beyond a `write_body` call; its CRC-32C is already folded in.
     last_chunk: Option<Bytes>,
     writer: Arc<InFlightWriter>,
@@ -99,7 +99,7 @@ impl FsMissHandler {
     /// The CPU-only half of opening a store for `key`: hashing the key and
     /// serialising the metadata. Split out so the borrowed
     /// `CacheKey`/`CacheMeta` stay on the caller's side and only owned bytes
-    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-04).
+    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-05).
     pub(crate) fn prepare(
         cache: &'static FsCache,
         key: &CacheKey,
@@ -195,7 +195,7 @@ impl FsMissHandler {
     /// Close the published record's handle on the worker that finished the
     /// store, unless the record has lost its name since, as when a purge
     /// removed it: its close would then free its storage, so it goes to the
-    /// pool (FDS-STORAGE.EXECUTOR-04).
+    /// pool (FDS-STORAGE.EXECUTOR-05).
     fn close_published_file(&mut self) {
         let Some(file) = self.file.take().and_then(|f| Arc::try_unwrap(f).ok()) else {
             return;
@@ -240,7 +240,7 @@ impl FsMissHandler {
     }
 
     /// Write the last body chunk, if `write_body` kept it for `finish`
-    /// (ADR-STORAGE.LASTCHUNK-01), and make it readable at once: a reader
+    /// (ADR-STORAGE.LASTCHUNK-02), and make it readable at once: a reader
     /// streaming the store from its partial hit is woken here, before the
     /// store is synchronised (FDS-STORAGE.PARTIAL-02).
     fn write_last_chunk(&mut self) -> Result<()> {
@@ -268,7 +268,7 @@ impl FsMissHandler {
     /// Write the last chunk if it was kept, patch the header, synchronise,
     /// and publish. Returns the record size: the published file's full
     /// length (FRE-COMPAT.EVICTION-01). `on_worker` says where it runs: on
-    /// an async worker, in an inline slot (ADR-STORAGE.INLINEWRITES-01), or
+    /// an async worker, in an inline slot (ADR-STORAGE.INLINEWRITES-02), or
     /// on the blocking pool.
     fn finish_inner(&mut self, on_worker: bool) -> Result<u64> {
         if self.failed {
@@ -443,7 +443,7 @@ impl HandleMiss for FsMissHandler {
         }
         // Folding the chunk into the running checksum is pure CPU, so it
         // stays here; the write behind it is a syscall and does not
-        // (FDS-STORAGE.EXECUTOR-04).
+        // (FDS-STORAGE.EXECUTOR-05).
         #[cfg(feature = "body-crc")]
         {
             self.body_crc = crc32c::crc32c_append(self.body_crc, &data);
@@ -451,7 +451,7 @@ impl HandleMiss for FsMissHandler {
         if eof {
             // The last chunk: `finish`, which `pingora-cache` calls next,
             // writes it in the handoff that publishes the store, rather
-            // than this call in one of its own (ADR-STORAGE.LASTCHUNK-01).
+            // than this call in one of its own (ADR-STORAGE.LASTCHUNK-02).
             self.last_chunk = Some(data);
             return Ok(());
         }
@@ -492,7 +492,7 @@ impl HandleMiss for FsMissHandler {
         // the header, `fdatasync`s unless the configured durability skips
         // it, and renames: up to four syscalls, one of them a flush that can
         // take milliseconds on a real device. So the whole handler moves to
-        // the blocking pool (FDS-STORAGE.EXECUTOR-04), and is dropped there
+        // the blocking pool (FDS-STORAGE.EXECUTOR-05), and is dropped there
         // as the closure ends, whether the store published or failed. A
         // failed store's `Drop` aborts it and removes its temporary
         // (FRE-COMPAT.ABORTSPACE-01). A published store's closes its handle
@@ -501,7 +501,7 @@ impl HandleMiss for FsMissHandler {
         // must not stall an async worker.
         //
         // An unsynchronised store does all this on this worker instead, if
-        // an inline slot is free (ADR-STORAGE.INLINEWRITES-01), but not with
+        // an inline slot is free (ADR-STORAGE.INLINEWRITES-02), but not with
         // the discard after a host restart on, which may have to write and
         // synchronise the marker. It then closes its record as a hit does:
         // here, unless the record lost its name meanwhile.
@@ -553,7 +553,7 @@ impl Drop for FsMissHandler {
         // for FDS-STORAGE.RECLAIM-01's restart-time scan instead.
         if !self.finished {
             // One of the two syscalls this backend still makes on the
-            // caller's thread (FDS-STORAGE.EXECUTOR-04). `Drop` cannot
+            // caller's thread (FDS-STORAGE.EXECUTOR-05). `Drop` cannot
             // await, and the temporary's name must be gone when the drop
             // returns (FRE-COMPAT.ABORTSPACE-01). The unlink is cheap: this
             // handler still has the file open, so it removes only the name.

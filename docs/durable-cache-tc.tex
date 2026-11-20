@@ -70,7 +70,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
     \item Repeat steps 1 to 3 with both proxies on four workers and the
       file-system backend's stores unsynchronised, so that it runs some of
       its stores' operations on the workers, in inline slots
-      (\reqref{FDS-STORAGE.INLINEWRITES-01}).
+      (\reqref{FDS-STORAGE.INLINEWRITES-02}).
   \end{enumerate}
 
   \textbf{Expected result:} In both comparisons, no test has a reproducibly
@@ -1128,7 +1128,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   in memory than one chunk, as \reqref{FRE-COMPAT.UNSIZED-02} requires:
   every chunk but the last is in the store's temporary before its
   \texttt{write\_body} call returns, and the last one, which the backend
-  keeps for \texttt{finish} (\reqref{ADR-STORAGE.LASTCHUNK-01}), once
+  keeps for \texttt{finish} (\reqref{ADR-STORAGE.LASTCHUNK-02}), once
   \texttt{finish} returns.
 
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
@@ -1676,7 +1676,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqcover{satisfy}{IMP}
 
-  \verify{FDS-STORAGE.EXECUTOR-04}
+  \verify{FDS-STORAGE.EXECUTOR-05}
 \end{requirement}
 
 \begin{requirement}{TC-STORAGE.PAGECACHE-01}[draft][verify]{Page-cache reads on the worker}
@@ -1727,7 +1727,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   knows its path to be missing, and the damaged record's is reached through
   the pool's locked re-read. In step 5 every lookup is handed
   over once, and so is every chunk the lookup's first read did not already
-  hold, as \reqref{FDS-STORAGE.EXECUTOR-04} specifies. In step 6 neither the
+  hold, as \reqref{FDS-STORAGE.EXECUTOR-05} specifies. In step 6 neither the
   partial hit's lookup nor its read is handed over. In step 7 each operation
   fails with an error naming the file and the option that asked for the
   call, none is handed to the pool, and a file opened before the failing
@@ -1743,7 +1743,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \verify{FDS-STORAGE.PAGECACHE-01}
 \end{requirement}
 
-\begin{requirement}{TC-STORAGE.INLINEWRITES-01}[draft][verify]{Writes in inline slots}
+\begin{requirement}{TC-STORAGE.INLINEWRITES-02}[draft][verify]{Writes in inline slots}
 
   \localreqdiagram*{tcinlinewrites01}{\reqid}{\reqdesc}
 
@@ -1788,7 +1788,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqcover{satisfy}{IMP}
 
-  \verify{FDS-STORAGE.INLINEWRITES-01}
+  \verify{FDS-STORAGE.INLINEWRITES-02}
 \end{requirement}
 
 \begin{requirement}{TC-STORAGE.IOURING-01}[draft][verify]{Store writes on the ring}

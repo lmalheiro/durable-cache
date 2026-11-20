@@ -1,4 +1,4 @@
-\begin{requirement}{HLR-SCOPE.V1-02}[draft][stakeholderRequirement]{Fewest mechanisms, measured gains}
+\begin{requirement}{HLR-SCOPE.V1-03}[draft][stakeholderRequirement]{Fewest mechanisms, measured gains}
 
   \localreqdiagram*{hlr05}{\reqid}{\reqdesc}
 
@@ -188,7 +188,7 @@
 
   The 60\,\% figure is proposed from measurements made on 22~October~2026
   with the benchmark of \reqref{TC-PERFORMANCE.HITRATE-01}: with every file
-  operation on the blocking pool (\reqref{ADR-STORAGE.EXECUTOR-04}), hits ran
+  operation on the blocking pool (\reqref{ADR-STORAGE.EXECUTOR-05}), hits ran
   at 48--62\,\% of \texttt{MemCache}; with the reads the page cache answers
   kept on the worker (\reqref{ADR-STORAGE.PAGECACHE-01}), at 69--113\,\%.
 
@@ -264,7 +264,7 @@
   The factor of 2 is proposed from measurements made on 20~November~2026
   with the benchmark of \reqref{TC-PERFORMANCE.BURSTHITS-01}, on a consumer
   SSD under ext4 and XFS. With each store's file work on the blocking pool
-  or in inline slots (\reqref{ADR-STORAGE.INLINEWRITES-01}), the hits' 99th
+  or in inline slots (\reqref{ADR-STORAGE.INLINEWRITES-02}), the hits' 99th
   percentile during the stores was 3.0 to 3.8 times its value without them
   when stores were unsynchronised, and 2.2 to 2.4 times when each waited for
   the device. With the writes past each store's first 64~KiB on an

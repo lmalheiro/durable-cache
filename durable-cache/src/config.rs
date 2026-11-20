@@ -61,7 +61,7 @@ impl FsCacheConfig {
     const DEFAULT_META_HEADROOM: u32 = 512;
 
     /// The inline write slots unless the configuration says otherwise
-    /// (ADR-STORAGE.INLINEWRITES-01).
+    /// (ADR-STORAGE.INLINEWRITES-02).
     const DEFAULT_INLINE_WRITE_SLOTS: usize = 3;
 
     /// A configuration for a cache rooted at `root` that reserves
@@ -106,7 +106,7 @@ impl FsCacheConfig {
     /// stealing off. The backend logs, once, when it uses fewer slots than
     /// asked. With the discard after a host restart on, publishing a store
     /// stays on the pool, since it may have to write the marker
-    /// (ADR-STORAGE.INLINEWRITES-01).
+    /// (ADR-STORAGE.INLINEWRITES-02).
     pub fn with_inline_write_slots(mut self, slots: usize) -> Self {
         self.inline_write_slots = slots;
         self
@@ -137,7 +137,7 @@ impl FsCacheConfig {
     /// pool. A lookup opens the record with `openat2` and `RESOLVE_CACHED`
     /// (Linux 5.12), and reads it with `preadv2` and `RWF_NOWAIT`, which
     /// fail rather than wait for the device; whatever would wait goes to the
-    /// pool (FDS-STORAGE.EXECUTOR-04).
+    /// pool (FDS-STORAGE.EXECUTOR-05).
     ///
     /// The kernel and the cache's file system must support both calls:
     /// ext4, XFS and btrfs do; as of Linux 6.12, tmpfs and overlayfs, the

@@ -113,7 +113,7 @@ enum ReadSource {
 
 pub struct FsHitHandler {
     /// Shared so a blocking read can own a handle without reopening the file
-    /// (FDS-STORAGE.EXECUTOR-04). `read_exact_at` takes `&self`, so a shared
+    /// (FDS-STORAGE.EXECUTOR-05). `read_exact_at` takes `&self`, so a shared
     /// descriptor is all a reader ever needs. Taken only as the handler is
     /// dropped, to close it where its close cannot stall an async worker
     /// (see `Drop`).
@@ -208,7 +208,7 @@ pub(crate) async fn lookup(
     // Opening, validating, and decoding the record is all blocking syscall
     // work, so it goes to the blocking pool in one handoff rather than
     // stalling the worker this lookup is running on
-    // (FDS-STORAGE.EXECUTOR-04).
+    // (FDS-STORAGE.EXECUTOR-05).
     test_hook! { cache.hooks.count_handoff(); }
     blocking::run(move || open_published(cache, &name, canonical, &key_bytes, opened)).await
 }
@@ -392,7 +392,7 @@ fn partial_hit(
 /// Linux from the page cache on this worker first, when the configuration
 /// asks (`page_cache`); on the blocking pool otherwise, as a body read is a
 /// `pread` that may reach the device, which must not run on the worker
-/// driving other connections (FDS-STORAGE.EXECUTOR-04).
+/// driving other connections (FDS-STORAGE.EXECUTOR-05).
 async fn fill(
     cache: &FsCache,
     file: &Arc<File>,
@@ -633,7 +633,7 @@ impl HandleHit for FsHitHandler {
 
 impl Drop for FsHitHandler {
     /// Close the file this hit read, on the blocking pool when the close
-    /// would free it (FDS-STORAGE.EXECUTOR-04).
+    /// would free it (FDS-STORAGE.EXECUTOR-05).
     ///
     /// A file's storage is freed when its last name and its last descriptor
     /// are both gone, and freeing can take a long time for a large file. A
