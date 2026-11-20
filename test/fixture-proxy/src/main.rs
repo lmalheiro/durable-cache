@@ -136,6 +136,23 @@ struct Cli {
     #[arg(long)]
     no_page_cache_reads: bool,
 
+    /// `FsCacheConfig::with_io_uring(false)`: write every store on the
+    /// blocking pool or in an inline slot, as where `io_uring` is blocked.
+    // Where durable-cache has the option: its build script names these
+    // platforms `cfg(io_uring)`, which this crate cannot see.
+    #[cfg(all(
+        target_os = "linux",
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64",
+            target_arch = "powerpc64"
+        )
+    ))]
+    #[arg(long)]
+    no_io_uring: bool,
+
     /// `pingora_core::server::configuration::Opt`'s own flags, flattened
     /// in: `-u/--upgrade`, `-d/--daemon`, `-c/--conf`, ... (needed as-is
     /// for the hot-upgrade scenario, TC-COMPAT.HOTUPGRADE-01 — M9).
@@ -207,6 +224,17 @@ fn main() {
     let config = config
         .with_noatime(!cli.atime)
         .with_page_cache_reads(!cli.no_page_cache_reads);
+    #[cfg(all(
+        target_os = "linux",
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64",
+            target_arch = "powerpc64"
+        )
+    ))]
+    let config = config.with_io_uring(!cli.no_io_uring);
     let fs_cache = FsCache::new(config)
         .expect("failed to construct FsCache (FDS-LAYOUT.STARTUP-01 shard scan)");
     let fs_cache: &'static FsCache = Box::leak(Box::new(fs_cache));

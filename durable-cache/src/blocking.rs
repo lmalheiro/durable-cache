@@ -111,7 +111,7 @@ impl InlineSlots {
     }
 
     /// Take a slot, if one is free on the runtime that polls the caller.
-    fn try_take(&self) -> Option<InlineSlot<'_>> {
+    pub(crate) fn try_take(&self) -> Option<InlineSlot<'_>> {
         if self.limit == 0 {
             return None;
         }
@@ -137,7 +137,7 @@ impl InlineSlots {
 }
 
 /// A taken inline slot, given back when dropped.
-struct InlineSlot<'a>(&'a InlineSlots);
+pub(crate) struct InlineSlot<'a>(&'a InlineSlots);
 
 impl Drop for InlineSlot<'_> {
     fn drop(&mut self) {

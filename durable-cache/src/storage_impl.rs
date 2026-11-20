@@ -60,6 +60,11 @@ pub struct FsCache {
     /// The inline slots: how many operations of unsynchronised stores run
     /// on the async workers at once (ADR-STORAGE.INLINEWRITES-02).
     pub(crate) inline_slots: crate::blocking::InlineSlots,
+    /// The `io_uring` ring stores write through, which the configuration
+    /// asks for and the check at construction set up; `None` with it
+    /// switched off, and where `crate::uring` is the stand-in without a ring
+    /// (FDS-STORAGE.IOURING-01).
+    pub(crate) ring: Option<crate::uring::Ring>,
     /// The test hooks of this instance: an empty stand-in outside the
     /// crate's own test build (see `crate::hooks`).
     pub(crate) hooks: Hooks,
@@ -107,6 +112,11 @@ impl FsCache {
     ///   kernel or the file system under the root does not support the calls
     ///   that page-cache reads make (see
     ///   [`FsCacheConfig::with_page_cache_reads`]).
+    /// - On Linux, on the architectures the `io-uring` crate builds for, with
+    ///   the default configuration, an `InternalError` if the kernel refuses
+    ///   the `io_uring` ring that stores write through, as it does where a
+    ///   seccomp profile blocks `io_uring` (see
+    ///   [`FsCacheConfig::with_io_uring`]).
     ///
     /// Every failure is also logged as an error, so that a cache that cannot
     /// start says why even where the caller only exits.
@@ -147,6 +157,7 @@ impl FsCache {
         // at zero, rather than from their first event.
         metrics::register();
         let inline_slots = crate::blocking::InlineSlots::new(config.inline_write_slots());
+        let ring = crate::uring::Ring::new(&config, &hooks)?;
         Ok(Self {
             config,
             dir_cache,
@@ -158,6 +169,7 @@ impl FsCache {
             #[cfg(target_os = "linux")]
             page_cache_reads,
             inline_slots,
+            ring,
             hooks,
         })
     }

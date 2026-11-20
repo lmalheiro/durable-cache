@@ -49,6 +49,8 @@ pub struct FsCacheConfig {
     noatime: bool,
     #[cfg(target_os = "linux")]
     page_cache_reads: bool,
+    #[cfg(io_uring)]
+    io_uring: bool,
     #[cfg(target_os = "linux")]
     discard_after_host_restart: bool,
     #[cfg(feature = "body-crc-verify")]
@@ -78,6 +80,8 @@ impl FsCacheConfig {
             noatime: true,
             #[cfg(target_os = "linux")]
             page_cache_reads: true,
+            #[cfg(io_uring)]
+            io_uring: true,
             #[cfg(target_os = "linux")]
             discard_after_host_restart: false,
             #[cfg(feature = "body-crc-verify")]
@@ -148,6 +152,28 @@ impl FsCacheConfig {
     #[cfg(target_os = "linux")]
     pub fn with_page_cache_reads(mut self, enabled: bool) -> Self {
         self.page_cache_reads = enabled;
+        self
+    }
+
+    /// Write the body chunks that end past a store's first 64 KiB through
+    /// an `io_uring` ring, rather than the blocking pool or an inline slot;
+    /// on unless switched off (FDS-STORAGE.IOURING-01). Hits then keep their
+    /// latency while a burst of large stores runs. Every other write of a
+    /// store, its `fdatasync` and its rename stay where they are, so a store
+    /// of up to 64 KiB writes as without the ring. Linux only, on the
+    /// architectures the `io-uring` crate builds for: x86-64, AArch64,
+    /// RISC-V, LoongArch and POWER, all 64-bit.
+    ///
+    /// The kernel must provide `io_uring` with its write operation
+    /// (Linux 5.6), and let the process use it: Docker's default seccomp
+    /// profile blocks it since Docker 25, and the `kernel.io_uring_disabled`
+    /// setting can disable it for the whole host. With the option on,
+    /// [`crate::FsCache::new`] fails where it is missing, rather than write
+    /// every store on the pool unnoticed: allow `io_uring` there, or switch
+    /// the option off.
+    #[cfg(io_uring)]
+    pub fn with_io_uring(mut self, enabled: bool) -> Self {
+        self.io_uring = enabled;
         self
     }
 
@@ -233,6 +259,14 @@ impl FsCacheConfig {
         self.page_cache_reads
     }
 
+    /// Whether stores are written through an `io_uring` ring; see
+    /// [`Self::with_io_uring`].
+    #[cfg(io_uring)]
+    #[inline]
+    pub fn io_uring(&self) -> bool {
+        self.io_uring
+    }
+
     /// Whether the cache is discarded after a host restart that may have
     /// lost unsynchronised stores; see
     /// [`Self::with_discard_after_host_restart`].
@@ -275,6 +309,14 @@ mod tests {
         let config = FsCacheConfig::new("/x", None);
         assert!(config.page_cache_reads());
         assert!(!config.with_page_cache_reads(false).page_cache_reads());
+    }
+
+    #[cfg(io_uring)]
+    #[test]
+    fn io_uring_is_on_unless_switched_off() {
+        let config = FsCacheConfig::new("/x", None);
+        assert!(config.io_uring());
+        assert!(!config.with_io_uring(false).io_uring());
     }
 
     #[cfg(target_os = "linux")]

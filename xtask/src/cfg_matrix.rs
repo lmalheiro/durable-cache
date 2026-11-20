@@ -13,8 +13,11 @@
 //! The other-Unix side runs the same steps on a copy of the workspace under
 //! the target directory, in which durable-cache's Linux gates select their
 //! other side. Every `target_os = "linux"` in its sources and tests becomes
-//! `all(target_os = "linux", not(feature = "as-if-not-linux"))`, the copy's
-//! manifest declares that feature, and every step enables it. The manifest
+//! `all(target_os = "linux", not(feature = "as-if-not-linux"))`, and every
+//! `io_uring` in a gate, the `cfg` durable-cache's build script sets on Linux
+//! where stores can write through an `io_uring` ring, becomes
+//! `all(io_uring, not(feature = "as-if-not-linux"))`. The copy's manifest
+//! declares that feature, and every step enables it. The manifest
 //! also drops the Linux-only dependencies, so that code outside the Linux
 //! gates cannot use them. What this cannot catch is such code calling what
 //! only Linux has in std (`std::os::linux`) or in libc: the copy still
@@ -35,6 +38,12 @@ use walkdir::WalkDir;
 
 /// The predicate the Linux gates test.
 const LINUX: &str = r#"target_os = "linux""#;
+
+/// The `cfg` durable-cache's build script sets on Linux where stores can
+/// write through an `io_uring` ring. Its gates hold it in parentheses,
+/// `cfg(io_uring)` or `not(io_uring)`, which is how [`rewrite`] tells it
+/// from the names that contain it.
+const RING: &str = "io_uring";
 
 /// The feature that turns the copy's Linux gates off.
 const AS_IF_NOT_LINUX: &str = "as-if-not-linux";
@@ -350,21 +359,26 @@ fn sync_copy(root: &Path, copy: &Path) -> Result<()> {
 }
 
 /// The copy's text of the file at `path`, if it differs from the working
-/// tree's: durable-cache's sources and tests with their Linux gates turned
-/// off by [`AS_IF_NOT_LINUX`], and its manifest declaring that feature, with
-/// its Linux-only tables (dependencies, dev- and build-dependencies) for no
-/// target.
+/// tree's: durable-cache's sources and tests with their Linux gates, the
+/// [`RING`] ones among them, turned off by [`AS_IF_NOT_LINUX`], and its
+/// manifest declaring that feature, with its Linux-only tables
+/// (dependencies, dev- and build-dependencies) for no target.
 fn rewrite(path: &str, content: &[u8]) -> Result<Option<String>> {
     let source = (path.starts_with("durable-cache/src/")
         || path.starts_with("durable-cache/tests/"))
         && path.ends_with(".rs");
     if source {
         let text = std::str::from_utf8(content).with_context(|| format!("{path} is not UTF-8"))?;
-        if !text.contains(LINUX) {
+        let ring = format!("({RING})");
+        if !text.contains(LINUX) && !text.contains(&ring) {
             return Ok(None);
         }
-        let gate = format!(r#"all({LINUX}, not(feature = "{AS_IF_NOT_LINUX}"))"#);
-        return Ok(Some(text.replace(LINUX, &gate)));
+        let off =
+            |predicate: &str| format!(r#"all({predicate}, not(feature = "{AS_IF_NOT_LINUX}"))"#);
+        let text = text
+            .replace(LINUX, &off(LINUX))
+            .replace(&ring, &format!("({})", off(RING)));
+        return Ok(Some(text));
     }
     if path == "durable-cache/Cargo.toml" {
         let text = std::str::from_utf8(content).with_context(|| format!("{path} is not UTF-8"))?;
@@ -372,10 +386,19 @@ fn rewrite(path: &str, content: &[u8]) -> Result<Option<String>> {
         if !text.contains(features) {
             bail!("{path} has no [features] table to declare {AS_IF_NOT_LINUX} in");
         }
-        // `cfg(any())` holds on no target.
-        let text = text
-            .replace(&format!("[target.'cfg({LINUX})'."), "[target.'cfg(any())'.")
-            .replace(features, &format!("{features}{AS_IF_NOT_LINUX} = []\n"));
+        // `any()` holds on no target, and turns every table for Linux, or
+        // for Linux on some architectures, into one for none.
+        let text: String = text
+            .split_inclusive('\n')
+            .map(|line| {
+                if line.starts_with("[target.'cfg(") {
+                    line.replace(LINUX, "any()")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        let text = text.replace(features, &format!("{features}{AS_IF_NOT_LINUX} = []\n"));
         return Ok(Some(text));
     }
     Ok(None)
@@ -413,12 +436,33 @@ mod tests {
         assert!(ungated.expect("a source").is_none(), "nothing to rewrite");
     }
 
+    /// Both sides of an `io_uring` gate select the other side, in a file
+    /// with no other Linux gate, and the names that merely contain
+    /// `io_uring` are left.
+    #[test]
+    fn the_ring_gates_select_their_other_side() {
+        let source = "#[cfg(io_uring)]\nmod uring;\n\
+                      #[cfg(not(io_uring))]\nmod noop_uring;\n\
+                      fn on(c: Config) -> bool { c.io_uring() && with_io_uring(c) }\n";
+        let rewritten = rewrite("durable-cache/src/lib.rs", source.as_bytes())
+            .expect("a source")
+            .expect("its gates are rewritten");
+        assert_eq!(
+            rewritten,
+            "#[cfg(all(io_uring, not(feature = \"as-if-not-linux\")))]\nmod uring;\n\
+             #[cfg(not(all(io_uring, not(feature = \"as-if-not-linux\"))))]\nmod noop_uring;\n\
+             fn on(c: Config) -> bool { c.io_uring() && with_io_uring(c) }\n"
+        );
+    }
+
     /// The copy's manifest declares the feature, and its Linux-only tables
     /// hold for no target.
     #[test]
     fn the_manifest_declares_the_feature_and_drops_the_linux_tables() {
         let manifest = "[dependencies]\nlog = \"0.4\"\n\n\
                         [target.'cfg(target_os = \"linux\")'.dependencies]\nrustix = \"1\"\n\n\
+                        [target.'cfg(all(target_os = \"linux\", target_arch = \"x86_64\"))'.dependencies]\n\
+                        io-uring = \"0.7\"\n\n\
                         [target.'cfg(target_os = \"linux\")'.dev-dependencies]\nlibc = \"0.2\"\n\n\
                         [features]\ndefault = []\n";
         let rewritten = rewrite("durable-cache/Cargo.toml", manifest.as_bytes())
@@ -428,6 +472,8 @@ mod tests {
             rewritten,
             "[dependencies]\nlog = \"0.4\"\n\n\
              [target.'cfg(any())'.dependencies]\nrustix = \"1\"\n\n\
+             [target.'cfg(all(any(), target_arch = \"x86_64\"))'.dependencies]\n\
+             io-uring = \"0.7\"\n\n\
              [target.'cfg(any())'.dev-dependencies]\nlibc = \"0.2\"\n\n\
              [features]\nas-if-not-linux = []\ndefault = []\n"
         );

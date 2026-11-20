@@ -136,6 +136,14 @@ pub enum FaultPoint {
     /// Flushing the file system that holds the cache, in `FsCache::flush`
     /// (TC-PERSISTENCE.CRASHDISCARD-01).
     SyncFileSystem,
+    /// Setting up the `io_uring` ring as the backend is constructed; armed
+    /// through [`HookConfig::faults`] (TC-STORAGE.IOURING-01).
+    #[cfg(io_uring)]
+    RingSetup,
+    /// A store's write on the `io_uring` ring: it is submitted on a
+    /// descriptor open for reading only, so that the kernel fails it
+    /// (TC-STORAGE.IOURING-01).
+    RingWrite,
 }
 
 type NameOverride = Arc<dyn Fn(&str) -> String + Send + Sync>;
@@ -224,6 +232,7 @@ pub struct Hooks {
     worker_faults: Mutex<Vec<worker::WorkerFault>>,
     handoffs: AtomicU64,
     inline_ops: AtomicU64,
+    ring_ops: AtomicU64,
     marker_writes: AtomicU64,
 }
 
@@ -327,6 +336,17 @@ impl Hooks {
 
     pub(crate) fn count_inline_op(&self) {
         self.inline_ops.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many store writes this backend has submitted to its `io_uring`
+    /// ring (TC-STORAGE.IOURING-01).
+    #[cfg(io_uring)]
+    pub fn ring_ops(&self) -> u64 {
+        self.ring_ops.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn count_ring_op(&self) {
+        self.ring_ops.fetch_add(1, Ordering::Relaxed);
     }
 
     /// How many times this backend has written its unsynchronised-store
