@@ -98,16 +98,16 @@ pub enum PausePoint {
     /// blocking pool inside a runtime, or where the handler is dropped
     /// outside one. The file is an aborted or discarded store's temporary, a
     /// record replaced or purged while a hit read it, or a removed temporary
-    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-04).
+    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-05).
     BeforeClosingRemovedFile,
     /// Store: at the start of its miss handler's `Drop`. A test holds a
     /// store here to see on which thread its handler is dropped. Path: the
-    /// canonical record (FDS-STORAGE.EXECUTOR-04).
+    /// canonical record (FDS-STORAGE.EXECUTOR-05).
     StoreDropping,
     /// Store: in the operation that writes a body chunk, before the write,
     /// wherever it runs: on the worker, in an inline slot, or on the
     /// blocking pool. A test holds a write here to keep its slot taken.
-    /// Path: the store's temporary (TC-STORAGE.INLINEWRITES-01).
+    /// Path: the store's temporary (TC-STORAGE.INLINEWRITES-02).
     WritingBodyChunk,
 }
 
@@ -136,6 +136,14 @@ pub enum FaultPoint {
     /// Flushing the file system that holds the cache, in `FsCache::flush`
     /// (TC-PERSISTENCE.CRASHDISCARD-01).
     SyncFileSystem,
+    /// Setting up the `io_uring` ring as the backend is constructed; armed
+    /// through [`HookConfig::faults`] (TC-STORAGE.IOURING-01).
+    #[cfg(io_uring)]
+    RingSetup,
+    /// A store's write on the `io_uring` ring: it is submitted on a
+    /// descriptor open for reading only, so that the kernel fails it
+    /// (TC-STORAGE.IOURING-01).
+    RingWrite,
 }
 
 type NameOverride = Arc<dyn Fn(&str) -> String + Send + Sync>;
@@ -224,6 +232,7 @@ pub struct Hooks {
     worker_faults: Mutex<Vec<worker::WorkerFault>>,
     handoffs: AtomicU64,
     inline_ops: AtomicU64,
+    ring_ops: AtomicU64,
     marker_writes: AtomicU64,
 }
 
@@ -320,13 +329,24 @@ impl Hooks {
 
     /// How many operations of unsynchronised stores this backend has run on
     /// the worker that polled them, in an inline slot
-    /// (TC-STORAGE.INLINEWRITES-01).
+    /// (TC-STORAGE.INLINEWRITES-02).
     pub fn inline_ops(&self) -> u64 {
         self.inline_ops.load(Ordering::Relaxed)
     }
 
     pub(crate) fn count_inline_op(&self) {
         self.inline_ops.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many store writes this backend has submitted to its `io_uring`
+    /// ring (TC-STORAGE.IOURING-01).
+    #[cfg(io_uring)]
+    pub fn ring_ops(&self) -> u64 {
+        self.ring_ops.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn count_ring_op(&self) {
+        self.ring_ops.fetch_add(1, Ordering::Relaxed);
     }
 
     /// How many times this backend has written its unsynchronised-store

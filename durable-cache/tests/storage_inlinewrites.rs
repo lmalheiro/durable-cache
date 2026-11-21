@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-STORAGE.INLINEWRITES-01 — Inline write slots.
+//! TC-STORAGE.INLINEWRITES-02 — Inline write slots.
 //!
 //! An unsynchronised store's operations run on the worker that polls them
 //! when an inline slot is free, never more of them at once than the
 //! runtime's workers less one, and on the blocking pool otherwise
-//! (FDS-STORAGE.INLINEWRITES-01). The test hooks count the operations that
+//! (FDS-STORAGE.INLINEWRITES-02). The test hooks count the operations that
 //! ran in a slot, and hold a body write in its slot.
 //!
 //! A test's own body runs on the thread that drives the runtime rather than
@@ -22,7 +22,7 @@ use pingora_cache::storage::{MissFinishType, Storage};
 
 use super::support;
 
-// IMP-TC.STORAGE.INLINEWRITES-01: satisfy TC-STORAGE.INLINEWRITES-01
+// IMP-TC.STORAGE.INLINEWRITES-02: satisfy TC-STORAGE.INLINEWRITES-02
 
 /// A cache with `config`'s durability and slots, rooted in a new directory.
 fn cache_with(
@@ -55,7 +55,7 @@ async fn store_counting(cache: &'static FsCache, primary: &str) -> u64 {
 /// Step 1: on four workers, an unsynchronised store opens, writes its first
 /// chunk, and finishes, writing the last, each in an inline slot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tc_storage_inlinewrites_01_an_unsynchronised_store_writes_on_the_worker() {
+async fn tc_storage_inlinewrites_02_an_unsynchronised_store_writes_on_the_worker() {
     let (cache, _tmp) = unsynced_cache();
     assert_eq!(
         store_counting(cache, "/inline-unsynced").await,
@@ -66,7 +66,7 @@ async fn tc_storage_inlinewrites_01_an_unsynchronised_store_writes_on_the_worker
 
 /// Step 2: a synchronised store keeps every operation on the pool.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tc_storage_inlinewrites_01_a_synchronised_store_stays_on_the_pool() {
+async fn tc_storage_inlinewrites_02_a_synchronised_store_stays_on_the_pool() {
     let (cache, _tmp) = cache_with(|config| config.with_durability(Durability::Strict));
     assert_eq!(store_counting(cache, "/inline-strict").await, 0);
 }
@@ -74,14 +74,14 @@ async fn tc_storage_inlinewrites_01_a_synchronised_store_stays_on_the_pool() {
 /// Step 3: a runtime of one worker, Pingora's default, runs nothing in a
 /// slot, whatever the configuration asks.
 #[tokio::test]
-async fn tc_storage_inlinewrites_01_one_worker_writes_nothing_inline() {
+async fn tc_storage_inlinewrites_02_one_worker_writes_nothing_inline() {
     let (cache, _tmp) = unsynced_cache();
     assert_eq!(store_counting(cache, "/inline-one-worker").await, 0);
 }
 
 /// Step 4: no slots keep every operation on the pool.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tc_storage_inlinewrites_01_no_slots_keep_every_operation_on_the_pool() {
+async fn tc_storage_inlinewrites_02_no_slots_keep_every_operation_on_the_pool() {
     let (cache, _tmp) = cache_with(|config| {
         config
             .with_durability(Durability::NoStoreSync)
@@ -94,7 +94,7 @@ async fn tc_storage_inlinewrites_01_no_slots_keep_every_operation_on_the_pool() 
 /// write holds it, another store's opening goes to the pool; once the write
 /// is let go, the slot serves again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tc_storage_inlinewrites_01_the_workers_less_one_cap_the_slots() {
+async fn tc_storage_inlinewrites_02_the_workers_less_one_cap_the_slots() {
     let (cache, _tmp) = unsynced_cache();
     let trace = support::inactive_trace();
     let meta = support::meta();
@@ -149,7 +149,7 @@ async fn tc_storage_inlinewrites_01_the_workers_less_one_cap_the_slots() {
 /// opening and first chunk still run in a slot.
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tc_storage_inlinewrites_01_with_the_discard_on_the_finish_stays_on_the_pool() {
+async fn tc_storage_inlinewrites_02_with_the_discard_on_the_finish_stays_on_the_pool() {
     let (cache, _tmp) = cache_with(|config| {
         config
             .with_durability(Durability::NoStoreSync)
@@ -162,7 +162,7 @@ async fn tc_storage_inlinewrites_01_with_the_discard_on_the_finish_stays_on_the_
 /// replaced record's close to the pool, since the close frees it: the store
 /// completes while that close is held.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tc_storage_inlinewrites_01_a_replaced_record_is_freed_on_the_pool() {
+async fn tc_storage_inlinewrites_02_a_replaced_record_is_freed_on_the_pool() {
     let (cache, _tmp) = unsynced_cache();
     let key = support::key("/inline-replace");
     support::store(cache, &key, &support::meta(), b"old").await;

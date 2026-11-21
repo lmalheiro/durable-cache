@@ -47,8 +47,18 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 # Lookups from the page cache on the worker (src/nowait.rs): `openat2` with
 # `RESOLVE_CACHED` and a lookup's reads, `preadv2` with `RWF_NOWAIT`, without
 # `unsafe`. A hit's body reads go through libc, into memory not zeroed first.
+# Store writes on an io_uring ring (src/uring.rs), whose completions an
+# eventfd signals.
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { workspace = true, features = ["fs"] }
+rustix = { workspace = true, features = ["fs", "event"] }
+
+# The ring itself, on the architectures the io-uring crate has bindings for;
+# elsewhere it refuses to build, and the ring does not exist. build.rs names
+# the same platforms `cfg(io_uring)` for the code. net: the reactor watches
+# the ring's eventfd (tokio::io::unix::AsyncFd).
+[target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64", target_arch = "powerpc64")))'.dependencies]
+io-uring.workspace = true
+tokio = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
 tempfile.workspace = true

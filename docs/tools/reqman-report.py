@@ -1601,7 +1601,7 @@ def source_url(path, relpath, lineno):
     return template.format(path=relpath.replace(os.sep, "/"), line=lineno)
 
 # Reused for both the IMP id itself and its target: PREFIX-SLUG[.SUB...]-NN,
-# e.g. "FDS-STORAGE.PUBLISH-03", "IMP-STORAGE.PUBLISH-03", "HLR-SCOPE.V1-02".
+# e.g. "FDS-STORAGE.PUBLISH-03", "IMP-STORAGE.PUBLISH-03", "HLR-SCOPE.V1-03".
 _REQ_ID_PATTERN = r"[A-Z]+-[A-Za-z0-9.]+-\d+"
 
 _IMP_MARKER_RE = re.compile(

@@ -25,7 +25,7 @@
   One chunk is allowed because \texttt{pingora-cache} has already allocated
   it when the backend receives it. It is the chunk a \texttt{write\_body}
   call is writing, or the body's last chunk, which the backend may keep
-  until \texttt{finish} writes it (\reqref{ADR-STORAGE.LASTCHUNK-01}), since
+  until \texttt{finish} writes it (\reqref{ADR-STORAGE.LASTCHUNK-02}), since
   no other chunk follows it. Its size depends on the upstream protocol ---
   HTTP/1 bodies
   are read through a 64~KiB buffer,\footnote{\pgsrc{pingora-core/src/protocols/http/v1/body.rs}{31}{\texttt{BODY\_BUFFER\_SIZE}}
@@ -649,7 +649,7 @@
 
   \textbf{Context:} The cache must persist HTTP response headers and bodies
   durably (\reqref{HLR-PERSISTENCE.DURABLE-01}), this is a first version
-  that favours the simplest adequate design (\reqref{HLR-SCOPE.V1-02}),
+  that favours the simplest adequate design (\reqref{HLR-SCOPE.V1-03}),
   and a body arrives as a stream whose total length is unknown when
   writing begins (\reqref{FRE-COMPAT.UNSIZED-02}). The choice is
   twofold: which storage substrate to build on, and whether to adopt an
@@ -687,7 +687,7 @@
   Every alternative below leaves those same coordination duties open ---
   or solves them at the price of a poorer fit for streaming bodies and a
   larger integration surface --- which is why the simplest substrate wins
-  for a first version (\reqref{HLR-SCOPE.V1-02}). Appendix~\ref{app:alternatives}
+  for a first version (\reqref{HLR-SCOPE.V1-03}). Appendix~\ref{app:alternatives}
   examines each alternative in detail.
 
   \textbf{Alternatives considered:}
@@ -759,7 +759,7 @@
       management and an on-device directory from scratch. That
       combination is the largest bespoke surface of any alternative
       here, and the antithesis of a first version
-      (\reqref{HLR-SCOPE.V1-02}).
+      (\reqref{HLR-SCOPE.V1-03}).
   \end{itemize}
 
   \textbf{Consequences:}
@@ -799,7 +799,7 @@
 
   \satisfy{HLR-PERSISTENCE.DURABLE-01}
   \satisfy{HLR-PERSISTENCE.CAPACITY-01}
-  \satisfy{HLR-SCOPE.V1-02}
+  \satisfy{HLR-SCOPE.V1-03}
   \satisfy{FRE-COMPAT.UNSIZED-02}
   \trace{FRE-COMPAT.HOTUPGRADE-01}
   \trace{FRE-COMPAT.EVICTION-01}

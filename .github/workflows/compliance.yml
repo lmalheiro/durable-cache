@@ -53,7 +53,7 @@ jobs:
           --results-out cache-tests-results-unsynced.json
         # Unsynchronised stores on a runtime of more than one worker run some
         # of their file operations on the workers, in inline slots
-        # (ADR-STORAGE.INLINEWRITES-01): the differential must hold there
+        # (ADR-STORAGE.INLINEWRITES-02): the differential must hold there
         # too. Both backends run on four workers.
 
       - name: Upload cache-tests results

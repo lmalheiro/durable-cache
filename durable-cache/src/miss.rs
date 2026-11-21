@@ -45,6 +45,12 @@ use crate::{blocking, key_codec, publish, sharding, Durability, FsCache};
 /// mean something is deliberately in the way.
 const NAME_ATTEMPTS: u32 = 16;
 
+/// With the `io_uring` ring on, the body bytes of a store that its chunks
+/// write as without it: a chunk that ends past them goes on the ring, and so
+/// does every chunk after it (FDS-STORAGE.IOURING-01). A store of up to this
+/// size writes as without the ring.
+const RING_PAST_BODY_BYTES: u64 = 64 * 1024;
+
 /// What [`FsMissHandler::prepare`] hands to [`FsMissHandler::open`]: owned,
 /// `Send` data, so the store's file work can run on the blocking pool.
 pub(crate) struct PreparedStore {
@@ -76,7 +82,7 @@ pub struct FsMissHandler {
     body_written: u64,
     /// The last body chunk, which `write_body` received with `eof` set and
     /// kept for `finish` to write, in the handoff that publishes the store
-    /// (ADR-STORAGE.LASTCHUNK-01). The only body bytes the store holds
+    /// (ADR-STORAGE.LASTCHUNK-02). The only body bytes the store holds
     /// beyond a `write_body` call; its CRC-32C is already folded in.
     last_chunk: Option<Bytes>,
     writer: Arc<InFlightWriter>,
@@ -99,7 +105,7 @@ impl FsMissHandler {
     /// The CPU-only half of opening a store for `key`: hashing the key and
     /// serialising the metadata. Split out so the borrowed
     /// `CacheKey`/`CacheMeta` stay on the caller's side and only owned bytes
-    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-04).
+    /// reach the blocking pool (FDS-STORAGE.EXECUTOR-05).
     pub(crate) fn prepare(
         cache: &'static FsCache,
         key: &CacheKey,
@@ -195,7 +201,7 @@ impl FsMissHandler {
     /// Close the published record's handle on the worker that finished the
     /// store, unless the record has lost its name since, as when a purge
     /// removed it: its close would then free its storage, so it goes to the
-    /// pool (FDS-STORAGE.EXECUTOR-04).
+    /// pool (FDS-STORAGE.EXECUTOR-05).
     fn close_published_file(&mut self) {
         let Some(file) = self.file.take().and_then(|f| Arc::try_unwrap(f).ok()) else {
             return;
@@ -240,7 +246,7 @@ impl FsMissHandler {
     }
 
     /// Write the last body chunk, if `write_body` kept it for `finish`
-    /// (ADR-STORAGE.LASTCHUNK-01), and make it readable at once: a reader
+    /// (ADR-STORAGE.LASTCHUNK-02), and make it readable at once: a reader
     /// streaming the store from its partial hit is woken here, before the
     /// store is synchronised (FDS-STORAGE.PARTIAL-02).
     fn write_last_chunk(&mut self) -> Result<()> {
@@ -268,7 +274,7 @@ impl FsMissHandler {
     /// Write the last chunk if it was kept, patch the header, synchronise,
     /// and publish. Returns the record size: the published file's full
     /// length (FRE-COMPAT.EVICTION-01). `on_worker` says where it runs: on
-    /// an async worker, in an inline slot (ADR-STORAGE.INLINEWRITES-01), or
+    /// an async worker, in an inline slot (ADR-STORAGE.INLINEWRITES-02), or
     /// on the blocking pool.
     fn finish_inner(&mut self, on_worker: bool) -> Result<u64> {
         if self.failed {
@@ -385,6 +391,56 @@ impl FsMissHandler {
         }
         Ok(record_len)
     }
+
+    /// Whether a chunk of `len` bytes, the next of the body, ends past the
+    /// bytes the store writes as without the ring.
+    fn ends_past_ring_start(&self, len: usize) -> bool {
+        self.body_written + len as u64 > RING_PAST_BODY_BYTES
+    }
+
+    /// Write `chunk` as the next body bytes, on the ring, and make it
+    /// readable at once (FDS-STORAGE.PARTIAL-02).
+    async fn write_chunk_on_ring(&mut self, ring: &crate::uring::Ring, chunk: Bytes) -> Result<()> {
+        test_hook! {
+            self.cache.hooks.pause(crate::hooks::PausePoint::WritingBodyChunk, &self.temp_path);
+            self.cache.hooks.fault(FaultPoint::WriteTemp)?;
+            self.cache.hooks.count_ring_op();
+        }
+        let offset = self.header.body_offset() as u64 + self.body_written;
+        let len = chunk.len() as u64;
+        #[allow(unused_mut)]
+        let mut file = Arc::clone(self.file());
+        test_hook! {
+            if self.cache.hooks.fault(FaultPoint::RingWrite).is_err() {
+                // Open for reading only: the kernel fails the write.
+                file = Arc::new(File::open("/dev/null").expect("/dev/null opens for reading"));
+            }
+        }
+        ring.write_all_at(file, chunk, offset)
+            .await
+            .or_err_with(ErrorType::FileWriteError, || {
+                format!("writing a body chunk to {}", self.temp_path.display())
+            })?;
+        self.body_written += len;
+        self.writer.publish_valid_len(self.body_written);
+        Ok(())
+    }
+
+    /// Write the last chunk on the ring, as `finish` begins, if it ends past
+    /// the bytes the store writes as without the ring
+    /// (FDS-STORAGE.IOURING-01). Any other last chunk stays for
+    /// [`Self::finish_inner`].
+    async fn write_last_chunk_on_ring(&mut self, ring: &crate::uring::Ring) -> Result<()> {
+        if self.failed {
+            return self.already_failed();
+        }
+        let Some(chunk) = self.last_chunk.take_if(|chunk| {
+            !chunk.is_empty() && self.body_written + chunk.len() as u64 > RING_PAST_BODY_BYTES
+        }) else {
+            return Ok(());
+        };
+        self.write_chunk_on_ring(ring, chunk).await
+    }
 }
 
 /// Create the store's temporary exclusively. On a name collision the counter
@@ -443,7 +499,7 @@ impl HandleMiss for FsMissHandler {
         }
         // Folding the chunk into the running checksum is pure CPU, so it
         // stays here; the write behind it is a syscall and does not
-        // (FDS-STORAGE.EXECUTOR-04).
+        // (FDS-STORAGE.EXECUTOR-05).
         #[cfg(feature = "body-crc")]
         {
             self.body_crc = crc32c::crc32c_append(self.body_crc, &data);
@@ -451,7 +507,7 @@ impl HandleMiss for FsMissHandler {
         if eof {
             // The last chunk: `finish`, which `pingora-cache` calls next,
             // writes it in the handoff that publishes the store, rather
-            // than this call in one of its own (ADR-STORAGE.LASTCHUNK-01).
+            // than this call in one of its own (ADR-STORAGE.LASTCHUNK-02).
             self.last_chunk = Some(data);
             return Ok(());
         }
@@ -459,10 +515,20 @@ impl HandleMiss for FsMissHandler {
         // then made readable: the store holds no body bytes beyond the
         // chunk in hand (FRE-COMPAT.UNSIZED-02), and a partial-hit reader
         // sees each one as soon as it is in the file (FDS-STORAGE.PARTIAL-02).
+        let cache = self.cache;
+        if let Some(ring) = cache
+            .ring
+            .as_ref()
+            .filter(|_| self.ends_past_ring_start(data.len()))
+        {
+            return self
+                .write_chunk_on_ring(ring, data)
+                .await
+                .inspect_err(|_| self.failed = true);
+        }
         let file = Arc::clone(self.file());
         let offset = self.header.body_offset() as u64 + self.body_written;
         let len = data.len() as u64;
-        let cache = self.cache;
         #[cfg(test)]
         let temp_path = self.temp_path.clone();
         let result = blocking::run_store_op(cache, cache.store_ops_may_run_inline(), move |_| {
@@ -492,7 +558,7 @@ impl HandleMiss for FsMissHandler {
         // the header, `fdatasync`s unless the configured durability skips
         // it, and renames: up to four syscalls, one of them a flush that can
         // take milliseconds on a real device. So the whole handler moves to
-        // the blocking pool (FDS-STORAGE.EXECUTOR-04), and is dropped there
+        // the blocking pool (FDS-STORAGE.EXECUTOR-05), and is dropped there
         // as the closure ends, whether the store published or failed. A
         // failed store's `Drop` aborts it and removes its temporary
         // (FRE-COMPAT.ABORTSPACE-01). A published store's closes its handle
@@ -501,14 +567,24 @@ impl HandleMiss for FsMissHandler {
         // must not stall an async worker.
         //
         // An unsynchronised store does all this on this worker instead, if
-        // an inline slot is free (ADR-STORAGE.INLINEWRITES-01), but not with
+        // an inline slot is free (ADR-STORAGE.INLINEWRITES-02), but not with
         // the discard after a host restart on, which may have to write and
         // synchronise the marker. It then closes its record as a hit does:
         // here, unless the record lost its name meanwhile.
+        //
+        // With the io_uring ring on, a last chunk that ends past the body's
+        // first 64 KiB is written on the ring first; the unit below does the
+        // rest (FDS-STORAGE.IOURING-01).
         let cache = self.cache;
+        let mut this = self;
+        if let Some(ring) = cache.ring.as_ref() {
+            this.write_last_chunk_on_ring(ring)
+                .await
+                .inspect_err(|_| this.failed = true)?;
+        }
         let may_run_inline = cache.store_ops_may_run_inline() && cache.marker.is_off();
         let record_len = blocking::run_store_op(cache, may_run_inline, move |on_worker| {
-            let mut handler = self;
+            let mut handler = this;
             let record_len = handler.finish_inner(on_worker);
             if on_worker && handler.finished && !handler.discarded {
                 handler.close_published_file();
@@ -553,7 +629,7 @@ impl Drop for FsMissHandler {
         // for FDS-STORAGE.RECLAIM-01's restart-time scan instead.
         if !self.finished {
             // One of the two syscalls this backend still makes on the
-            // caller's thread (FDS-STORAGE.EXECUTOR-04). `Drop` cannot
+            // caller's thread (FDS-STORAGE.EXECUTOR-05). `Drop` cannot
             // await, and the temporary's name must be gone when the drop
             // returns (FRE-COMPAT.ABORTSPACE-01). The unlink is cheap: this
             // handler still has the file open, so it removes only the name.
