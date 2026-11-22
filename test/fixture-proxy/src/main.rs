@@ -14,7 +14,7 @@
 
 mod proxy;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use durable_cache::{hotupgrade, recover, test_support, Durability, FsCache, FsCacheConfig};
@@ -176,11 +176,7 @@ fn main() {
             .join("fixture-proxy.pid")
             .display()
             .to_string(),
-        upgrade_sock: cli
-            .cache_dir
-            .join("fixture-proxy-upgrade.sock")
-            .display()
-            .to_string(),
+        upgrade_sock: upgrade_sock(&cli.cache_dir).display().to_string(),
         grace_period_seconds: cli.grace_period_seconds,
         graceful_shutdown_timeout_seconds: cli.graceful_shutdown_timeout_seconds,
         threads: cli.threads,
@@ -275,4 +271,21 @@ fn main() {
     server.add_service(service);
 
     server.run_forever();
+}
+
+/// The upgrade socket of the fixture-proxy whose cache is `cache_dir`: in
+/// the temporary directory, as `fixture-proxy-<hash>.sock`, the hash a 64-bit
+/// FNV-1a of the cache directory's absolute path. Both processes of a hot
+/// upgrade, given the same cache directory, name the same socket, and two
+/// with different caches never share one. The socket stays out of the cache
+/// directory because a Unix socket's path holds at most 108 bytes, which a
+/// cache directory deep in a build tree can take by itself.
+fn upgrade_sock(cache_dir: &Path) -> PathBuf {
+    let dir = std::path::absolute(cache_dir).unwrap_or_else(|_| cache_dir.to_path_buf());
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in dir.as_os_str().as_encoded_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    std::env::temp_dir().join(format!("fixture-proxy-{hash:016x}.sock"))
 }
