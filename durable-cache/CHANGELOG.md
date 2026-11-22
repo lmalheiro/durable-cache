@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
-- write the chunks past a store's first 64 KiB through io_uring ([#45](https://github.com/lmalheiro/durable-cache/pull/45))
+- [**breaking**] write the chunks past a store's first 64 KiB through io_uring ([#45](https://github.com/lmalheiro/durable-cache/pull/45)). On Linux, `FsCache::new` now fails where the process may not use `io_uring`, as under Docker's default seccomp profile since Docker 25 or with `kernel.io_uring_disabled` set: allow `io_uring` there, or keep the earlier writes with `FsCacheConfig::with_io_uring(false)`
 - run unsynchronised stores' writes on the workers, in three inline slots ([#43](https://github.com/lmalheiro/durable-cache/pull/43))
 - write a store's last body chunk in finish's handoff ([#42](https://github.com/lmalheiro/durable-cache/pull/42))
 
