@@ -26,7 +26,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Run the http-tests/cache-tests CLI against a freshly built
-    /// fixture-proxy (TC-COMPLIANCE.RFC-01). Requires the
+    /// fixture-proxy (TC-COMPLIANCE.RFC-02). Requires the
     /// `third_party/cache-tests` submodule and Node.js (both provided by
     /// the Nix devShell — see flake.nix).
     ///
@@ -54,6 +54,11 @@ enum Cmd {
         /// reproducible difference from a timing-dependent one.
         #[arg(long, default_value_t = 2)]
         passes: usize,
+        /// An argument for fixture-proxy, as in `--proxy-arg=--threads=4`;
+        /// repeat it for several. Both backends take the same arguments, so
+        /// the backend stays the one difference between their runs.
+        #[arg(long = "proxy-arg", allow_hyphen_values = true)]
+        proxy_args: Vec<String>,
     },
     /// Cross-reference every TC-* ID in docs/durable-cache-requirements.json
     /// against test functions named `tc_<id>` anywhere in the workspace,
@@ -182,7 +187,8 @@ fn main() -> Result<()> {
             results_out,
             verbose,
             passes,
-        } => cache_tests(results_out.as_deref(), verbose, passes),
+            proxy_args,
+        } => cache_tests(results_out.as_deref(), verbose, passes, &proxy_args),
         Cmd::TraceReport => trace_report(),
         Cmd::Headers => check_headers(),
         Cmd::Fmt { check } => fmt(check),
@@ -300,7 +306,7 @@ fn npm_command(suite_dir: &Path, script: &str, config: &[(&str, &str)]) -> Comma
     cmd
 }
 
-// IMP-TC.COMPLIANCE.RFC-01: satisfy TC-COMPLIANCE.RFC-01 -- runs the
+// IMP-TC.COMPLIANCE.RFC-02: satisfy TC-COMPLIANCE.RFC-02 -- runs the
 // cache-tests CLI against the same fixture-proxy on each backend in turn
 // (the TC's own Setup and Steps: one proxy build whose Storage is
 // selectable at start, everything else identical), then applies its
@@ -309,7 +315,12 @@ fn npm_command(suite_dir: &Path, script: &str, config: &[(&str, &str)]) -> Comma
 // requirement, and this backend's own `required` failures are triaged
 // against the behaviour of pingora-cache in test/cache-tests-baseline.json,
 // where only an unallowlisted one fails the run.
-fn cache_tests(results_out: Option<&Path>, verbose: bool, passes: usize) -> Result<()> {
+fn cache_tests(
+    results_out: Option<&Path>,
+    verbose: bool,
+    passes: usize,
+    proxy_args: &[String],
+) -> Result<()> {
     let root = workspace_root()?;
     let suite_dir = root.join("third_party/cache-tests");
     if !suite_dir.join("package.json").exists() {
@@ -380,12 +391,15 @@ fn cache_tests(results_out: Option<&Path>, verbose: bool, passes: usize) -> Resu
     let kinds = kinds_by_id(&catalog)?;
 
     // The same proxy and the same origin for both runs: only the backend
-    // differs (TC-COMPLIANCE.RFC-01's setup).
+    // differs (TC-COMPLIANCE.RFC-02's setup).
+    if !proxy_args.is_empty() {
+        println!("==> fixture-proxy arguments: {}", proxy_args.join(" "));
+    }
     let mut runs: BTreeMap<&str, Vec<serde_json::Value>> = BTreeMap::new();
     for backend in ["memcache", "fs"] {
         for pass in 1..=passes {
             println!("==> running the suite against {backend} (pass {pass}/{passes})");
-            let results = run_suite(&root, &suite_dir, backend, origin_addr)?;
+            let results = run_suite(&root, &suite_dir, backend, origin_addr, proxy_args)?;
             runs.entry(backend).or_default().push(results);
         }
     }
@@ -405,7 +419,7 @@ fn cache_tests(results_out: Option<&Path>, verbose: bool, passes: usize) -> Resu
     let regressions = report_differential(&kinds, &runs["memcache"], &runs["fs"]);
     // The baseline report covers every pass this backend ran, not just one
     // of them: a required failure counts only when it failed in all of them
-    // (TC-COMPLIANCE.RFC-01 step 3, "re-run ... to separate a reproducible
+    // (TC-COMPLIANCE.RFC-02 step 3, "re-run ... to separate a reproducible
     // difference from a timing-dependent one").
     let baseline = report_cache_tests(&root, &catalog, &runs["fs"], verbose);
 
@@ -418,13 +432,14 @@ fn cache_tests(results_out: Option<&Path>, verbose: bool, passes: usize) -> Resu
     baseline
 }
 
-/// Start a fixture-proxy on `backend`, run the whole suite against it, and
-/// return the results JSON.
+/// Start a fixture-proxy on `backend`, with `proxy_args` besides, run the
+/// whole suite against it, and return the results JSON.
 fn run_suite(
     root: &Path,
     suite_dir: &Path,
     backend: &str,
     origin_addr: SocketAddr,
+    proxy_args: &[String],
 ) -> Result<serde_json::Value> {
     let proxy_addr = free_port()?;
     // On disk, under the target directory: page-cache reads, on by default
@@ -445,6 +460,7 @@ fn run_suite(
             .arg(cache_dir.path())
             .arg("--storage")
             .arg(backend)
+            .args(proxy_args)
             .env("RUST_LOG", "warn")
             .stdout(Stdio::null()),
     )?;
@@ -484,7 +500,7 @@ fn kinds_by_id(catalog: &serde_json::Value) -> Result<BTreeMap<String, String>> 
     Ok(kinds)
 }
 
-/// How good an outcome is, for the ranking TC-COMPLIANCE.RFC-01 compares on:
+/// How good an outcome is, for the ranking TC-COMPLIANCE.RFC-02 compares on:
 /// pass, then suboptimal, then fail. `None` is an untested test.
 fn rank(kind: &str, result: Option<&serde_json::Value>) -> Option<u8> {
     let result = result?;
@@ -537,7 +553,7 @@ fn report_differential(
     }
 
     println!(
-        "TC-COMPLIANCE.RFC-01 differential (this backend vs MemCache, {} pass(es) each):",
+        "TC-COMPLIANCE.RFC-02 differential (this backend vs MemCache, {} pass(es) each):",
         memcache.len()
     );
     println!(
@@ -700,7 +716,7 @@ fn report_cache_tests(
     }
 
     if new_failures.is_empty() {
-        println!("\nNo unallowlisted required failures. TC-COMPLIANCE.RFC-01 baseline is clean.");
+        println!("\nNo unallowlisted required failures. TC-COMPLIANCE.RFC-02 baseline is clean.");
         return Ok(());
     }
 
@@ -714,7 +730,7 @@ fn report_cache_tests(
     }
     println!(
         "\nEach of these must be triaged against the behaviour of pingora-cache\n\
-         itself before being attributed to this backend (TC-COMPLIANCE.RFC-01).\n\
+         itself before being attributed to this backend (TC-COMPLIANCE.RFC-02).\n\
          If it is genuinely a failure of pingora-cache, add it to {} with the\n\
          source citation that establishes that; otherwise it is a real regression.",
         baseline_path.display()
@@ -737,7 +753,7 @@ fn trace_report() -> Result<()> {
     // Collect every `tc_...` test fn name, and every `IMP-TC.<ID>` marker,
     // anywhere in the workspace. Both are traceability evidence: a test fn
     // is the usual form, but a TC verified by tooling rather than by a
-    // `#[test]` (TC-COMPLIANCE.RFC-01, which `cargo xtask cache-tests`
+    // `#[test]` (TC-COMPLIANCE.RFC-02, which `cargo xtask cache-tests`
     // discharges) has only the marker -- the same marker `reqman-report.py`
     // reads, so the two tools agree by construction.
     let mut found_fns: Vec<String> = Vec::new();

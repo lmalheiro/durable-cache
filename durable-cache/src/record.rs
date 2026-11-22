@@ -284,7 +284,7 @@ fn read_record_with(
 /// attempts.
 ///
 /// Blocking, and deliberately so: every caller reaches it from Tokio's
-/// blocking pool (FDS-STORAGE.EXECUTOR-03), where yielding the thread is the
+/// blocking pool (FDS-STORAGE.EXECUTOR-04), where yielding the thread is the
 /// right thing to do and an `.await` is not available.
 pub fn read_record_blocking(
     file: &File,

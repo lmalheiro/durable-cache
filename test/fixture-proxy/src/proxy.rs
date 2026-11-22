@@ -43,7 +43,7 @@ pub struct FixtureProxy {
     pub upstream_tls: bool,
     pub upstream_sni: String,
     /// The storage backend under test: this crate's `FsCache`, or the stock
-    /// `MemCache` that TC-COMPLIANCE.RFC-01 compares it against.
+    /// `MemCache` that TC-COMPLIANCE.RFC-02 compares it against.
     pub cache: &'static (dyn pingora_cache::storage::Storage + Sync),
     pub eviction: &'static EvictionManager,
 }

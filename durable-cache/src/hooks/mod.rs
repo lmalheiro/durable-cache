@@ -98,12 +98,17 @@ pub enum PausePoint {
     /// blocking pool inside a runtime, or where the handler is dropped
     /// outside one. The file is an aborted or discarded store's temporary, a
     /// record replaced or purged while a hit read it, or a removed temporary
-    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-03).
+    /// that a partial hit read. Path: that file (FDS-STORAGE.EXECUTOR-04).
     BeforeClosingRemovedFile,
     /// Store: at the start of its miss handler's `Drop`. A test holds a
     /// store here to see on which thread its handler is dropped. Path: the
-    /// canonical record (FDS-STORAGE.EXECUTOR-03).
+    /// canonical record (FDS-STORAGE.EXECUTOR-04).
     StoreDropping,
+    /// Store: in the operation that writes a body chunk, before the write,
+    /// wherever it runs: on the worker, in an inline slot, or on the
+    /// blocking pool. A test holds a write here to keep its slot taken.
+    /// Path: the store's temporary (TC-STORAGE.INLINEWRITES-01).
+    WritingBodyChunk,
 }
 
 /// An I/O operation a test can make fail. Each says which test cases' tests
@@ -218,6 +223,7 @@ pub struct Hooks {
     #[cfg(target_os = "linux")]
     worker_faults: Mutex<Vec<worker::WorkerFault>>,
     handoffs: AtomicU64,
+    inline_ops: AtomicU64,
     marker_writes: AtomicU64,
 }
 
@@ -310,6 +316,17 @@ impl Hooks {
 
     pub(crate) fn count_handoff(&self) {
         self.handoffs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many operations of unsynchronised stores this backend has run on
+    /// the worker that polled them, in an inline slot
+    /// (TC-STORAGE.INLINEWRITES-01).
+    pub fn inline_ops(&self) -> u64 {
+        self.inline_ops.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn count_inline_op(&self) {
+        self.inline_ops.fetch_add(1, Ordering::Relaxed);
     }
 
     /// How many times this backend has written its unsynchronised-store

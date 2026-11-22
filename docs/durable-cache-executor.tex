@@ -11,12 +11,12 @@
 This appendix records an investigation that this version leaves open:
 whether the backend could do its file I/O on the worker threads that poll
 it, instead of handing each operation to Tokio's blocking pool as
-\reqref{ADR-STORAGE.EXECUTOR-03} decides. It collects what was measured,
+\reqref{ADR-STORAGE.EXECUTOR-04} decides. It collects what was measured,
 what the kernel allows, and the directions a later version could take.
 Nothing here is normative: no requirement, decision or test case of this
 version depends on it. A later version that takes the work up would
-complement \reqref{ADR-STORAGE.EXECUTOR-03} and
-\reqref{FDS-STORAGE.EXECUTOR-03}, as \reqref{ADR-STORAGE.PAGECACHE-01} does
+complement \reqref{ADR-STORAGE.EXECUTOR-04} and
+\reqref{FDS-STORAGE.EXECUTOR-04}, as \reqref{ADR-STORAGE.PAGECACHE-01} does
 for reads, and each mechanism it adds would have to meet
 \reqref{HLR-SCOPE.V1-02}: improve, by at least 20\,\%, a figure that a
 performance test case measures.
@@ -40,7 +40,7 @@ On Linux, the reads that the page cache answers no longer pay it
 (\reqref{ADR-STORAGE.PAGECACHE-01}); stores still do. A store makes at
 least two handoffs: one to create its temporary and write the record's
 fixed part, one per body chunk but the last, and one to publish it, which
-also writes the last chunk (\reqref{FDS-STORAGE.EXECUTOR-03},
+also writes the last chunk (\reqref{FDS-STORAGE.EXECUTOR-04},
 \reqref{ADR-STORAGE.LASTCHUNK-01}).
 \texttt{pingora-proxy} hands a store the body bytes that arrive with the
 response's headers as a chunk of their own, so even a 4~KiB body comes in
@@ -75,10 +75,10 @@ take over the tasks queued on it.
 
 A prototype changed only the function through which every operation
 reaches the pool, and the close of a removed file
-(\reqref{FDS-STORAGE.EXECUTOR-03}). An environment variable, read once,
+(\reqref{FDS-STORAGE.EXECUTOR-04}). An environment variable, read once,
 chose among three executors:
 \begin{itemize}
-  \item \emph{pool}: \reqref{ADR-STORAGE.EXECUTOR-03} as specified, the
+  \item \emph{pool}: \reqref{ADR-STORAGE.EXECUTOR-04} as specified, the
     reference;
   \item \emph{inline}: each operation runs on the worker that polls it;
   \item \emph{block in place}: each operation runs on the worker too,
@@ -199,7 +199,7 @@ aborted stores, purged records and published stores. The two that never
 ended pause an update between its writes, to check that a lookup waits it
 out (\reqref{TC-LAYOUT.OBJECTFILE-01}, \reqref{TC-STORAGE.RECLAIM-01}); the
 test's runtime has one thread, which the paused update then holds. These
-tests check \reqref{FDS-STORAGE.EXECUTOR-03}, which the inline executor
+tests check \reqref{FDS-STORAGE.EXECUTOR-04}, which the inline executor
 sets aside by design: a mode that runs work on the workers needs a
 functional design and test cases of its own.
 
@@ -327,14 +327,21 @@ Open questions:
   \item With work stealing off, each Pingora worker runs a runtime of its
     own, and nothing takes over the tasks of a stalled worker: the mode
     needs work stealing on.
-  \item The deviation \reqref{ADR-STORAGE.EXECUTOR-03} records --- an
+  \item The deviation \reqref{ADR-STORAGE.EXECUTOR-04} records --- an
     upstream \texttt{103 Early Hints} lost while a sole worker was blocked
-    --- came from a stalled worker: \reqref{TC-COMPLIANCE.RFC-01}'s
+    --- came from a stalled worker: \reqref{TC-COMPLIANCE.RFC-02}'s
     differential would have to pass in this mode too.
-  \item \reqref{FDS-STORAGE.EXECUTOR-03} and its test cases describe the mode
+  \item \reqref{FDS-STORAGE.EXECUTOR-04} and its test cases describe the mode
     with $K = 0$; the others need a functional design and test cases of their
     own.
 \end{itemize}
+\reqref{ADR-STORAGE.INLINEWRITES-01} adopts this direction, with three
+slots by default, and settles these questions. The backend reads the
+workers of the runtime that polls each operation from Tokio, and uses at
+most one fewer slot; with work stealing off, each runtime has one worker,
+and so takes none. \reqref{TC-COMPLIANCE.RFC-02} runs its differential in
+this mode too. \reqref{FDS-STORAGE.INLINEWRITES-01} specifies the slots, and
+\reqref{TC-STORAGE.INLINEWRITES-01} tests them.
 
 \subsection{Early write-back}
 \label{app:executor-writeback}
