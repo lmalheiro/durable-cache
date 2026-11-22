@@ -287,8 +287,8 @@ async fn tc_compat_hotupgrade_01_a_store_completing_after_the_signal_is_not_publ
 }
 
 /// Every record and temporary under a cache directory, ignoring the empty
-/// shard tree, the writers' leases, and the pid/upgrade-socket files
-/// `fixture-proxy` keeps beside it.
+/// shard tree, the writers' leases, and the pid file `fixture-proxy` keeps
+/// beside them.
 fn count_files(root: &std::path::Path) -> usize {
     fn walk(dir: &std::path::Path, count: &mut usize) {
         let Ok(entries) = std::fs::read_dir(dir) else {
