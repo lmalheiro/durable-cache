@@ -16,7 +16,10 @@
 //! It is the harness of TC-PERFORMANCE.HITRATE-01, with durable-cache in its
 //! default configuration, and of TC-PERFORMANCE.STORERATE-01, with
 //! `--durability no-store-sync`: each compares durable-cache's median rates
-//! with those of `MemCache`.
+//! with those of `MemCache`. It is also the harness of
+//! TC-PERFORMANCE.BURSTHITS-01, with `--only hits,burst --memory-max 2G`,
+//! once for each durability: it compares the 99th percentile of 1 KiB hits
+//! during the burst of stores with that of the same hits alone.
 //!
 //! Beyond the test cases, it measures what the work on the write path needs
 //! (the spec's Appendix C, "What a Later Version Should Measure"): the
@@ -43,6 +46,7 @@ use crate::{free_port, target_dir, wait_until_listening, workspace_root, ChildGu
 
 // IMP-TC.PERFORMANCE.HITRATE-01: satisfy TC-PERFORMANCE.HITRATE-01
 // IMP-TC.PERFORMANCE.STORERATE-01: satisfy TC-PERFORMANCE.STORERATE-01
+// IMP-TC.PERFORMANCE.BURSTHITS-01: satisfy TC-PERFORMANCE.BURSTHITS-01
 
 /// The cache-hit scenarios: body sizes, each over `HIT_OBJECTS` objects.
 const HIT_SIZES: [&str; 3] = ["1k", "64k", "1m"];
@@ -73,6 +77,15 @@ const BURST_FILL_SIZE: &str = "1m";
 const BURST_FILLS: usize = 4_000;
 const BURST_FILL_CONNECTIONS: usize = 16;
 const BURST_LEAD: Duration = Duration::from_secs(1);
+/// How long the bench rests before each burst. The runs before it keep the
+/// processors busy for half a minute or more, and a processor that limits
+/// its power, as a laptop's does, then runs at a lower clock for a while:
+/// the burst would be measured at a lower clock than the hits alone it is
+/// compared with. The report gives every run's clock.
+const BURST_REST: Duration = Duration::from_secs(60);
+/// TC-PERFORMANCE.BURSTHITS-01's bound: the hits' 99th percentile during
+/// the burst at most this many times its value without it.
+const BURST_P99_BOUND: f64 = 2.0;
 /// The cold reads: `COLD_OBJECTS` objects of `COLD_SIZE`, stored, evicted
 /// from the page cache, and each requested once over `COLD_CONNECTIONS`
 /// connections; then requested once more, cached.
@@ -101,6 +114,9 @@ const CENSUS_CALLS: [(&str, &[&str]); 8] = [
 ];
 /// How often the probe samples the server's threads and the dirty data.
 const SAMPLE_PERIOD: Duration = Duration::from_millis(100);
+/// How long the bench waits, before each server's runs, for the host to
+/// settle after the last ones ([`settle`]).
+const SETTLE_LIMIT: Duration = Duration::from_secs(120);
 
 /// The scenarios `--only` selects; all of them unless it names some.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
@@ -131,6 +147,9 @@ pub struct Options {
     pub durability: String,
     /// More arguments for fixture-proxy on durable-cache.
     pub proxy_args: Vec<String>,
+    /// The memory limit of each server's control group, as systemd's
+    /// `MemoryMax=` takes it, or none for no group of its own.
+    pub memory_max: Option<String>,
     pub scenarios: BTreeSet<Scenario>,
 }
 
@@ -189,6 +208,9 @@ struct Run {
     /// The most dirty data and data under write-back on the host, in MiB.
     dirty_mib: f64,
     writeback_mib: f64,
+    /// The mean clock of the server's processors, in GHz, where cpufreq
+    /// reports it.
+    clock_ghz: Option<f64>,
 }
 
 impl Run {
@@ -199,6 +221,8 @@ impl Run {
         self.threads = usage.peaks.threads;
         self.dirty_mib = usage.peaks.dirty_kib as f64 / 1024.0;
         self.writeback_mib = usage.peaks.writeback_kib as f64 / 1024.0;
+        self.clock_ghz = (usage.peaks.clock_samples > 0)
+            .then(|| usage.peaks.clock_khz_sum / f64::from(usage.peaks.clock_samples) / 1e6);
     }
 }
 
@@ -206,6 +230,13 @@ impl Run {
 struct Burst {
     hits: Run,
     fills: Run,
+    /// Whether the stores were still running when the hits ended.
+    stores_outlasted_hits: bool,
+    /// With `--memory-max`: whether the server's control group reached its
+    /// memory limit during the stores, and the share of the hits' time in
+    /// which some task of the group waited for I/O.
+    limit_reached: Option<bool>,
+    io_stall: Option<f64>,
 }
 
 /// The cold reads' figures: the objects evicted, then cached.
@@ -218,6 +249,9 @@ struct Machine {
     server_cpus: String,
     load_cpus: String,
     threads: usize,
+    /// The processors whose clock the probe averages: the server's, or
+    /// every one when the server is not pinned.
+    clock_cpus: Vec<usize>,
 }
 
 /// Every figure of a benchmark, by scenario and server.
@@ -227,6 +261,9 @@ struct Results {
     bursts: BTreeMap<Server, Vec<Burst>>,
     colds: BTreeMap<Server, Vec<Cold>>,
     census: Vec<CensusRow>,
+    /// The server runs before which the host had not settled within
+    /// `SETTLE_LIMIT`, as round and server.
+    unsettled: Vec<(usize, Server)>,
 }
 
 /// One case of the census: the requests it made, and the calls of each
@@ -325,6 +362,13 @@ pub fn bench(options: Options) -> Result<()> {
                 options.rounds,
                 server.label()
             );
+            if !settle() {
+                println!(
+                    "    the host had not settled within {} s",
+                    SETTLE_LIMIT.as_secs()
+                );
+                results.unsettled.push((round, server));
+            }
             let addr = free_port()?;
             let dir = work.join(format!("round-{round}/{}", server.slug()));
             std::fs::create_dir_all(&dir)?;
@@ -347,7 +391,7 @@ pub fn bench(options: Options) -> Result<()> {
                     let before = origin_requests(&origin_log, size)?;
                     let duration = format!("{}s", options.duration);
                     let connections = options.connections.to_string();
-                    let probe = Probe::start(group)?;
+                    let probe = Probe::start(group, &machine)?;
                     let mut run = oha(
                         &options.oha,
                         &machine.load_cpus,
@@ -368,7 +412,7 @@ pub fn bench(options: Options) -> Result<()> {
                 for (size, requests) in FILLS {
                     let url = format!("http://{addr}/{size}/f[0-9]{{12}}");
                     let before = origin_requests(&origin_log, size)?;
-                    let probe = Probe::start(group)?;
+                    let probe = Probe::start(group, &machine)?;
                     let mut run = oha(
                         &options.oha,
                         &machine.load_cpus,
@@ -391,13 +435,15 @@ pub fn bench(options: Options) -> Result<()> {
                 }
             }
             if server.on_disk() && wants(Scenario::Burst) {
+                println!("    resting {} s before the burst", BURST_REST.as_secs());
+                std::thread::sleep(BURST_REST);
                 let burst = burst(&options, &machine, addr, group, server, &origin_log)?;
                 save(&work, round, server, "burst-hits", &burst.hits)?;
                 save(&work, round, server, "burst-fills", &burst.fills)?;
                 results.bursts.entry(server).or_default().push(burst);
             }
             if server.on_disk() && wants(Scenario::Cold) {
-                let cold = cold(addr, group, &dir.join("cache"), &origin_log)?;
+                let cold = cold(addr, group, &machine, &dir.join("cache"), &origin_log)?;
                 save(&work, round, server, "cold-evicted", &cold.evicted)?;
                 save(&work, round, server, "cold-cached", &cold.cached)?;
                 results.colds.entry(server).or_default().push(cold);
@@ -444,16 +490,15 @@ fn start_server(
             std::fs::create_dir_all(dir.join("tmp"))?;
             let conf = dir.join("nginx.conf");
             std::fs::write(&conf, cache_config(dir, addr, origin_addr, machine.threads))?;
-            ChildGuard::spawn(
-                "nginx",
-                pinned(&machine.server_cpus, &options.nginx)
-                    .arg("-p")
-                    .arg(dir)
-                    .arg("-c")
-                    .arg(&conf)
-                    .arg("-e")
-                    .arg(dir.join("error.log")),
-            )
+            let mut command = pinned(&machine.server_cpus, &options.nginx);
+            command
+                .arg("-p")
+                .arg(dir)
+                .arg("-c")
+                .arg(&conf)
+                .arg("-e")
+                .arg(dir.join("error.log"));
+            ChildGuard::spawn("nginx", &mut contained(options, command))
         }
         Server::DurableCache | Server::MemCache => {
             let (storage, more_args) = if server == Server::DurableCache {
@@ -461,25 +506,94 @@ fn start_server(
             } else {
                 ("memcache", &[][..])
             };
-            ChildGuard::spawn(
-                "fixture-proxy",
-                pinned(&machine.server_cpus, fixture_proxy)
-                    .arg("--listen-addr")
-                    .arg(addr.to_string())
-                    .arg("--upstream-addr")
-                    .arg(origin_addr.to_string())
-                    .arg("--cache-dir")
-                    .arg(dir.join("cache"))
-                    .arg("--storage")
-                    .arg(storage)
-                    .arg("--durability")
-                    .arg(&options.durability)
-                    .arg("--threads")
-                    .arg(machine.threads.to_string())
-                    .args(more_args),
-            )
+            let mut command = pinned(&machine.server_cpus, fixture_proxy);
+            command
+                .arg("--listen-addr")
+                .arg(addr.to_string())
+                .arg("--upstream-addr")
+                .arg(origin_addr.to_string())
+                .arg("--cache-dir")
+                .arg(dir.join("cache"))
+                .arg("--storage")
+                .arg(storage)
+                .arg("--durability")
+                .arg(&options.durability)
+                .arg("--threads")
+                .arg(machine.threads.to_string())
+                .args(more_args);
+            ChildGuard::spawn("fixture-proxy", &mut contained(options, command))
         }
     }
+}
+
+/// `command` in a control group of its own, its memory limited as
+/// `--memory-max` asks, if it does: a transient scope of the user's service
+/// manager, which needs systemd with the memory controller delegated.
+/// `systemd-run` executes the command itself, so its process id is the
+/// server's.
+fn contained(options: &Options, command: Command) -> Command {
+    static SCOPES: AtomicUsize = AtomicUsize::new(0);
+    let Some(limit) = &options.memory_max else {
+        return command;
+    };
+    let mut scoped = Command::new("systemd-run");
+    scoped
+        .args(["--user", "--scope", "--quiet"])
+        .arg(format!(
+            "--unit=durable-cache-bench-{}-{}",
+            std::process::id(),
+            SCOPES.fetch_add(1, Ordering::Relaxed)
+        ))
+        .arg(format!("--property=MemoryMax={limit}"))
+        .arg("--")
+        .arg(command.get_program())
+        .args(command.get_args());
+    scoped
+}
+
+/// The cgroup v2 directory that process `pid` belongs to.
+fn cgroup_dir(pid: u32) -> Result<PathBuf> {
+    let groups = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
+        .with_context(|| format!("failed to read the control group of process {pid}"))?;
+    let path = groups
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .with_context(|| format!("process {pid} is in no cgroup v2 group"))?;
+    Ok(Path::new("/sys/fs/cgroup").join(path.trim_start_matches('/')))
+}
+
+/// The value of `key` in a cgroup's flat keyed file, `file`: the `max`
+/// count of `memory.events`, the times the group's memory reached its
+/// limit.
+fn cgroup_count(dir: &Path, file: &str, key: &str) -> Result<u64> {
+    let path = dir.join(file);
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    text.lines()
+        .find_map(|line| {
+            line.strip_prefix(key)?
+                .strip_prefix(' ')?
+                .trim()
+                .parse()
+                .ok()
+        })
+        .with_context(|| format!("{} has no {key}", path.display()))
+}
+
+/// The microseconds in which some task of a cgroup has waited for I/O, the
+/// `total` of the `some` line of its `io.pressure`.
+fn cgroup_io_stall_us(dir: &Path) -> Result<u64> {
+    let path = dir.join("io.pressure");
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    text.lines()
+        .find(|line| line.starts_with("some "))
+        .and_then(|line| {
+            line.split_whitespace()
+                .find_map(|f| f.strip_prefix("total="))
+        })
+        .and_then(|total| total.parse().ok())
+        .with_context(|| format!("{} has no total for some", path.display()))
 }
 
 /// Fetches the objects of a hit scenario once each, at least, one request at
@@ -501,7 +615,10 @@ fn warm(options: &Options, machine: &Machine, url: &str, server: Server, size: &
 }
 
 /// Measures `BURST_HIT_SIZE` hits while new `BURST_FILL_SIZE` bodies are
-/// stored, each load on its own half of the load CPUs.
+/// stored, each load on its own half of the load CPUs. With `--memory-max`,
+/// it also reads, from the server's control group, whether its memory
+/// reached the limit during the stores, and how long its tasks waited for
+/// I/O during the hits.
 fn burst(
     options: &Options,
     machine: &Machine,
@@ -512,11 +629,19 @@ fn burst(
 ) -> Result<Burst> {
     let hit_url = format!("http://{addr}/{BURST_HIT_SIZE}/[0-9]{{2}}");
     warm(options, machine, &hit_url, server, BURST_HIT_SIZE)?;
+    let cgroup = match options.memory_max {
+        Some(_) => Some(cgroup_dir(group)?),
+        None => None,
+    };
+    let limits_before = match &cgroup {
+        Some(dir) => Some(cgroup_count(dir, "memory.events", "max")?),
+        None => None,
+    };
     let (hit_cpus, fill_cpus) = split_cpus(&machine.load_cpus);
     let fill_url = format!("http://{addr}/{BURST_FILL_SIZE}/b[0-9]{{12}}");
     let oha_path = options.oha.clone();
     let fills = std::thread::spawn(move || {
-        oha(
+        let run = oha(
             &oha_path,
             &fill_cpus,
             &[
@@ -526,11 +651,17 @@ fn burst(
                 &BURST_FILL_CONNECTIONS.to_string(),
             ],
             &fill_url,
-        )
+        );
+        (run, Instant::now())
     });
     std::thread::sleep(BURST_LEAD);
     let before = origin_requests(origin_log, BURST_HIT_SIZE)?;
-    let probe = Probe::start(group)?;
+    let stall_before = match &cgroup {
+        Some(dir) => Some(cgroup_io_stall_us(dir)?),
+        None => None,
+    };
+    let probe = Probe::start(group, machine)?;
+    let hits_start = Instant::now();
     let duration = format!("{}s", BURST_HITS.as_secs());
     let mut hits = oha(
         &options.oha,
@@ -544,17 +675,43 @@ fn burst(
         ],
         &hit_url,
     )?;
+    let hits_end = Instant::now();
+    let io_stall = match (&cgroup, stall_before) {
+        (Some(dir), Some(before)) => Some(
+            cgroup_io_stall_us(dir)?.saturating_sub(before) as f64
+                / 1e6
+                / (hits_end - hits_start).as_secs_f64(),
+        ),
+        _ => None,
+    };
     hits.record(&probe.finish()?);
     hits.origin_requests = origin_requests(origin_log, BURST_HIT_SIZE)? - before;
-    let fills = fills
+    let (fills, fills_end) = fills
         .join()
-        .map_err(|_| anyhow!("the burst's store load panicked"))??;
-    Ok(Burst { hits, fills })
+        .map_err(|_| anyhow!("the burst's store load panicked"))?;
+    let fills = fills?;
+    let limit_reached = match (&cgroup, limits_before) {
+        (Some(dir), Some(before)) => Some(cgroup_count(dir, "memory.events", "max")? > before),
+        _ => None,
+    };
+    Ok(Burst {
+        hits,
+        fills,
+        stores_outlasted_hits: fills_end > hits_end,
+        limit_reached,
+        io_stall,
+    })
 }
 
 /// Stores `COLD_OBJECTS` objects, evicts their files from the page cache,
 /// and requests each once, then once more, now cached.
-fn cold(addr: SocketAddr, group: u32, cache: &Path, origin_log: &Path) -> Result<Cold> {
+fn cold(
+    addr: SocketAddr,
+    group: u32,
+    machine: &Machine,
+    cache: &Path,
+    origin_log: &Path,
+) -> Result<Cold> {
     let paths: Vec<String> = (0..COLD_OBJECTS)
         .map(|i| format!("/{COLD_SIZE}/c{i:04}"))
         .collect();
@@ -575,7 +732,7 @@ fn cold(addr: SocketAddr, group: u32, cache: &Path, origin_log: &Path) -> Result
     }
     let measure = |what: &str| -> Result<Run> {
         let before = origin_requests(origin_log, COLD_SIZE)?;
-        let probe = Probe::start(group)?;
+        let probe = Probe::start(group, machine)?;
         let mut run = fetch_each(addr, &paths, COLD_CONNECTIONS)?;
         run.record(&probe.finish()?);
         run.origin_requests = origin_requests(origin_log, COLD_SIZE)? - before;
@@ -746,9 +903,45 @@ fn split_cpus(cpus: &str) -> (String, String) {
     (first.join(","), second.join(","))
 }
 
+/// The processors of a list as `taskset -c` takes it: numbers and ranges,
+/// comma-separated (`0,1,4-5`). `None` if it is not one.
+fn cpu_list(cpus: &str) -> Option<Vec<usize>> {
+    let mut list = Vec::new();
+    for part in cpus.split(',').filter(|part| !part.is_empty()) {
+        match part.split_once('-') {
+            Some((first, last)) => {
+                let first: usize = first.trim().parse().ok()?;
+                let last: usize = last.trim().parse().ok()?;
+                list.extend(first..=last);
+            }
+            None => list.push(part.trim().parse().ok()?),
+        }
+    }
+    Some(list)
+}
+
+/// The mean clock of processors `cpus`, in kHz, as cpufreq reports it;
+/// `None` where it does not, in a virtual machine for one.
+fn mean_clock_khz(cpus: &[usize]) -> Option<f64> {
+    let clocks: Vec<f64> = cpus
+        .iter()
+        .filter_map(|cpu| {
+            std::fs::read_to_string(format!(
+                "/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_cur_freq"
+            ))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+        })
+        .collect();
+    (!clocks.is_empty()).then(|| clocks.iter().sum::<f64>() / clocks.len() as f64)
+}
+
 /// What a server's processes used during a run, read from /proc: their
 /// processor time, sampled peaks of their threads and of the host's dirty
-/// data, from `start` to `finish`.
+/// data, and the mean clock of the server's processors, from `start` to
+/// `finish`.
 struct Probe {
     group: u32,
     start_ticks: u64,
@@ -761,6 +954,10 @@ struct Peaks {
     threads: usize,
     dirty_kib: u64,
     writeback_kib: u64,
+    /// The sum of the sampled mean clocks, in kHz, and how many samples
+    /// read one.
+    clock_khz_sum: f64,
+    clock_samples: u32,
 }
 
 struct Usage {
@@ -770,11 +967,12 @@ struct Usage {
 
 impl Probe {
     /// Starts measuring the processes of process group `group`, the server
-    /// and any process it started.
-    fn start(group: u32) -> Result<Self> {
+    /// and any process it started, on `machine`.
+    fn start(group: u32, machine: &Machine) -> Result<Self> {
         let start_ticks = group_ticks(group)?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
+        let clock_cpus = machine.clock_cpus.clone();
         let sampler = std::thread::spawn(move || {
             let mut peaks = Peaks::default();
             while !stopped.load(Ordering::Relaxed) {
@@ -782,6 +980,10 @@ impl Probe {
                 let (dirty, writeback) = dirty_kib();
                 peaks.dirty_kib = peaks.dirty_kib.max(dirty);
                 peaks.writeback_kib = peaks.writeback_kib.max(writeback);
+                if let Some(khz) = mean_clock_khz(&clock_cpus) {
+                    peaks.clock_khz_sum += khz;
+                    peaks.clock_samples += 1;
+                }
                 std::thread::sleep(SAMPLE_PERIOD);
             }
             peaks
@@ -865,6 +1067,42 @@ fn group_threads(group: u32) -> usize {
 
 /// The host's dirty data and data under write-back, in KiB
 /// (`/proc/meminfo`).
+/// Waits, for at most `SETTLE_LIMIT`, until the last runs have left the host
+/// at rest: dirty data under 64 MiB and write-back under 1 MiB, and the
+/// 10-second averages of I/O and processor pressure under 1 %. A server
+/// stopped after a burst of stores leaves the kernel writing back and
+/// freeing its files for a while, which would otherwise weigh on the next
+/// server's runs. Returns whether the host settled.
+fn settle() -> bool {
+    let deadline = Instant::now() + SETTLE_LIMIT;
+    loop {
+        let (dirty, writeback) = dirty_kib();
+        let at_rest = dirty < 64 * 1024
+            && writeback < 1024
+            && pressure_avg10("/proc/pressure/io").is_some_and(|p| p < 1.0)
+            && pressure_avg10("/proc/pressure/cpu").is_some_and(|p| p < 1.0);
+        if at_rest {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// The 10-second average of the `some` line of a pressure file, in percent.
+fn pressure_avg10(path: &str) -> Option<f64> {
+    std::fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .find(|line| line.starts_with("some "))?
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("avg10="))?
+        .parse()
+        .ok()
+}
+
 fn dirty_kib() -> (u64, u64) {
     let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
     let field = |name: &str| {
@@ -1099,10 +1337,17 @@ fn machine(options: &Options) -> Result<Machine> {
         None => server_cpus.split(',').count(),
     }
     .max(1);
+    let clock_cpus = if server_cpus.is_empty() {
+        (0..count).collect()
+    } else {
+        cpu_list(&server_cpus)
+            .with_context(|| format!("unexpected processor list {server_cpus:?}"))?
+    };
     Ok(Machine {
         server_cpus,
         load_cpus,
         threads,
+        clock_cpus,
     })
 }
 
@@ -1303,6 +1548,7 @@ fn save(work: &Path, round: usize, server: Server, scenario: &str, run: &Run) ->
         "peakThreads": run.threads,
         "peakDirtyMiB": run.dirty_mib,
         "peakWritebackMiB": run.writeback_mib,
+        "clockGHz": run.clock_ghz,
     });
     std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
     Ok(())
@@ -1324,6 +1570,17 @@ fn median(mut values: Vec<f64>) -> f64 {
 /// The median of `field` over `runs`.
 fn median_of(runs: &[&Run], field: impl Fn(&Run) -> f64) -> f64 {
     median(runs.iter().map(|run| field(run)).collect())
+}
+
+/// The median clock of `runs`, over those that read one, for a table:
+/// `-` if none did.
+fn clock(runs: &[&Run]) -> String {
+    let clocks: Vec<f64> = runs.iter().filter_map(|run| run.clock_ghz).collect();
+    if clocks.is_empty() {
+        "-".to_owned()
+    } else {
+        format!("{:.1} GHz", median(clocks))
+    }
 }
 
 fn millis(seconds: f64) -> String {
@@ -1348,11 +1605,17 @@ fn report(
                 .map(|name| name.trim().to_owned())
         })
         .unwrap_or_else(|| "unknown CPU".to_owned());
-    let proxy_args = if options.proxy_args.is_empty() {
+    let mut proxy_args = if options.proxy_args.is_empty() {
         String::new()
     } else {
         format!(", with `{}`", options.proxy_args.join(" "))
     };
+    if let Some(limit) = &options.memory_max {
+        write!(
+            proxy_args,
+            "; each server in a control group whose memory is limited to {limit}"
+        )?;
+    }
     writeln!(out, "# durable-cache benchmark\n")?;
     writeln!(
         out,
@@ -1360,7 +1623,11 @@ fn report(
          {nginx_version}, {oha_version}; caches in {}; durable-cache stores \
          {}{proxy_args}. Medians of {} round(s), {} connections; errors and \
          origin requests are totals over the rounds. CPU is the server's \
-         processor time per request; threads, the most the server ran.\n",
+         processor time per request; threads, the most the server ran; \
+         clock, the mean clock of the server's processors. Before each \
+         server's runs, the host settled: dirty data under 64 MiB, \
+         write-back under 1 MiB, and I/O and processor pressure under 1 % \
+         over 10 s.\n",
         if machine.server_cpus.is_empty() {
             "(unpinned)"
         } else {
@@ -1377,6 +1644,19 @@ fn report(
         options.rounds,
         options.connections,
     )?;
+    if !results.unsettled.is_empty() {
+        let runs: Vec<String> = results
+            .unsettled
+            .iter()
+            .map(|(round, server)| format!("round {}, {}", round + 1, server.label()))
+            .collect();
+        writeln!(
+            out,
+            "**The host had not settled within {} s before**: {}.\n",
+            SETTLE_LIMIT.as_secs(),
+            runs.join("; ")
+        )?;
+    }
     // Hits from the smallest body to the largest, then fills.
     let scenarios = HIT_SIZES
         .iter()
@@ -1406,9 +1686,12 @@ fn report(
         writeln!(out, "## {title}\n")?;
         writeln!(
             out,
-            "| server | req/s | vs nginx | vs MemCache | p50 | p99 | CPU/req | threads | errors | origin requests |"
+            "| server | req/s | vs nginx | vs MemCache | p50 | p99 | CPU/req | threads | clock | errors | origin requests |"
         )?;
-        writeln!(out, "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")?;
+        writeln!(
+            out,
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        )?;
         let nginx_rps = median_rps(&results.runs, scenario, Server::Nginx);
         let memcache_rps = median_rps(&results.runs, scenario, Server::MemCache);
         for server in Server::ALL {
@@ -1423,13 +1706,14 @@ fn report(
             let vs_memcache = memcache_rps.map_or("-".to_owned(), |m| format!("{:.2}", rps / m));
             writeln!(
                 out,
-                "| {} | {:.0} | {ratio} | {vs_memcache} | {} | {} | {:.0} µs | {:.0} | {errors} | {origin} |",
+                "| {} | {:.0} | {ratio} | {vs_memcache} | {} | {} | {:.0} µs | {:.0} | {} | {errors} | {origin} |",
                 server.label(),
                 rps,
                 millis(median_of(&runs, |r| r.p50)),
                 millis(median_of(&runs, |r| r.p99)),
                 median_of(&runs, |r| r.cpu_us),
                 median_of(&runs, |r| r.threads as f64),
+                clock(&runs),
             )?;
         }
         writeln!(out)?;
@@ -1437,7 +1721,7 @@ fn report(
     write_bursts(&mut out, results, options)?;
     write_colds(&mut out, results)?;
     write_census(&mut out, results, options)?;
-    write_verdicts(&mut out, &results.runs, options)?;
+    write_verdicts(&mut out, results, options)?;
     Ok(out)
 }
 
@@ -1451,19 +1735,33 @@ fn write_bursts(out: &mut String, results: &Results, options: &Options) -> Resul
         "## Hits during a burst of stores\n\n\
          {BURST_HIT_SIZE} hits for {} s over {} connections, while \
          {BURST_FILL_CONNECTIONS} connections store {BURST_FILLS} new \
-         {BURST_FILL_SIZE} bodies, starting {} s earlier. Dirty and \
-         write-back are the host's peaks during the hits.\n",
+         {BURST_FILL_SIZE} bodies, starting {} s earlier. Each burst follows \
+         a rest of {} s, so that the processors regain the clock the hits \
+         alone had, which the {BURST_HIT_SIZE} hits' table gives. Dirty and \
+         write-back are the host's peaks during the hits, and clock the mean \
+         clock of the server's processors.",
         BURST_HITS.as_secs(),
         options.connections,
-        BURST_LEAD.as_secs()
+        BURST_LEAD.as_secs(),
+        BURST_REST.as_secs()
+    )?;
+    match &options.memory_max {
+        Some(limit) => writeln!(
+            out,
+            "Each server runs in a control group of its own, its memory limited \
+             to {limit}: _limit reached_ counts the rounds in which the group \
+             reached it during the stores, and _I/O stall_ is the share of the \
+             hits' time in which some task of the group waited for I/O.\n"
+        )?,
+        None => writeln!(out)?,
+    }
+    writeln!(
+        out,
+        "| server | hits req/s | p50 | p99 | p99 without the burst | stores req/s | stores' length | peak dirty | peak write-back | limit reached | I/O stall | CPU/hit | clock | origin requests |"
     )?;
     writeln!(
         out,
-        "| server | hits req/s | p50 | p99 | p99 without the burst | stores req/s | stores' length | peak dirty | peak write-back | CPU/hit | origin requests |"
-    )?;
-    writeln!(
-        out,
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     )?;
     for (server, bursts) in &results.bursts {
         let hits: Vec<&Run> = bursts.iter().map(|b| &b.hits).collect();
@@ -1475,9 +1773,25 @@ fn write_bursts(out: &mut String, results: &Results, options: &Options) -> Resul
                 millis(median(runs.iter().map(|r| r.p99).collect()))
             });
         let origin: usize = hits.iter().map(|r| r.origin_requests).sum();
+        let reached: Vec<bool> = bursts.iter().filter_map(|b| b.limit_reached).collect();
+        let reached = if reached.is_empty() {
+            "-".to_owned()
+        } else {
+            format!(
+                "{} of {}",
+                reached.iter().filter(|r| **r).count(),
+                reached.len()
+            )
+        };
+        let stalls: Vec<f64> = bursts.iter().filter_map(|b| b.io_stall).collect();
+        let stall = if stalls.is_empty() {
+            "-".to_owned()
+        } else {
+            format!("{:.0} %", median(stalls) * 100.0)
+        };
         writeln!(
             out,
-            "| {} | {:.0} | {} | {} | {alone} | {:.0} | {:.1} s | {:.0} MiB | {:.0} MiB | {:.0} µs | {origin} |",
+            "| {} | {:.0} | {} | {} | {alone} | {:.0} | {:.1} s | {:.0} MiB | {:.0} MiB | {reached} | {stall} | {:.0} µs | {} | {origin} |",
             server.label(),
             median_of(&hits, |r| r.requests_per_sec),
             millis(median_of(&hits, |r| r.p50)),
@@ -1487,10 +1801,71 @@ fn write_bursts(out: &mut String, results: &Results, options: &Options) -> Resul
             median_of(&hits, |r| r.dirty_mib),
             median_of(&hits, |r| r.writeback_mib),
             median_of(&hits, |r| r.cpu_us),
+            clock(&hits),
         )?;
     }
     writeln!(out)?;
     Ok(())
+}
+
+/// The expected result of TC-PERFORMANCE.BURSTHITS-01: over the rounds in
+/// which durable-cache's control group reached its memory limit during the
+/// stores and the stores outlasted the hits, the median 99th percentile of
+/// its hits during the burst at most `BURST_P99_BOUND` times the median of
+/// the same hits alone; no request failing, and the origin asked for none of
+/// the hit objects. `None` when the scenarios or the limit it needs are
+/// missing.
+fn burst_verdict(results: &Results, options: &Options) -> Option<(bool, String)> {
+    options.memory_max.as_ref()?;
+    let bursts = results.bursts.get(&Server::DurableCache)?;
+    let alone = results
+        .runs
+        .get(&(format!("hit-{BURST_HIT_SIZE}"), Server::DurableCache))?;
+    let alone_p99 = median(alone.iter().map(|r| r.p99).collect());
+    let counted: Vec<&Burst> = bursts
+        .iter()
+        .filter(|b| b.limit_reached == Some(true) && b.stores_outlasted_hits)
+        .collect();
+    if counted.is_empty() {
+        let reached = bursts
+            .iter()
+            .filter(|b| b.limit_reached == Some(true))
+            .count();
+        let outlasted = bursts.iter().filter(|b| b.stores_outlasted_hits).count();
+        return Some((
+            false,
+            format!(
+                "no round counts: the memory limit was reached in {reached} of {} rounds, \
+                 and the stores outlasted the hits in {outlasted}",
+                bursts.len()
+            ),
+        ));
+    }
+    let p99 = median(counted.iter().map(|b| b.hits.p99).collect());
+    let ratio = p99 / alone_p99;
+    let errors: u64 = counted
+        .iter()
+        .map(|b| b.hits.errors + b.hits.non_200 + b.fills.errors + b.fills.non_200)
+        .sum();
+    let origin: usize = counted.iter().map(|b| b.hits.origin_requests).sum();
+    let pass = ratio <= BURST_P99_BOUND && errors == 0 && origin == 0;
+    let counted_hits: Vec<&Run> = counted.iter().map(|b| &b.hits).collect();
+    let alone_runs: Vec<&Run> = alone.iter().collect();
+    Some((
+        pass,
+        format!(
+            "durability {}: p99 {} during the burst over {} of {} rounds, {} alone: \
+             {ratio:.2} times (at most {BURST_P99_BOUND:.2}), {errors} errors, \
+             {origin} origin requests (expected 0); clock {} during the burst, {} alone",
+            options.durability,
+            millis(p99),
+            counted.len(),
+            bursts.len(),
+            millis(alone_p99),
+            clock(&counted_hits),
+            clock(&alone_runs),
+        ),
+    ))
 }
 
 /// The cold reads' table: the objects evicted from the page cache, then
@@ -1588,12 +1963,10 @@ fn median_rps(
 /// TC-PERFORMANCE.STORERATE-01: durable-cache's median rate at least 0.60
 /// (hits) or 0.40 (fills, with stores unsynchronised) of MemCache's, no
 /// request failing, and the origin asked for nothing during a hit run and
-/// for each new URL of a fill run once.
-fn write_verdicts(
-    out: &mut String,
-    runs: &BTreeMap<(String, Server), Vec<Run>>,
-    options: &Options,
-) -> Result<()> {
+/// for each new URL of a fill run once; and that of
+/// TC-PERFORMANCE.BURSTHITS-01 ([`burst_verdict`]).
+fn write_verdicts(out: &mut String, results: &Results, options: &Options) -> Result<()> {
+    let runs = &results.runs;
     let check = |scenario: &str, bound: f64, origin_expected: usize| -> Option<(bool, String)> {
         let durable = runs.get(&(scenario.to_owned(), Server::DurableCache))?;
         let ratio = median_rps(runs, scenario, Server::DurableCache)?
@@ -1656,6 +2029,37 @@ fn write_verdicts(
             "- TC-PERFORMANCE.STORERATE-01: not measured; it needs `--durability no-store-sync`"
         )?;
     }
+    if !(options.scenarios.contains(&Scenario::Hits)
+        && options.scenarios.contains(&Scenario::Burst))
+    {
+        writeln!(
+            out,
+            "- TC-PERFORMANCE.BURSTHITS-01: not measured; it needs the `hits` and `burst` scenarios"
+        )?;
+    } else if options.memory_max.is_none() {
+        writeln!(
+            out,
+            "- TC-PERFORMANCE.BURSTHITS-01: not measured; it needs `--memory-max`"
+        )?;
+    } else {
+        write(
+            out,
+            "TC-PERFORMANCE.BURSTHITS-01",
+            vec![burst_verdict(results, options)],
+        )?;
+    }
     writeln!(out)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cpu_list;
+
+    #[test]
+    fn cpu_lists_take_numbers_and_ranges() {
+        assert_eq!(cpu_list("0,1,4,5"), Some(vec![0, 1, 4, 5]));
+        assert_eq!(cpu_list("0-2,6"), Some(vec![0, 1, 2, 6]));
+        assert_eq!(cpu_list("one"), None);
+    }
 }

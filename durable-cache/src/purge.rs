@@ -65,7 +65,7 @@ pub fn purge(
 
 /// [`purge`] with the target already resolved to the key it names, so the
 /// caller can hand an owned key to the blocking pool
-/// (FDS-STORAGE.EXECUTOR-04).
+/// (FDS-STORAGE.EXECUTOR-05).
 pub fn purge_key(
     cache: &FsCache,
     key: &CompactCacheKey,

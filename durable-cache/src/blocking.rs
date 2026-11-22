@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Running the backend's file I/O off the async executor
-//! (FDS-STORAGE.EXECUTOR-04).
+//! (FDS-STORAGE.EXECUTOR-05).
 //!
 //! Every operation this crate performs is an ordinary blocking syscall —
 //! `open`, `pread`, `pwrite`, `fdatasync`, `rename`, `unlink`. Pingora gives
@@ -34,7 +34,7 @@ use pingora_error::{Error, ErrorType, Result};
 
 use crate::FsCache;
 
-// IMP-STORAGE.EXECUTOR-04: satisfy FDS-STORAGE.EXECUTOR-04
+// IMP-STORAGE.EXECUTOR-05: satisfy FDS-STORAGE.EXECUTOR-05
 
 /// Run one storage operation's blocking work on Tokio's blocking pool.
 ///
@@ -78,9 +78,9 @@ where
     }
 }
 
-// IMP-STORAGE.INLINEWRITES-01: satisfy FDS-STORAGE.INLINEWRITES-01
+// IMP-STORAGE.INLINEWRITES-02: satisfy FDS-STORAGE.INLINEWRITES-02
 
-/// The inline slots (ADR-STORAGE.INLINEWRITES-01): at most this many of the
+/// The inline slots (ADR-STORAGE.INLINEWRITES-02): at most this many of the
 /// operations of unsynchronised stores run on the async workers that poll
 /// them at once, rather than on the blocking pool.
 ///
@@ -111,7 +111,7 @@ impl InlineSlots {
     }
 
     /// Take a slot, if one is free on the runtime that polls the caller.
-    fn try_take(&self) -> Option<InlineSlot<'_>> {
+    pub(crate) fn try_take(&self) -> Option<InlineSlot<'_>> {
         if self.limit == 0 {
             return None;
         }
@@ -137,7 +137,7 @@ impl InlineSlots {
 }
 
 /// A taken inline slot, given back when dropped.
-struct InlineSlot<'a>(&'a InlineSlots);
+pub(crate) struct InlineSlot<'a>(&'a InlineSlots);
 
 impl Drop for InlineSlot<'_> {
     fn drop(&mut self) {
@@ -147,7 +147,7 @@ impl Drop for InlineSlot<'_> {
 
 /// Run a store's operation on the worker that polls it, in an inline slot,
 /// if `may_run_inline` and a slot is free, and on the blocking pool as
-/// [`run`] does otherwise (ADR-STORAGE.INLINEWRITES-01). `f` learns where it
+/// [`run`] does otherwise (ADR-STORAGE.INLINEWRITES-02). `f` learns where it
 /// runs: `true` on the worker.
 ///
 /// The caller decides that the operation may run on a worker: one that
@@ -171,7 +171,7 @@ where
 }
 
 /// Close a file that may have no name left, without making the caller wait
-/// (FDS-STORAGE.EXECUTOR-04).
+/// (FDS-STORAGE.EXECUTOR-05).
 ///
 /// Closing such a file frees its storage, and for a large file that can take
 /// a long time. The callers cannot wait: `Drop` implementations, and the

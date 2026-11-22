@@ -109,7 +109,7 @@ identical path.
 
 **Threads.** Every storage operation is a blocking syscall, so the backend
 runs each one on tokio's blocking pool rather than on the worker Pingora
-polls it from (ADR-STORAGE.EXECUTOR-04). That matters because
+polls it from (ADR-STORAGE.EXECUTOR-05). That matters because
 `ServerConf::threads` defaults to 1: a backend that ran its I/O inline would
 stall every other connection on that worker for the length of a `fdatasync`
 or a page-cache miss. On Linux, hits are the exception when what they read
@@ -125,7 +125,8 @@ the file system of a container without a volume): `FsCache::new` fails,
 and logs the error, where they are missing, and
 `with_page_cache_reads(false)` switches them off. Stores without
 synchronisation are the other exception, within a bound (see **Inline
-writes** below). The pool is sized by two
+writes** below), and on Linux most store writes go through `io_uring`
+instead (see **Writes on io_uring**). The pool is sized by two
 `ServerConf` settings: `max_blocking_threads` (unset keeps tokio's 512) and
 `blocking_threads_ttl_seconds`, how long an idle thread lives (unset keeps
 10 s). The pool's threads mostly wait on the disk, so the maximum caps how
@@ -203,7 +204,26 @@ data passes the kernel's limit, the kernel throttles writers, for up to
 runtime's workers less one write at once: on Pingora's default of one worker
 (`ServerConf::threads`), or with `work_stealing` off, none do. With the
 discard after a host restart on, publication stays on the pool, since it may
-have to write the marker (ADR-STORAGE.INLINEWRITES-01).
+have to write the marker (ADR-STORAGE.INLINEWRITES-02).
+
+**Writes on io_uring.** On Linux, stores write through an `io_uring` ring,
+on by default (`FsCacheConfig::with_io_uring`): a store's body chunks that
+end past its first 64 KiB go to the kernel without a handoff, and without
+holding a worker while the kernel takes them, whatever the store's
+durability. Every other write, the `fdatasync` and the rename stay where
+they were, so a store of up to 64 KiB writes as without the ring. That keeps
+hits fast while a burst of large stores runs, which neither the pool nor the
+slots did (ADR-STORAGE.IOURING-01). The ring exists on the 64-bit
+architectures the `io-uring` crate builds for (x86-64, AArch64, RISC-V,
+LoongArch, POWER). It needs Linux 5.6, and a process allowed to use
+`io_uring`: Docker's default seccomp profile blocks it since Docker 25, and
+the `kernel.io_uring_disabled` setting can disable it for a whole host.
+Where it is missing, `FsCache::new` fails and logs the error: allow
+`io_uring` there (for Docker, a seccomp profile that permits
+`io_uring_setup`, `io_uring_enter` and `io_uring_register`), or switch the
+ring off with `with_io_uring(false)`, which writes every store as before.
+A task on the Tokio runtime that makes the ring's first write collects its
+completions, and starts again on another runtime should that one shut down.
 
 **Features.** `body-crc` (on by default) computes each body's CRC-32C as it
 is stored and records it in the header; without it (`default-features =
@@ -238,6 +258,7 @@ test scaffolding, or tooling.
 ```
 .
 ├── durable-cache/     ← THE DELIVERABLE. The only published crate.
+│   ├── build.rs               sets cfg(io_uring) where stores can write through the ring
 │   ├── src/
 │   │   ├── lib.rs               re-exports FsCache, FsCacheConfig, Durability,
 │   │   │                        recover, RecoveryReport; hotupgrade is the one
@@ -280,6 +301,8 @@ test scaffolding, or tooling.
 │   │   │                        the service worker (Linux page-cache reads aside)
 │   │   ├── nowait.rs            Linux: page-cache reads on the worker, which
 │   │   │                        fail rather than wait for the device
+│   │   ├── uring.rs             Linux, cfg(io_uring): the io_uring ring stores write through
+│   │   ├── noop_uring.rs        elsewhere: its stand-in, without a ring
 │   │   ├── platform.rs          the calls that differ between Linux and other
 │   │   │                        Unix systems: opening, reading on the pool, flushing
 │   │   ├── hooks/               test-only pauses, faults and instrumentation
@@ -367,11 +390,12 @@ committed: build the specification first (see
 than Linux. `cargo xtask cfg-matrix` lints and tests it here in every build
 its `#[cfg]` gates select: clippy for each feature set and for a release
 build, and nextest with the default features and with all of them, first in
-the workspace, then in a copy under the target directory whose Linux gates
-select their other-Unix side. `--no-tests` lints only. Each step's whole log
-stays under `<target>/xtask/cfg-matrix/logs` until the next run. What it
-cannot catch is code outside the Linux gates that calls what only Linux has
-in std (`std::os::linux`) or in libc: the copy still builds for Linux.
+the workspace, then in a copy under the target directory whose Linux gates,
+`cfg(io_uring)` among them, select their other-Unix side. `--no-tests`
+lints only. Each step's whole log stays under
+`<target>/xtask/cfg-matrix/logs` until the next run. What it cannot catch
+is code outside the Linux gates that calls what only Linux has in std
+(`std::os::linux`) or in libc: the copy still builds for Linux.
 
 **Other targets.** CI builds for 64-bit glibc only. The 32-bit glibc and
 the musl code (`durable-cache/src/nowait.rs`) can be checked on an amd64
@@ -475,7 +499,7 @@ time per request and the most threads it ran, for these scenarios:
   calls.
 
 `--only` runs some of them, as in `--only burst,cold`; the test-case
-verdicts need `hits` and `fills`.
+verdicts need `hits` and `fills`, or `hits` and `burst`.
 
 ```bash
 cargo xtask bench --work-dir /var/tmp/durable-cache-bench
@@ -487,6 +511,31 @@ default, `strict`, is durable-cache's own default, which
 TC-PERFORMANCE.HITRATE-01 measures. `--proxy-arg` passes an argument on to
 fixture-proxy on durable-cache, to compare its options, as in
 `--proxy-arg=--no-page-cache-reads`; the report names them.
+
+Before each server's runs, the bench waits, for up to two minutes, for the
+host to settle: dirty data under 64 MiB, write-back under 1 MiB, and I/O and
+processor pressure under 1 % over 10 s. A server stopped after a burst of
+stores leaves the kernel writing back and freeing its files for a while; the
+report names any run the host had not settled for. Before each burst, the
+bench also rests for a minute: the runs before it keep the processors busy,
+and a processor that limits its power, as a laptop's does, then runs at a
+lower clock for a while. The report gives the mean clock of the server's
+processors for every run.
+
+`--memory-max 2G` runs each server in a control group of its own whose
+memory is limited to 2 GiB, a transient scope of the user's systemd service
+manager, so that the data the kernel lets a server leave unwritten depends
+on that limit rather than on the host's memory. TC-PERFORMANCE.BURSTHITS-01
+runs that way, once with each durability:
+
+```bash
+cargo xtask bench --only hits,burst --memory-max 2G --work-dir /var/tmp/durable-cache-bench
+cargo xtask bench --only hits,burst --memory-max 2G --durability no-store-sync --work-dir /var/tmp/durable-cache-bench
+```
+
+Its verdict counts the rounds in which the group reached its limit during
+the stores and the stores outlasted the hits; the burst's table also gives
+the share of the hits' time in which some task of the group waited for I/O.
 
 It needs `nginx` and [`oha`](https://github.com/hatoo/oha), the load
 generator; `--nginx` and `--oha` name them if they are not on the `PATH`.

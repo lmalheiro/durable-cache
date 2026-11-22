@@ -59,6 +59,9 @@ libc = "0.2"
 # The system calls of the page-cache reads (durable-cache/src/nowait.rs);
 # 1.1.6 at least: RUSTSEC-2026-0486 finds 1.0 to 1.1.5 unsound.
 rustix = "1.1.6"
+# The ring stores write through (durable-cache/src/uring.rs): the crate
+# Tokio's own io_uring support builds on.
+io-uring = "0.7"
 nix = { version = "0.29", features = ["signal", "process"] }
 tempfile = "3"
 reqwest = { version = "0.12", features = ["stream"] }

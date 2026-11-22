@@ -11,14 +11,14 @@
 This appendix records an investigation that this version leaves open:
 whether the backend could do its file I/O on the worker threads that poll
 it, instead of handing each operation to Tokio's blocking pool as
-\reqref{ADR-STORAGE.EXECUTOR-04} decides. It collects what was measured,
+\reqref{ADR-STORAGE.EXECUTOR-05} decides. It collects what was measured,
 what the kernel allows, and the directions a later version could take.
 Nothing here is normative: no requirement, decision or test case of this
 version depends on it. A later version that takes the work up would
-complement \reqref{ADR-STORAGE.EXECUTOR-04} and
-\reqref{FDS-STORAGE.EXECUTOR-04}, as \reqref{ADR-STORAGE.PAGECACHE-01} does
+complement \reqref{ADR-STORAGE.EXECUTOR-05} and
+\reqref{FDS-STORAGE.EXECUTOR-05}, as \reqref{ADR-STORAGE.PAGECACHE-01} does
 for reads, and each mechanism it adds would have to meet
-\reqref{HLR-SCOPE.V1-02}: improve, by at least 20\,\%, a figure that a
+\reqref{HLR-SCOPE.V1-03}: improve, by at least 20\,\%, a figure that a
 performance test case measures.
 
 All the measurements were made in October 2026 on one host: an Intel Core
@@ -40,8 +40,8 @@ On Linux, the reads that the page cache answers no longer pay it
 (\reqref{ADR-STORAGE.PAGECACHE-01}); stores still do. A store makes at
 least two handoffs: one to create its temporary and write the record's
 fixed part, one per body chunk but the last, and one to publish it, which
-also writes the last chunk (\reqref{FDS-STORAGE.EXECUTOR-04},
-\reqref{ADR-STORAGE.LASTCHUNK-01}).
+also writes the last chunk (\reqref{FDS-STORAGE.EXECUTOR-05},
+\reqref{ADR-STORAGE.LASTCHUNK-02}).
 \texttt{pingora-proxy} hands a store the body bytes that arrive with the
 response's headers as a chunk of their own, so even a 4~KiB body comes in
 two chunks, and its store makes three handoffs. A synchronised store is dominated by its
@@ -75,10 +75,10 @@ take over the tasks queued on it.
 
 A prototype changed only the function through which every operation
 reaches the pool, and the close of a removed file
-(\reqref{FDS-STORAGE.EXECUTOR-04}). An environment variable, read once,
+(\reqref{FDS-STORAGE.EXECUTOR-05}). An environment variable, read once,
 chose among three executors:
 \begin{itemize}
-  \item \emph{pool}: \reqref{ADR-STORAGE.EXECUTOR-04} as specified, the
+  \item \emph{pool}: \reqref{ADR-STORAGE.EXECUTOR-05} as specified, the
     reference;
   \item \emph{inline}: each operation runs on the worker that polls it;
   \item \emph{block in place}: each operation runs on the worker too,
@@ -108,7 +108,7 @@ block, whichever call makes it.
 
 \textbf{Unsynchronised stores} ran 24 to 32\,\% faster inline, with 4, 16
 or 64 workers alike (Table~\ref{tab:executor-unsynced}): above the 20\,\%
-that \reqref{HLR-SCOPE.V1-02} asks of a new mechanism, on the figure
+that \reqref{HLR-SCOPE.V1-03} asks of a new mechanism, on the figure
 \reqref{TC-PERFORMANCE.STORERATE-01} measures. With four workers, the
 server's threads fell from about 90 to 8. More workers did not help the
 pool: with 64, its rate stayed within 3\,\% of its rate with 4.
@@ -199,7 +199,7 @@ aborted stores, purged records and published stores. The two that never
 ended pause an update between its writes, to check that a lookup waits it
 out (\reqref{TC-LAYOUT.OBJECTFILE-01}, \reqref{TC-STORAGE.RECLAIM-01}); the
 test's runtime has one thread, which the paused update then holds. These
-tests check \reqref{FDS-STORAGE.EXECUTOR-04}, which the inline executor
+tests check \reqref{FDS-STORAGE.EXECUTOR-05}, which the inline executor
 sets aside by design: a mode that runs work on the workers needs a
 functional design and test cases of its own.
 
@@ -327,21 +327,21 @@ Open questions:
   \item With work stealing off, each Pingora worker runs a runtime of its
     own, and nothing takes over the tasks of a stalled worker: the mode
     needs work stealing on.
-  \item The deviation \reqref{ADR-STORAGE.EXECUTOR-04} records --- an
+  \item The deviation \reqref{ADR-STORAGE.EXECUTOR-05} records --- an
     upstream \texttt{103 Early Hints} lost while a sole worker was blocked
     --- came from a stalled worker: \reqref{TC-COMPLIANCE.RFC-02}'s
     differential would have to pass in this mode too.
-  \item \reqref{FDS-STORAGE.EXECUTOR-04} and its test cases describe the mode
+  \item \reqref{FDS-STORAGE.EXECUTOR-05} and its test cases describe the mode
     with $K = 0$; the others need a functional design and test cases of their
     own.
 \end{itemize}
-\reqref{ADR-STORAGE.INLINEWRITES-01} adopts this direction, with three
+\reqref{ADR-STORAGE.INLINEWRITES-02} adopts this direction, with three
 slots by default, and settles these questions. The backend reads the
 workers of the runtime that polls each operation from Tokio, and uses at
 most one fewer slot; with work stealing off, each runtime has one worker,
 and so takes none. \reqref{TC-COMPLIANCE.RFC-02} runs its differential in
-this mode too. \reqref{FDS-STORAGE.INLINEWRITES-01} specifies the slots, and
-\reqref{TC-STORAGE.INLINEWRITES-01} tests them.
+this mode too. \reqref{FDS-STORAGE.INLINEWRITES-02} specifies the slots, and
+\reqref{TC-STORAGE.INLINEWRITES-02} tests them.
 
 \subsection{Early write-back}
 \label{app:executor-writeback}
@@ -392,6 +392,10 @@ As with page-cache reads, this would be an option, checked once when the
 cache is constructed --- a file system that refuses the flag then makes the
 construction fail, naming the option --- and never a silent detour at run
 time.
+
+Measured for \reqref{ADR-STORAGE.IOURING-01}, such writes did as well on
+XFS as the inline slots, which do not depend on the file system, and no
+better: the decision keeps the slots.
 
 \subsection{io\_uring}
 \label{app:executor-iouring}
@@ -480,7 +484,16 @@ kernel documentation: ``Documentation for /proc/sys/kernel/''},
 (kernelnewbies.org)}.} \texttt{io\_uring} can therefore only be an option
 beside the pool, checked when the cache is constructed, as page-cache reads
 are. It is the largest of the mechanisms in this appendix, and
-\reqref{HLR-SCOPE.V1-02} would weigh it accordingly.
+\reqref{HLR-SCOPE.V1-03} would weigh it accordingly.
+
+\reqref{ADR-STORAGE.IOURING-01} adopts it for the writes of stores, on by
+default, after a burst of stores showed that neither the pool nor the
+inline slots keep hits within the bound of
+\reqref{HLR-PERFORMANCE.BURSTHITS-01}: the chunks that end past a store's
+first 64~KiB. Measured, it kept hits as fast during a burst on ext4 as on
+XFS, though ext4's writes go through the kernel's threads, which slowed the
+smaller synchronised stores when all their writes used the ring; and it
+gained nothing on reads from the device, which stay on the pool.
 
 \subsection{Not pursued}
 \label{app:executor-not-pursued}
@@ -588,4 +601,7 @@ stores run: \reqref{HLR-PERFORMANCE.LOOKUP-01} bounds lookup latency against
 the size of the cache, and \reqref{HLR-PERFORMANCE.HITRATE-01} and
 \reqref{HLR-PERFORMANCE.STORERATE-01} bound rates. A later version that keeps
 writes on the workers would need one, so that the gain on stores, which
-\reqref{HLR-SCOPE.V1-02} counts, is weighed against the stalls it risks.
+\reqref{HLR-SCOPE.V1-03} counts, is weighed against the stalls it risks.
+\reqref{HLR-PERFORMANCE.BURSTHITS-01} is that requirement, and
+\reqref{TC-PERFORMANCE.BURSTHITS-01} measures the first item of the list
+above, in a control group with a memory limit.

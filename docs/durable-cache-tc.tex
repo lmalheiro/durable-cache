@@ -70,7 +70,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
     \item Repeat steps 1 to 3 with both proxies on four workers and the
       file-system backend's stores unsynchronised, so that it runs some of
       its stores' operations on the workers, in inline slots
-      (\reqref{FDS-STORAGE.INLINEWRITES-01}).
+      (\reqref{FDS-STORAGE.INLINEWRITES-02}).
   \end{enumerate}
 
   \textbf{Expected result:} In both comparisons, no test has a reproducibly
@@ -875,6 +875,64 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \verify{HLR-PERFORMANCE.STORERATE-01}
 \end{requirement}
 
+\begin{requirement}{TC-PERFORMANCE.BURSTHITS-01}[draft][verify]{Hits during a burst of stores}
+
+  \localreqdiagram*{tcperfbursthits01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} While objects of 1~MiB are stored over 16 connections,
+  hits on objects of 1~KiB keep their 99th-percentile latency within twice
+  its value with no store in progress, with stores synchronised and
+  unsynchronised alike, as \reqref{HLR-PERFORMANCE.BURSTHITS-01} requires.
+
+  \textbf{Setup:} As for \reqref{TC-PERFORMANCE.HITRATE-01}, with this
+  backend in its default configuration but for its durability, and with the
+  proxy in a control group of its own whose memory is limited to 2~GiB. The
+  page cache the proxy fills, and with it the data the kernel lets it leave
+  unwritten, then depends on that limit rather than on the host's memory.
+  The host runs systemd, whose user service manager creates the group as a
+  transient scope with the memory controller delegated to it:
+  \texttt{cargo xtask bench --only hits,burst --memory-max 2G}, once with
+  \texttt{--durability strict}, the default, and once with
+  \texttt{--durability no-store-sync}. Before each server's runs, the
+  benchmark waits for the host to settle --- dirty data under 64~MiB,
+  write-back under 1~MiB, and I/O and processor pressure under 1\,\% over
+  10~s --- since a server stopped after a burst leaves the kernel writing
+  back and freeing its files for a while. Before the burst, it also rests
+  60~s. The hit scenarios before it keep the processors busy for half a
+  minute, and a processor that limits its power, as a laptop's does, then
+  runs at a lower clock for a while: the burst would be measured at a lower
+  clock than the hits it is compared with. The report gives the mean clock
+  of the proxy's processors for each run.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item For each durability, start the proxy with an empty cache, request
+      each of 100 objects of 1~KiB until every one is stored, then request
+      them in random order over 64 concurrent connections for 10~s,
+      recording the 99th-percentile latency.
+    \item After a rest of 60~s, start storing 4{,}000 objects of 1~MiB
+      never requested before,
+      over 16 concurrent connections. One second later, request the 1~KiB
+      objects as in step~1, for 2~s, recording the 99th-percentile latency,
+      when the stores end, and whether the proxy's control group reached its
+      memory limit.
+    \item Repeat for three rounds and take the medians.
+  \end{enumerate}
+
+  \textbf{Expected result:} For each durability, the median 99th-percentile
+  latency of step~2 is at most twice that of step~1. A round counts only if
+  the proxy's control group reached its memory limit during the stores and
+  the stores were still running when the hits of step~2 ended. No request
+  fails, and the origin receives no request for the 1~KiB objects during
+  the measured runs.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{HLR-PERFORMANCE.BURSTHITS-01}
+\end{requirement}
+
 % ---------------------------------------------------------------------
 % Pingora compatibility.
 % ---------------------------------------------------------------------
@@ -1070,7 +1128,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   in memory than one chunk, as \reqref{FRE-COMPAT.UNSIZED-02} requires:
   every chunk but the last is in the store's temporary before its
   \texttt{write\_body} call returns, and the last one, which the backend
-  keeps for \texttt{finish} (\reqref{ADR-STORAGE.LASTCHUNK-01}), once
+  keeps for \texttt{finish} (\reqref{ADR-STORAGE.LASTCHUNK-02}), once
   \texttt{finish} returns.
 
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
@@ -1618,7 +1676,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqcover{satisfy}{IMP}
 
-  \verify{FDS-STORAGE.EXECUTOR-04}
+  \verify{FDS-STORAGE.EXECUTOR-05}
 \end{requirement}
 
 \begin{requirement}{TC-STORAGE.PAGECACHE-01}[draft][verify]{Page-cache reads on the worker}
@@ -1669,7 +1727,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   knows its path to be missing, and the damaged record's is reached through
   the pool's locked re-read. In step 5 every lookup is handed
   over once, and so is every chunk the lookup's first read did not already
-  hold, as \reqref{FDS-STORAGE.EXECUTOR-04} specifies. In step 6 neither the
+  hold, as \reqref{FDS-STORAGE.EXECUTOR-05} specifies. In step 6 neither the
   partial hit's lookup nor its read is handed over. In step 7 each operation
   fails with an error naming the file and the option that asked for the
   call, none is handed to the pool, and a file opened before the failing
@@ -1685,15 +1743,18 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \verify{FDS-STORAGE.PAGECACHE-01}
 \end{requirement}
 
-\begin{requirement}{TC-STORAGE.INLINEWRITES-01}[draft][verify]{Writes in inline slots}
+\begin{requirement}{TC-STORAGE.INLINEWRITES-02}[draft][verify]{Writes in inline slots}
 
   \localreqdiagram*{tcinlinewrites01}{\reqid}{\reqdesc}
 
   \textbf{Objective:} An unsynchronised store's opening, chunk writes and
   finish run on the worker in an inline slot, never more of them at once
   than the slots and the runtime's workers less one allow, and on the
-  blocking pool otherwise; what takes no slot stays on the pool; and a store
-  finished in a slot leaves the close of the record it replaced to the pool.
+  blocking pool otherwise, but for a body chunk that ends past the store's
+  first 64~KiB, which goes on the \texttt{io\_uring} ring where it is on
+  (\reqref{FDS-STORAGE.IOURING-01}); what takes no slot stays on the pool;
+  and a store finished in a slot leaves the close of the record it replaced
+  to the pool.
 
   \textbf{Setup:} The backend driven directly through the \texttt{Storage}
   interface, on runtimes of one, two and four workers, with test hooks that
@@ -1727,7 +1788,66 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqcover{satisfy}{IMP}
 
-  \verify{FDS-STORAGE.INLINEWRITES-01}
+  \verify{FDS-STORAGE.INLINEWRITES-02}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.IOURING-01}[draft][verify]{Store writes on the ring}
+
+  \localreqdiagram*{tciouring01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} With the \texttt{io\_uring} ring on, a store writes
+  the body chunks that end past its first 64~KiB on the ring, whatever its
+  durability, and its other writes as without the ring; a write the kernel
+  fails on the ring fails the store; a store dropped with a write in flight
+  leaves nothing behind; construction fails, naming the option, where the
+  ring cannot be set up; and the ring's completions outlive the runtime that
+  collected them first.
+
+  \textbf{Setup:} The backend on Linux, driven directly through the
+  \texttt{Storage} interface on four workers, with test hooks that count the
+  writes submitted to the ring and the operations run in a slot, that make
+  the ring's setup fail, and that submit a write on a descriptor open for
+  reading only, which the kernel refuses.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Store an unsynchronised body of eight chunks of 16~KiB, the last
+      with \texttt{eof} set.
+    \item Store the same body synchronised.
+    \item Store a body of four chunks of 16~KiB, unsynchronised, then
+      synchronised.
+    \item With the ring switched off and its setup made to fail, construct
+      the backend and store the body of step~1.
+    \item With the ring on and its setup made to fail, construct the
+      backend.
+    \item Open a synchronised store, write a chunk of 64~KiB, then have the
+      kernel refuse the next write on the ring and write a chunk; then
+      finish the store.
+    \item Open a synchronised store, start writing a chunk of 1~MiB, and
+      drop the store as soon as the write is submitted; then store the key
+      again.
+    \item On a runtime of its own, store the body of step~1; shut that
+      runtime down; then store another such body on a second runtime.
+  \end{enumerate}
+
+  \textbf{Expected result:} Steps~1 and~2 each write their last four chunks
+  on the ring; step~1's store opens, writes its first four chunks and
+  finishes in a slot, and step~2's takes no slot. In step~3 neither store
+  submits anything to the ring, and the unsynchronised one opens, writes its
+  first three chunks and finishes in a slot. In step~4 the backend is
+  constructed and submits nothing to the ring; in step~5 construction fails
+  with an error that names \texttt{FsCacheConfig::with\_io\_uring}. In
+  step~6 the refused write goes to the ring and fails, the finish fails, and
+  nothing is published or left behind. In step~7 no temporary is left, and
+  the second store is published. In step~8 both stores write their last four
+  chunks on the ring and complete. Every body that is published reads back
+  as stored.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqcover{satisfy}{IMP}
+
+  \verify{FDS-STORAGE.IOURING-01}
 \end{requirement}
 
 \begin{requirement}{TC-STORAGE.RECLAIM-01}[draft][verify]{Orphan reclaim at restart}

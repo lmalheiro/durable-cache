@@ -91,7 +91,7 @@ async fn tc_compat_writefail_01_failing_finish_publishes_nothing() {
 }
 
 /// Step 2, for the body's last chunk: `write_body` keeps it for `finish` to
-/// write (ADR-STORAGE.LASTCHUNK-01), so a failure writing it fails `finish`,
+/// write (ADR-STORAGE.LASTCHUNK-02), so a failure writing it fails `finish`,
 /// and nothing is published.
 #[tokio::test]
 async fn tc_compat_writefail_01_failing_last_chunk_fails_finish() {

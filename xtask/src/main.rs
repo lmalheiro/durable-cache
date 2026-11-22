@@ -149,9 +149,15 @@ enum Cmd {
         /// several. The report names them.
         #[arg(long = "proxy-arg", allow_hyphen_values = true)]
         proxy_args: Vec<String>,
+        /// Run each server in a control group of its own whose memory is
+        /// limited to this, as systemd's `MemoryMax=` takes it (`2G`), in a
+        /// transient scope of the user's service manager:
+        /// TC-PERFORMANCE.BURSTHITS-01 runs with `2G`.
+        #[arg(long)]
+        memory_max: Option<String>,
         /// The scenarios to run, separated by commas; all of them unless
-        /// named. The test-case verdicts need `hits` and `fills`, and
-        /// `census` needs strace.
+        /// named. The test-case verdicts need `hits` and `fills`, or `hits`
+        /// and `burst`, and `census` needs strace.
         #[arg(long, value_enum, value_delimiter = ',')]
         only: Vec<bench::Scenario>,
     },
@@ -206,6 +212,7 @@ fn main() -> Result<()> {
             rounds,
             durability,
             proxy_args,
+            memory_max,
             only,
         } => bench::bench(bench::Options {
             nginx,
@@ -219,6 +226,7 @@ fn main() -> Result<()> {
             rounds,
             durability,
             proxy_args,
+            memory_max,
             scenarios: if only.is_empty() {
                 <bench::Scenario as clap::ValueEnum>::value_variants()
                     .iter()

@@ -72,7 +72,7 @@ async fn tc_compat_unsized_02_empty_body() {
 /// returns: after each call the file holds the header, key, and metadata
 /// region plus exactly the body bytes accepted so far. The last chunk, which
 /// comes with `eof` set, is the one the store keeps, until `finish` writes
-/// it (ADR-STORAGE.LASTCHUNK-01), so no more than one chunk is held back in
+/// it (ADR-STORAGE.LASTCHUNK-02), so no more than one chunk is held back in
 /// memory.
 #[tokio::test]
 async fn tc_compat_unsized_02_every_chunk_but_the_last_is_written_before_write_body_returns() {

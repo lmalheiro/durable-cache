@@ -95,6 +95,13 @@ pub(crate) mod record;
 mod recovery;
 pub(crate) mod sharding;
 mod storage_impl;
+// `cfg(io_uring)`, which build.rs sets, holds where stores can write through
+// an `io_uring` ring; elsewhere, `uring` is a stand-in without one.
+#[cfg(io_uring)]
+mod uring;
+#[cfg(not(io_uring))]
+#[path = "noop_uring.rs"]
+mod uring;
 pub(crate) mod writerid;
 
 pub use config::{Durability, FsCacheConfig};
@@ -168,6 +175,8 @@ mod integration_tests {
     mod persistence_crashsafe;
     mod storage_expire;
     mod storage_inlinewrites;
+    #[cfg(io_uring)]
+    mod storage_iouring;
     #[cfg(target_os = "linux")]
     mod storage_pagecache;
     mod storage_publish;
