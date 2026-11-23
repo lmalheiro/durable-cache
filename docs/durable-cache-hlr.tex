@@ -487,9 +487,11 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{ADR-VERIFICATION.FORMAL-01}{Choose, for each kind of
-  property, the checker that establishes it; state what each check trusts,
-  and how the checks run within the two durations.}
+  \reqexpect{satisfy}{ADR-VERIFICATION.FORMAL-01}{Decide which mechanical
+  checker establishes each kind of property this specification states of the
+  backend, within declared bounds, how the checks run within 15 minutes on each
+  proposed change or 2 hours once a day, and how the record of the properties
+  checked and left unchecked is kept.}
 \end{requirement}
 
 \begin{requirement}{HLR-VERIFICATION.MODELS-01}[draft][stakeholderRequirement]{Dependency models stand alone}
@@ -514,7 +516,9 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{ADR-VERIFICATION.MODELS-01}{Decide where the models
-  live until they are published, and what keeps each one publishable on its
-  own.}
+  \reqexpect{satisfy}{ADR-VERIFICATION.MODELS-01}{Decide how each model of a
+  dependency the checks need is written so that it can be published, without
+  change to its content, as an open-source project of its own: building outside
+  this repository, under a licence and copyright notice of its own, and naming
+  nothing of this backend.}
 \end{requirement}
