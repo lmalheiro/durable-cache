@@ -105,13 +105,16 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify how object publication is
-  made atomic under concurrent same-key writes and process crashes.}
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify how a store writes the
+  single growable file: the metadata ahead of the body, then the body appended
+  as its chunks arrive.}
   \reqexpect{refine}{FDS-STORAGE.METAUPDATE-01}{Specify how a metadata update
-  that grows past its record's reserved capacity is handled.}
-  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-03}{Specify the concrete on-disk
-  record format --- header, key, metadata region, and body placement ---
-  that realises the combined metadata-and-body file.}
+  that outgrows the space reserved ahead of the body withdraws the record, so
+  that the object is fetched again.}
+  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-03}{Specify the on-disk format of the
+  single file: the metadata ahead of the body with the space reserved for its
+  growth, and the metadata length or body offset encoded so that a reader can
+  tell the two regions apart.}
 
   \refine{ADR-PERSISTENCE.MECHANISM-01}
   \trace{FRE-COMPAT.STREAMING-01}
@@ -256,16 +259,20 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify the fdatasync of the
-  temporary before its rename, and how a failed sync is surfaced.}
-  \reqexpect{refine}{FDS-STORAGE.PURGE-01}{Specify the fsync of the shard
-  directory before an invalidating purge is reported, and that a purge made
-  to evict is not synchronised.}
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify that a store's temporary is
+  synchronised with fdatasync, after its last body byte and its patched header,
+  before it is renamed to the canonical name, and that the directory is not
+  synchronised after the rename.}
+  \reqexpect{refine}{FDS-STORAGE.PURGE-01}{Specify that an invalidating purge
+  synchronises the shard directory after its unlink, or after finding nothing to
+  unlink, before it reports the outcome, and that a purge made to evict is not
+  synchronised.}
   \reqexpect{refine}{FDS-STORAGE.METAUPDATE-01}{Specify that a metadata
   update, written in place or withdrawing the record, is not synced.}
-  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-03}{Add the body CRC-32C field
-  and how it is computed and recorded, and specify the optional read-time
-  check that logs a mismatch at the end of a whole-body read.}
+  \reqexpect{refine}{SDS-LAYOUT.OBJECTFILE-03}{Specify the body's CRC-32C,
+  computed while the body streams in and recorded at completion, which a build
+  may leave out, and the optional read-time check that logs a mismatch once a
+  read has delivered the whole body.}
 
   \refine{ADR-PERSISTENCE.MECHANISM-01}
   \satisfy{HLR-PERSISTENCE.CRASHSAFE-02}
@@ -602,8 +609,9 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify the temporary's naming
-  and placement, and the completion sequence that ends in the rename.}
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify how each store writes its
+  own temporary in the same directory as the object's canonical name, and the
+  completion sequence that ends in the single rename over that name.}
 
   \refine{ADR-STORAGE.OBJECTFILE-01}
   \satisfy{FRE-COMPAT.CONCURRENT-01}
@@ -698,8 +706,10 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify the temporary name
-  format and exclusive creation, including what happens on a collision.}
+  \reqexpect{refine}{FDS-STORAGE.PUBLISH-03}{Specify the lease's creation under
+  a staging name, its lock and its rename into place, and the temporary's name,
+  built from the object's hash, the lease's identity and a store counter,
+  created exclusively so that a collision is detected.}
   \reqexpect{refine}{FDS-STORAGE.RECLAIM-01}{Specify the liveness test the
   scan applies to a temporary's writer (its lease's lock), the removal of
   stopped writers' leases, and the deployment constraint.}
@@ -979,8 +989,8 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-COMPAT.STREAMING-02}{Verify that followers are served by
-  partial hits bound to the most recently opened writer through the in-flight
-  registry, receive each chunk as it is appended, and end as the store ends.}
+  partial hits of the most recently opened store in flight, receive each chunk
+  as the store appends it, and end normally when it completes.}
   \reqexpect{satisfy}{IMP-STORAGE.PARTIAL-02}{Implement the in-flight registry
   and the partial-hit reader that streams a store's body from its temporary as
   the store appends it.}
@@ -1212,15 +1222,13 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Extend this TC to also
-  verify FDS-STORAGE.METAUPDATE-01: that an update written in place is
-  visible to lookups when update_meta returns; that metadata outgrowing its
-  region withdraws the record, which lookups then miss while a client
-  already reading it gets its whole body; that the next store replaces a
-  withdrawn record; that a withdrawal whose header write fails leaves the
-  record as it was; that an update applies only to the response it
-  validated; and that zero configured headroom withdraws the record on any
-  growth.}
+  \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Verify that an update
+  written in place is visible to lookups when update_meta returns; that metadata
+  outgrowing its region withdraws the record, which lookups then miss while a
+  client already reading it gets its whole body; that the next store replaces a
+  withdrawn record; that a withdrawal whose header write fails leaves the record
+  as it was; that an update applies only to the response it validated; and that
+  zero configured headroom withdraws the record on any growth.}
   \reqexpect{satisfy}{IMP-STORAGE.METAUPDATE-01}{Implement the metadata update
   under the key's publication lock: the check that the record holds the response
   the update freshens, the rewrite in place when the new segments fit, and the
@@ -1571,10 +1579,10 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{refine}{FDS-STORAGE.EXPIRE-01}{Specify how a target is resolved,
-  how the expired metadata is derived and written in place, why it always
-  fits, which outcome each case reports, and how the operation behaves once
-  the backend is read-only.}
+  \reqexpect{refine}{FDS-STORAGE.EXPIRE-01}{Specify how the expired metadata is
+  derived with expire_at at the start of the current second and written in
+  place, as an update that fits is written, why it always fits whatever headroom
+  is left, and that the body is left untouched.}
 
   \satisfy{FRE-COMPAT.EXPIRE-01}
   \refine{ADR-STORAGE.OBJECTFILE-01}
@@ -2170,9 +2178,10 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{verify}{TC-STORAGE.EXECUTOR-02}{Verify that no storage operation
-  holds the executor thread for its duration, by measuring what a task
-  co-resident on a single-worker runtime observes while cache traffic runs.}
+  \reqexpect{verify}{TC-STORAGE.EXECUTOR-02}{Verify that no Storage call, hit
+  read or miss write keeps the executor thread that polled it from driving other
+  tasks for the operation's duration, and that the restart scan yields to the
+  executor between the entries and records it visits.}
   \reqexpect{satisfy}{IMP-STORAGE.EXECUTOR-05}{Implement the dispatch of the
   backend's blocking file work to Tokio's blocking pool, so that no Storage
   call, hit read or miss write holds the worker that polls it.}
@@ -2412,10 +2421,11 @@
   \reqexpect{satisfy}{IMP-STORAGE.PAGECACHE-01}{Implement the lookups and body
   reads that run on the worker through file calls that fail rather than wait for
   the device, and their fallback to the blocking pool.}
-  \reqexpect{verify}{TC-STORAGE.PAGECACHE-01}{Verify that, on Linux, the lookup
-  and the body reads of a record the page cache holds complete on the worker
-  without a handoff to the blocking pool, and that each falls back to the pool
-  when the data is not cached.}
+  \reqexpect{verify}{TC-STORAGE.PAGECACHE-01}{Verify that, where page-cache
+  reads are enabled on Linux, a lookup of a record published or still being
+  written, and a hit's body read, run on the worker that polls them, and that an
+  operation one of whose calls would wait for the device runs on the blocking
+  pool.}
 
   \refine{ADR-STORAGE.PAGECACHE-01}
   \satisfy{HLR-PERFORMANCE.HITRATE-01}
@@ -2895,12 +2905,11 @@
   \reqexpect{satisfy}{IMP-STORAGE.IOURING-01}{Implement the ring: its setup at
   construction, the writes of the body chunks past a store's first 64 KiB, and
   the task that collects the completions and wakes the waiting writers.}
-  \reqexpect{verify}{TC-STORAGE.IOURING-01}{Verify that a store's chunks
-  past its first 64~KiB go on the ring, whatever its durability, and its
-  other writes as without the ring; that a write the kernel fails on the
-  ring fails the store; that a store dropped with a write in flight leaves
-  nothing behind; and that construction fails, naming the option, where the
-  ring cannot be set up.}
+  \reqexpect{verify}{TC-STORAGE.IOURING-01}{Verify that a store's chunks past
+  its first 64 KiB go on the ring, whatever its durability, and its other writes
+  as without the ring; that a write the kernel fails on the ring fails the
+  store; that a store dropped with a write in flight leaves nothing behind; and
+  that construction fails, naming the option, where the ring cannot be set up.}
 
   \refine{ADR-STORAGE.IOURING-01}
   \trace{FDS-STORAGE.EXECUTOR-05}
@@ -3223,10 +3232,10 @@
   skipped, named in a warning, and counted; and that the log summary, and
   the reclaim counters
   when the metrics feature is enabled, report each class.}
-  \reqexpect{satisfy}{IMP-STORAGE.RECLAIM-01}{Implement the reclaim the
-  restart-time scan performs: the unlinking of temporaries whose writer has
-  stopped, of damaged and foreign records, and of the leases of writers no
-  longer running.}
+  \reqexpect{satisfy}{IMP-STORAGE.RECLAIM-01}{Implement the classification the
+  restart-time scan applies to each entry, the reclaim of crash-orphaned
+  temporaries, of damaged, foreign, misplaced and withdrawn records and of
+  stopped writers' leases, and its report of what it reclaimed.}
 
   \refine{ADR-STORAGE.RECLAIM-01}
   \refine{ADR-STORAGE.WRITERID-01}
@@ -3520,8 +3529,8 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{satisfy}{IMP-COMPAT.ENTRYID-01}{Return None from the entry_id
-  methods of both the hit and the miss handler, and address purges by the cache
-  key alone.}
+  methods of both the hit and the miss handler, and report an Exact purge target
+  carrying an Identified entry key as not found.}
 
   \satisfy{FRE-COMPAT.EVICTION-01}
   \refine{ADR-PERSISTENCE.MECHANISM-01}
@@ -3656,12 +3665,13 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{verify}{TC-COMPLIANCE.HEADERS-01}{Verify that a stored response
-  returns the exact response head it was given, status code, version and every
-  header field, also after a restart.}
-  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Store the response head as the
-  framework's own header encoding in the record's metadata region, so that it is
-  returned unchanged.}
+  \reqexpect{verify}{TC-COMPLIANCE.HEADERS-01}{Verify that a lookup returns the
+  complete response head an object was stored with, the status code, the
+  protocol version and every header field byte for byte with same-named fields
+  in their relative order, also after a restart.}
+  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Lay out the record so that it
+  keeps the complete response head an object was stored with, however large, and
+  returns it unchanged.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
 \end{requirement}
@@ -3695,11 +3705,11 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-COMPLIANCE.TRAILERS-01}{Show, by inspection of the
-  record layout and the code, that no field received as a trailer is returned as
-  a header field.}
-  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Hold in the record only the
-  metadata segments the framework serialises and the body, so that no trailer
-  field can be stored among the header fields.}
+  Storage interface and of the on-disk format, that no field received as a
+  trailer field is returned as a header field.}
+  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Lay out the record so that it
+  offers no way to fold a trailer-originated field into the stored header
+  fields.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
 \end{requirement}
@@ -3728,10 +3738,9 @@
 
   \reqexpect{verify}{TC-COMPLIANCE.BODY-01}{Verify that the served body equals
   the stored body exactly, for full reads and for reads from a sought position.}
-  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Place the body after the
-  metadata region, at an offset a reader computes from the record alone, so that
-  reads from the start or from a sought position return exactly the stored
-  bytes.}
+  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Lay out the record so that it
+  holds a body of any size exactly as it was written, readable from its start or
+  from any position sought.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
 \end{requirement}
@@ -3769,11 +3778,12 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{verify}{TC-COMPLIANCE.FRESHNESS-01}{Verify that the freshness
-  lifetime and current age computed from a retrieved object match those computed
-  before it was stored, also after a restart.}
-  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Keep the internal metadata, with
-  its created and updated instants and freshness deadline, and the header fields
-  the framework's age calculation reads, in the record exactly as serialised.}
+  lifetime and current age evaluated from a retrieved object match those
+  evaluated at the same instant from the object as it was stored, across a
+  restart and after a metadata update.}
+  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Lay out the record so that it
+  keeps the created, updated and fresh-until instants of each object's internal
+  metadata exactly as the framework handed them over.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FRE-COMPLIANCE.HEADERS-01}
@@ -3806,9 +3816,9 @@
   \reqexpect{verify}{TC-COMPLIANCE.VALIDATORS-01}{Verify that ETag and
   Last-Modified come back byte for byte, strong, weak and empty entity tags and
   both validators together.}
-  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Keep the header fields, the
-  validators among them, in the record byte for byte as the framework encodes
-  them.}
+  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Lay out the record so that the
+  ETag and Last-Modified fields come back byte for byte in each form: strong,
+  weak and empty entity tags, and both validators on one response.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FRE-COMPLIANCE.HEADERS-01}
@@ -3858,11 +3868,14 @@
   that changes the validators makes every later lookup return the updated
   validators.}
   \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Verify that a metadata
-  update after a 304 replaces the metadata while leaving the body intact, and
-  applies only to the object it validated.}
+  update replaces the object's metadata and header fields while its body stays
+  unchanged and retrievable under the same key, that it applies only to the
+  object it validated, and that one too large for the space reserved leaves the
+  object no longer held.}
   \reqexpect{satisfy}{FDS-STORAGE.METAUPDATE-01}{Specify how update_meta
-  replaces an object's metadata and header fields, in place or by withdrawing
-  the record, while its body stays unchanged under the same key.}
+  replaces an object's metadata and header fields with a newer set while its
+  body stays unchanged under the same key, and how the backend stops holding the
+  object when the newer set exceeds the space reserved for its metadata.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FDS-STORAGE.METAUPDATE-01}
@@ -3886,12 +3899,12 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Verify that lookups racing a
-  metadata update observe the whole pre-update or the whole post-update
-  metadata, never a mixture.}
-  \reqexpect{satisfy}{FDS-STORAGE.METAUPDATE-01}{Specify how an in-place
-  metadata update is made so that a concurrent lookup reads either the old or
-  the new segments whole.}
+  \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Verify that every lookup
+  racing a metadata update returns the whole pre-update or the whole post-update
+  metadata with the object's unchanged body, never a mixture.}
+  \reqexpect{satisfy}{FDS-STORAGE.METAUPDATE-01}{Specify how a metadata update
+  is made so that every lookup during it returns either the pre-update or the
+  post-update metadata, whole, with the object's unchanged body.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FRE-COMPLIANCE.REVALIDATION-01}
@@ -3926,8 +3939,10 @@
   \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-02}{Verify that after a host crash
   a freshened object returns either its updated or its superseded metadata,
   whole.}
-  \reqexpect{satisfy}{FDS-STORAGE.METAUPDATE-01}{Specify how an applied metadata
-  update reaches the record on disk, so that a later process returns it.}
+  \reqexpect{satisfy}{FDS-STORAGE.METAUPDATE-01}{Specify how a metadata update
+  reported as applied is what a later process of the backend returns, and what a
+  host crash may leave of it: the updated or the superseded metadata, never a
+  mixture.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-02}
@@ -3955,8 +3970,9 @@
   \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Verify that update_meta for
   a key that holds no object reports an error and leaves the key without a
   stored object.}
-  \reqexpect{satisfy}{FDS-STORAGE.METAUPDATE-01}{Specify the error a metadata
-  update of an absent key reports, and that it creates nothing.}
+  \reqexpect{satisfy}{FDS-STORAGE.METAUPDATE-01}{Specify the error,
+  distinguishable from an applied update, that an update of a key holding no
+  stored object reports, leaving the key without one.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FRE-COMPLIANCE.REVALIDATION-01}
@@ -3990,12 +4006,13 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{verify}{TC-COMPLIANCE.REPLACE-01}{Verify that storing a new
-  response under an occupied key replaces the old object atomically, with
-  readers and racing writers never torn.}
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify the rename that replaces
-  the object a key holds in one step, so that a lookup finds the old record or
-  the new one, whole.}
+  \reqexpect{verify}{TC-COMPLIANCE.REPLACE-01}{Verify that, while a new response
+  replaces the one an occupied key holds and other stores of the key race it,
+  every lookup served from a published object returns the object most recently
+  published, whole, never a mixture of two objects.}
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify how a new object replaces
+  the one a key holds in one step, so that every lookup served from a published
+  object finds the old object or the new one, whole, never a mixture.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FDS-STORAGE.PUBLISH-03}
@@ -4027,11 +4044,12 @@
   \reqexpect{verify}{TC-COMPLIANCE.REPLACE-01}{Verify that a reader streaming an
   object that is replaced delivers only that object's own bytes, never the
   replacing object's.}
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify publication so that a
-  reader keeps reading the file it opened when a new record is renamed over its
-  name.}
-  \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify purge as an unlink of the
-  name, so that a reader keeps reading the file it opened.}
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify how replacing an object
+  leaves a reader streaming it delivering only that object's own bytes, its
+  storage not reused while the reader still references it.}
+  \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify how purging an object leaves
+  a reader streaming it delivering only that object's own bytes, its storage not
+  reused while the reader still references it.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FRE-COMPLIANCE.REPLACE-01}
@@ -4062,12 +4080,13 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{verify}{TC-COMPLIANCE.VARY-01}{Verify that several variants of one
-  primary key are stored side by side and that each lookup selects the variant
-  its key names, or a miss.}
-  \reqexpect{satisfy}{SDS-LAYOUT.SHARDING-01}{Name each object's file by its
-  key's combined hash, so that the primary slot and every variant slot of a
-  primary key have files of their own.}
+  \reqexpect{verify}{TC-COMPLIANCE.VARY-01}{Verify that, with several variants
+  of one primary key stored, a lookup returns the object stored under exactly
+  the looked-up key, primary or variant slot, or a miss, across a restart too.}
+  \reqexpect{satisfy}{SDS-LAYOUT.SHARDING-01}{Lay out objects so that each slot
+  of a primary key, primary or variant, is stored apart under the
+  variance-augmented key the framework presents, and a lookup finds exactly the
+  slot its key names.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
 \end{requirement}
@@ -4090,8 +4109,9 @@
   \reqexpect{verify}{TC-COMPLIANCE.VARY-01}{Verify that replacing, freshening
   and purging one variant leaves the other variant of its primary key unchanged,
   across a restart too.}
-  \reqexpect{satisfy}{SDS-LAYOUT.SHARDING-01}{Give each variant its own file
-  name, so that an operation on one variant touches no other variant's file.}
+  \reqexpect{satisfy}{SDS-LAYOUT.SHARDING-01}{Lay out the variants of a primary
+  key apart from one another, so that storing, replacing, freshening or purging
+  one leaves every other unchanged.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FRE-COMPLIANCE.VARY-01}
@@ -4150,9 +4170,10 @@
   \reqexpect{verify}{TC-COMPLIANCE.PURGE-01}{Verify that, after a purge of a
   key, neither its response, nor a store of it in flight at the time, nor for a
   primary key any of its variants is served again.}
-  \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify how a purge removes the
-  record under the key's canonical name and ends the key's stores in flight, so
-  that neither is served again.}
+  \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify how an invalidating purge
+  makes the key's stored object, its stores in flight and, for a primary key,
+  its variants unservable on every later lookup, until a store begun after the
+  purge publishes.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
 \end{requirement}
@@ -4176,10 +4197,12 @@
   \reqexpect{verify}{TC-COMPLIANCE.PURGE-01}{Verify that a second purge of a
   key, and a purge of a key never stored, report that nothing was found, with no
   error and no change to any other stored object.}
-  \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify that a purge whose unlink
-  finds no file reports NotFound without error.}
-  \reqexpect{satisfy}{FDS-STORAGE.EXPIRE-01}{Specify that an expiry that finds
-  no record at the canonical path reports NotFound without error.}
+  \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify that a purge of a key under
+  which no object is stored reports that nothing was found, with no error and no
+  change to any other stored object.}
+  \reqexpect{satisfy}{FDS-STORAGE.EXPIRE-01}{Specify that an expiry of a key
+  under which no object is stored reports that nothing was found, with no error
+  and no change to any other stored object.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \trace{FRE-COMPLIANCE.PURGE-01}
@@ -4223,8 +4246,10 @@
   killed.}
   \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-02}{Verify that no object whose
   purge was acknowledged is served after a host crash or power loss.}
-  \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify the synchronisation of the
-  shard directory after the unlink, before the purge's outcome is reported.}
+  \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify how an invalidating purge
+  reports its outcome, an object removed or none found, only once the key's
+  absence will survive a crash or restart, and fails with an error where the
+  backend will not make it durable.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-02}
@@ -4277,9 +4302,10 @@
   \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-02}{Verify that a store whose
   content had not reached stable storage when the host crashed is not served
   after the restart, where HLR-PERSISTENCE.CRASHSAFE-02 forbids it.}
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify that a store becomes
-  visible by name only once complete, and, where host-crash safety requires it,
-  only once synchronised.}
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify how a store that does not
+  complete, or whose content had not reached stable storage when the host
+  crashed where that matters, is served on no later lookup, and how nothing it
+  leaves on disk is promoted by a later process.}
 
   \deriveReqt{HLR-COMPLIANCE.RFC-01}
   \deriveReqt{HLR-PERSISTENCE.CRASHSAFE-02}

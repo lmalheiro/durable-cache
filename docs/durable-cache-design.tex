@@ -966,15 +966,17 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{verify}{TC-COMPAT.HOTUPGRADE-01}{Verify that, once the upgrade
-  signal makes the outgoing backend read-only, it publishes no store, fails
-  purges and metadata updates without changing anything on disk, and completes
-  the responses it is streaming, and that the incoming process's restart scan
-  starts no sooner than the close timeout after the hand-over.}
-  \reqexpect{satisfy}{IMP-COMPAT.READONLY-02}{Implement the wiring that makes
-  the backend read-only when its server announces the upgrade, and that holds
-  the incoming process's restart scan until the outgoing process's backend is
-  read-only.}
+  \reqexpect{verify}{TC-COMPAT.HOTUPGRADE-01}{Verify that, once set_read_only
+  has run on the upgrade signal, the backend publishes no store, fails purges
+  and metadata updates without changing anything on disk, and keeps serving
+  reads; that a graceful terminate leaves it writable; and that the incoming
+  process's restart procedure starts no sooner than the close timeout after the
+  hand-over.}
+  \reqexpect{satisfy}{IMP-COMPAT.READONLY-02}{Implement the integration that
+  calls set_read_only when the server announces the upgrade, and not on a
+  graceful terminate, and starts the incoming process's restart procedure only
+  once its server holds the listening sockets and the close timeout has
+  elapsed.}
 
   \refine{ADR-COMPAT.READONLY-01}
   \satisfy{FRE-COMPAT.HOTUPGRADE-01}

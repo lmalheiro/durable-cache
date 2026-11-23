@@ -179,12 +179,13 @@
   procedure completes, the eviction manager holds exactly one entry per durably
   published object, with its record size and freshness deadline, and totals that
   match them.}
-  \reqexpect{satisfy}{ADR-COMPAT.EVICTION-01}{Select the strategy by which the
-  eviction manager's view is reconstructed from the durably published objects at
-  restart.}
-  \reqexpect{satisfy}{ADR-COMPAT.ENTRYID-01}{Decide whether the backend assigns
-  its own entry IDs to the eviction manager's entries, or keys them by the cache
-  key alone.}
+  \reqexpect{satisfy}{ADR-COMPAT.EVICTION-01}{Decide how, at every restart, the
+  eviction manager's view is brought to one consistent with the durably
+  published objects by the time the backend reports its restart procedure
+  complete.}
+  \reqexpect{satisfy}{ADR-COMPAT.ENTRYID-01}{Decide how the eviction manager's
+  entries are identified, so that each durably published object is represented
+  once, keyed by its CompactCacheKey.}
 
   \deriveReqt{HLR-COMPAT.PINGORA-01}
   \deriveReqt{HLR-PERSISTENCE.DURABLE-01}
@@ -258,10 +259,10 @@
   outgoing process makes no further durable change and refuses purges and
   metadata updates while still serving reads, and that the incoming process's
   activity never makes an object the outgoing one holds open unreadable.}
-  \reqexpect{satisfy}{FDS-EVICTION.STARTUP-01}{Realise the reconstruction
-  procedure so the incoming process's eviction view is rebuilt from durably
-  published objects only, keeping the shared cache consistent across the
-  hot-upgrade window.}
+  \reqexpect{satisfy}{FDS-EVICTION.STARTUP-01}{Specify how the incoming
+  process's restart procedure meets FRE-COMPAT.EVICTION-01 as though it were the
+  sole writer, although the outgoing process may still be changing the shared
+  cache when the incoming one starts.}
   \reqexpect{satisfy}{FDS-COMPAT.READONLY-02}{Specify how the outgoing process's
   backend learns that the upgrade signal arrived, what it suppresses from
   then on (publication, purge, metadata update) and how it reports refusals,
@@ -314,9 +315,9 @@
 
   \reqexpect{verify}{TC-COMPAT.STREAMING-02}{Verify that the backend reports
   true from support_streaming_partial_write.}
-  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify the in-flight registry and
-  the partial-hit readers that let the backend serve an object while it is still
-  being written, which advertising streaming partial writes promises.}
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify how the backend serves an
+  object while it is still being written, so that reporting support for
+  streaming partial writes is truthful.}
 
   \deriveReqt{HLR-COMPAT.PINGORA-01}
   \trace{FRE-COMPAT.STREAMING-01}
@@ -355,9 +356,10 @@
   \reqexpect{verify}{TC-COMPAT.STREAMING-02}{Verify that a lookup of a key with
   stores in flight answers with a partial hit of the most recently opened one,
   ahead of any published object of the key.}
-  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify the in-flight write
-  registry, the lookup order (in-flight write before the published record),
-  and the most-recently-opened tie-break.}
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify how a lookup of a key with
+  stores in flight that no invalidating purge has ended answers with a partial
+  hit of the most recently opened of them, ahead of any published object of the
+  key.}
 
   \deriveReqt{HLR-COMPAT.PINGORA-01}
 \end{requirement}
@@ -394,9 +396,9 @@
   \reqexpect{verify}{TC-COMPAT.STREAMING-02}{Verify that a partial hit's reader
   delivers the bytes already written and then each appended chunk, within the
   chunk-delivery latency bound.}
-  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify how a reader learns of
-  each appended chunk so that it can deliver the chunk within the latency
-  bound.}
+  \reqexpect{satisfy}{FDS-STORAGE.PARTIAL-02}{Specify how a partial hit's reader
+  delivers the bytes its store had already written and then each chunk the store
+  appends, within this requirement's delay of the write_body call returning.}
 
   \deriveReqt{HLR-COMPAT.PINGORA-01}
   \trace{FRE-COMPAT.STREAMING-01}
@@ -500,12 +502,14 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Lay out the record with a format
-  version a reader checks before decoding any of its metadata, so that a record
-  of another version is recognised and reported as a miss.}
-  \reqexpect{verify}{TC-COMPAT.FORMATUPGRADE-01}{Verify that a record written
-  under another record format version is reported as a miss and never decoded,
-  and that one written under the current version is returned exactly.}
+  \reqexpect{satisfy}{SDS-LAYOUT.OBJECTFILE-03}{Lay out the record so that a
+  reader can tell, before decoding its metadata, a record whose encoding the
+  running pingora-cache release could decode wrongly, and report it as a miss
+  instead.}
+  \reqexpect{verify}{TC-COMPAT.FORMATUPGRADE-01}{Verify that a record whose
+  metadata the running pingora-cache release could decode wrongly is reported as
+  a miss and never decoded, and that a record it decodes correctly is returned
+  exactly as stored.}
 
   \deriveReqt{HLR-COMPAT.PINGORA-01}
   \deriveReqt{HLR-PERSISTENCE.DURABLE-01}
@@ -530,9 +534,9 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify how a failed write or
-  sync during a store is detected and surfaced as an error from the call in
-  progress, and that the store is then treated as aborted.}
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify how a failure to write a
+  store's data to persistent storage is returned as an error from the write_body
+  or finish call during which it occurred, the store then ending incomplete.}
   \reqexpect{verify}{TC-COMPAT.WRITEFAIL-01}{Verify that a failure to write or
   synchronise a store's data is returned as an error from the write_body or
   finish call during which it occurred, and that nothing is published.}
@@ -568,10 +572,10 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify that an unpublished
-  store's per-writer temporary is unlinked when the store ends, including on
-  abort and on write failure, and how attached partial-hit readers are
-  unaffected by that unlink.}
+  \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify how a store that ends
+  without being durably published has its temporary removed no later than when
+  its miss handler is dropped, and its storage freed without a restart, while a
+  reader still streaming it keeps the storage until it finishes.}
   \reqexpect{verify}{TC-COMPAT.ABORTSPACE-01}{Verify that a store that ends
   without being published loses its temporary no later than when its miss
   handler is dropped, and that the storage it consumed is freed without a
@@ -607,12 +611,13 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{FDS-STORAGE.RECLAIM-01}{Specify how the scan at start
-  recognises the temporaries of writers no longer running and removes them,
-  leaving those of a live writer alone.}
-  \reqexpect{verify}{TC-COMPLIANCE.INCOMPLETE-01}{Verify that the temporary a
-  crashed process left behind is never served or promoted, and is gone once the
-  restarted process's restart-time scan has run.}
+  \reqexpect{satisfy}{FDS-STORAGE.RECLAIM-01}{Specify how, when a process
+  starts, the backend releases the storage held by unpublished stores whose
+  writing process is no longer running, leaving untouched a store whose writer
+  still runs and a variant whose primary holds no object.}
+  \reqexpect{verify}{TC-COMPLIANCE.INCOMPLETE-01}{Verify that the storage held
+  by a store whose process crashed mid-write is released once the next process
+  of the backend has started.}
 
   \deriveReqt{HLR-EFFICIENCY.SPACE-01}
   \trace{FRE-COMPLIANCE.INCOMPLETE-02}
@@ -672,12 +677,12 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{ADR-STORAGE.EXPIRE-01}{Decide how an expiry makes the
-  object stale while keeping its body, in place of the framework's default that
-  deletes it.}
-  \reqexpect{verify}{TC-STORAGE.EXPIRE-01}{Verify that an expiry stops the
-  object being served as a fresh hit while its body stays byte-identical and
-  readable for the revalidation that follows.}
+  \reqexpect{satisfy}{ADR-STORAGE.EXPIRE-01}{Decide how the backend leaves an
+  object it is asked to expire in the stale state: still returned by a lookup,
+  its body readable in full, and not fresh at any instant after the expiry.}
+  \reqexpect{verify}{TC-STORAGE.EXPIRE-01}{Verify that, after an expiry, a
+  lookup still returns the object with its body readable in full and reports it
+  not fresh at any instant after the expiry.}
 
   \deriveReqt{HLR-COMPAT.PINGORA-01}
   \trace{FRE-COMPLIANCE.PURGE-01}
@@ -827,36 +832,41 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{deriveReqt}{REQ-EFFICIENCY.FRAGMENTATION-01}{Bound the aggregate
-  space overhead a plain file system imposes on objects smaller than one
-  block --- block rounding and per-file inode/directory-entry costs --- so
-  that it grows sub-linearly with the number of such objects.}
+  \reqexpect{deriveReqt}{REQ-EFFICIENCY.FRAGMENTATION-01}{Bound the space
+  overhead that the file system's block-granular allocation and per-file inode
+  and directory-entry costs impose on objects smaller than one block, which
+  grows with the number of such objects.}
   \reqexpect{deriveReqt}{REQ-EFFICIENCY.DIRSCALE-01}{Bound the number of
   entries that accumulate in any one directory, up to a stated cache
   capacity, so object lookup and maintenance stay fast as the number of
   cached objects grows.}
 
-  \reqexpect{refine}{ADR-STORAGE.OBJECTFILE-01}{Decide how an object's metadata
-  and its body of unknown length are arranged in files on the plain file
-  system.}
-  \reqexpect{refine}{ADR-PERSISTENCE.DURABILITY-02}{Decide how stores and purges
-  on the plain file system survive a host crash or power loss without serving
-  content that differs from what was stored.}
-  \reqexpect{refine}{ADR-STORAGE.EXECUTOR-05}{Decide where the blocking
-  file-system calls run, given that every Storage method is asynchronous.}
-  \reqexpect{refine}{ADR-STORAGE.RECLAIM-01}{Decide how the files a crash leaves
-  behind on the plain file system are reclaimed.}
-  \reqexpect{refine}{ADR-EFFICIENCY.COMPACTION-01}{Decide whether, for this
-  version, small objects' files are compacted to recover the block rounding and
-  per-file overhead of the plain file system.}
+  \reqexpect{refine}{ADR-STORAGE.OBJECTFILE-01}{Decide how each object's
+  metadata and its body of unknown length are laid out in the growable files
+  this decision persists them in.}
+  \reqexpect{refine}{ADR-PERSISTENCE.DURABILITY-02}{Decide which of the
+  backend's writes it synchronises, and what it detects instead, given that the
+  file system may report a write done before its bytes are stable and does not
+  persist a synchronised file's directory entry.}
+  \reqexpect{refine}{ADR-STORAGE.EXECUTOR-05}{Decide where the backend runs the
+  file-system calls this decision commits it to, which block the calling
+  thread.}
+  \reqexpect{refine}{ADR-STORAGE.RECLAIM-01}{Decide how the leftovers of files
+  being written when a process dies, which the file system does not roll back,
+  are discarded.}
+  \reqexpect{refine}{ADR-EFFICIENCY.COMPACTION-01}{Decide whether this version
+  builds the packing and compaction an established engine would have brought, to
+  recover the block-granular allocation and per-file overhead the file system
+  imposes.}
   \reqexpect{refine}{ADR-COMPAT.EVICTION-01}{Decide how the eviction manager's
-  view is rebuilt from the files on the plain file system at restart.}
-  \reqexpect{refine}{ADR-COMPAT.ENTRYID-01}{Decide whether the backend gives the
-  eviction manager entry IDs that tell generations of a key apart, or keys
-  eviction on the cache key alone.}
+  state, which this decision does not persist, is rebuilt from the object
+  records themselves at every start.}
+  \reqexpect{refine}{ADR-COMPAT.ENTRYID-01}{Decide how the eviction manager's
+  entries, rebuilt from the object records at every start, identify the objects
+  they account for.}
   \reqexpect{refine}{ADR-COMPAT.READONLY-01}{Decide how the outgoing process of
-  a hot upgrade stops changing the files the two processes share on the plain
-  file system.}
+  a hot upgrade stops changing the shared cache while leaving its open readers
+  intact, since the file system does not coordinate the two processes.}
 
   \satisfy{HLR-PERSISTENCE.DURABLE-01}
   \satisfy{HLR-PERSISTENCE.CAPACITY-01}
@@ -891,10 +901,10 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{ADR-EFFICIENCY.COMPACTION-02}{Revisit compaction once
-  HLR-SCOPE.V1-03 no longer rules it out, and decide how the records of objects
-  smaller than one file-system block share space, so that their overhead grows
-  sub-linearly with their number.}
+  \reqexpect{satisfy}{ADR-EFFICIENCY.COMPACTION-02}{Decide how the on-disk
+  layout makes the aggregate space that objects smaller than one file-system
+  block consume beyond their own bytes grow sub-linearly with the number of such
+  objects.}
 
   \deriveReqt{HLR-EFFICIENCY.SPACE-01}
   \deriveReqt{ADR-PERSISTENCE.MECHANISM-01}
@@ -927,9 +937,10 @@
   \reqexpect{satisfy}{SDS-LAYOUT.SHARDING-01}{Lay out objects so that, for up
   to $10^8$ uniformly hashed objects, no directory holds more than 2,000
   entries.}
-  \reqexpect{verify}{TC-LAYOUT.SHARDING-01}{Verify, by analysis of the shard
-  layout's fan-out, that a cache of $10^8$ objects with uniformly distributed
-  key hashes puts no more than 2,000 entries in any one directory.}
+  \reqexpect{verify}{TC-LAYOUT.SHARDING-01}{Verify, by analysis of the layout's
+  expected entry distribution and a test of the fan-out that analysis assumes,
+  that a cache of $10^8$ objects with uniformly distributed key hashes holds no
+  more than 2,000 entries in any one directory.}
 
   \deriveReqt{ADR-PERSISTENCE.MECHANISM-01}
   \deriveReqt{HLR-PERFORMANCE.LOOKUP-01}
