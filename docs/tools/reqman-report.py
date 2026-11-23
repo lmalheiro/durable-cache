@@ -313,10 +313,8 @@ TMPL_TIKZ_OVERVIEW = r"""(% for color in colors %)
 \end{tikzpicture}
 """
 
-TMPL_TRACING_REPORT = r"""\section*{Traceability Report}
-\label{sec:tracing-report}
-
-\subsection*{Artifact Summary}
+TMPL_TRACING_REPORT = r"""\section{Artifact Summary}
+\label{sec:tracing-summary}
 \begin{adjustbox}{max width=\linewidth}
 \begin{tabular}{|l|(% for s in statuses %)c|(% endfor %)c|}
 \hline
@@ -335,7 +333,8 @@ Type & (% for s in statuses %)\texttt{(( s ))} & (% endfor %)Total \\
 \noindent\small$\dagger$~\textcolor{red}{Undeclared type — add \texttt{\textbackslash reqmantype\{PREFIX\}\{...\}\{...\}} to your document.}
 (% endif %)
 
-\subsection*{Not Yet Accepted}
+\section{Not Yet Accepted}
+\label{sec:tracing-not-accepted}
 Artifacts whose status has not (or not yet) reached \texttt{accepted},
 grouped by status:
 \vspace{0.15cm}
@@ -366,31 +365,39 @@ grouped by status:
 \textit{Every artifact has reached \texttt{accepted}.}
 (% endif %)
 
-\subsection*{Traceability}
+\section{Traceability}
+\label{sec:tracing-matrix}
 \vspace{0.15cm}
 
 (% for entry in entries %)
-{\small\renewcommand{\arraystretch}{1.3}%
-\noindent\begin{tabularx}{\linewidth}{|>{\bfseries\raggedright\arraybackslash}p{0.22\linewidth}|>{\raggedright\arraybackslash}X|}
+{\small\renewcommand{\arraystretch}{1.3}\setlength{\LTpre}{0pt}\setlength{\LTpost}{0pt}%
+\noindent\begin{xltabular}{\linewidth}{|>{\bfseries\raggedright\arraybackslash}p{0.22\linewidth}|>{\raggedright\arraybackslash}X|}
 \hline
 \multicolumn{2}{|l|}{%
   (% if entry.undeclared %)\textcolor{red}{\textbf{[(( entry.type_fmt ))]}$\dagger$}(% else %)\textbf{[(( entry.type_fmt ))]}(% endif %)%
   \ \hyperref[req:(( entry.aid ))]{(( entry.aid_fmt ))}%
-  \quad (( entry.title_fmt ))} \\
+  \quad (( entry.title_fmt ))} \\*
 \hline
-Stereotype & \textit{$\langle\langle$(( entry.reqtype_label ))$\rangle\rangle$} \\
+Stereotype & \textit{$\langle\langle$(( entry.reqtype_label ))$\rangle\rangle$} \\*
 \hline
-Status & \small\texttt{(( entry.status ))} \\
+Status & \small\texttt{(( entry.status ))} \\*
 \hline
 (% for row in entry.rel_rows %)
-(( row.label )) & (( row.targets | join('\\newline ') )) \\
+(% if row.split is defined %)
+(% for t in row.targets %)
+(( row.label if loop.first else '' )) & (( t )) \\(( '*' if loop.last else '' ))
+(% endfor %)
+(% else %)
+(( row.label )) & (( row.targets | join('\\newline ') )) \\*
+(% endif %)
 \hline
 (% endfor %)
-\end{tabularx}}
+\end{xltabular}}
 \vspace{0.3cm}
 
 (% endfor %)
-\subsection*{Orphan Report}
+\section{Orphan Report}
+\label{sec:tracing-orphans}
 Artifacts with no incoming or outgoing links:
 \vspace{0.15cm}
 
@@ -411,7 +418,8 @@ Artifacts with no incoming or outgoing links:
 \textit{No orphan artifacts found.}
 (% endif %)
 
-\subsection*{Coverage Gaps}
+\section{Coverage Gaps}
+\label{sec:tracing-gaps}
 Requirements with at least one unsatisfied coverage obligation:
 \vspace{0.15cm}
 
@@ -432,7 +440,8 @@ Requirements with at least one unsatisfied coverage obligation:
 \textit{No coverage gaps found.}
 (% endif %)
 
-\subsection*{Planned Requirements}
+\section{Planned Requirements}
+\label{sec:tracing-planned}
 Specific requirement IDs forward-declared with \texttt{\textbackslash
 reqexpect} but not yet linked back -- either not yet written, or written
 without the relationship that would satisfy the obligation:
@@ -458,11 +467,13 @@ by \hyperref[req:(( exp.source_aid ))]{\reqbreakid{(( exp.source_aid ))}} via (%
 \textit{No planned requirements outstanding.}
 (% endif %)
 
-\subsection*{Unaccounted Artifacts}
+\section{Unaccounted Artifacts}
+\label{sec:tracing-unaccounted}
 Artifacts that neither state a coverage obligation
-(\texttt{\textbackslash reqcover}) nor are terminal (a terminal-flagged type or
-\texttt{\textbackslash reqterminal}) nor deprecated. Each should either declare
-the downstream coverage it expects or be marked terminal:
+(\texttt{\textbackslash reqexpect} or \texttt{\textbackslash reqcover}) nor
+are terminal (a terminal-flagged type or \texttt{\textbackslash reqterminal})
+nor deprecated. Each should either declare the downstream coverage it expects
+or be marked terminal:
 \vspace{0.15cm}
 
 (% if has_unaccounted %)
@@ -510,15 +521,26 @@ TMPL_REQ_STEREOTYPES = r"""\begin{table}[tb]
 \end{table}
 """
 
+# Each coverage obligation takes a row of its own, ended by a plain \\ that
+# lets a page break between obligations, since a requirement may expect so
+# many that their notes outgrow a page. Every other row ends with \\*, so a
+# table without such a list still moves to the next page whole, as the
+# tabularx it replaces did.
 TMPL_REQTABLES = r"""(% if rows %)
-{\small\renewcommand{\arraystretch}{1.3}%
-\noindent\begin{tabularx}{\linewidth}{|>{\raggedright\arraybackslash}p{0.20\linewidth}|>{\raggedright\arraybackslash}X|}
+{\small\renewcommand{\arraystretch}{1.3}\setlength{\LTpre}{0pt}\setlength{\LTpost}{0pt}%
+\noindent\begin{xltabular}{\linewidth}{|>{\raggedright\arraybackslash}p{0.20\linewidth}|>{\raggedright\arraybackslash}X|}
 \hline
 (% for row in rows %)
-(( row.label )) & (( row.cell )) \\[0pt]
+(% if row.cells is defined %)
+(% for cell in row.cells %)
+(( row.label if loop.first else '' )) & (( cell )) \\(( '*' if loop.last else '' ))[0pt]
+(% endfor %)
+(% else %)
+(( row.label )) & (( row.cell )) \\*[0pt]
+(% endif %)
 \hline
 (% endfor %)
-\end{tabularx}}
+\end{xltabular}}
 (% endif %)
 """
 
@@ -1412,7 +1434,7 @@ def generate_tracing_report(outdir, jobname, artifacts, links, obligations, pref
                 met    = obligation_met(ob, aid, covered_pairs, covered_specific)
                 symbol = r"$\checkmark$" if met else r"$\square$"
                 items.append(rf"{symbol}~{fmt_obligation(ob, prefix_reqtype, all_ids)}")
-            rel_rows.append({"label": "Required coverage", "targets": items})
+            rel_rows.append({"label": "Required coverage", "targets": items, "split": True})
         entries.append({
             "aid":           aid,
             "aid_fmt":       fmt_id(aid),
@@ -1567,11 +1589,13 @@ def build_source_index(source_root, skip_dirs=()):
 
 # ── IMP-comment extraction (source code → requirements traceability) ──────────
 #
-# Design/functional artifacts (FDS, SDS, ...) declare a class-level coverage
-# obligation `\reqcover{satisfy}{IMP}` for the requirements only the actual
-# implementation can close -- there is no LaTeX artifact for "the code",
-# so that obligation can never be satisfied from links.csv alone. Instead,
-# implementation source files carry their own marker comments:
+# Design/functional artifacts (FDS, SDS, ...) declare a coverage obligation
+# on an implementation -- `\reqexpect{satisfy}{IMP-<SLUG>-<NN>}{note}` for a
+# specific marker, or the class-level `\reqcover{satisfy}{IMP}` -- for the
+# requirements only the actual implementation can close. There is no LaTeX
+# artifact for "the code", so such an obligation can never be satisfied from
+# links.csv alone. Instead, implementation source files carry their own
+# marker comments:
 #
 #   // IMP-<SLUG>-<NN>: <relationship> <TARGET-ID> [optional note]
 #   // IMP-STORAGE.PUBLISH-03: satisfy FDS-STORAGE.PUBLISH-03
@@ -1678,8 +1702,9 @@ def generate_requirements_json(outdir, jobname, artifacts, links, obligations,
     ext_links (externals.csv rows plus source-derived IMP links) feeds only
     coverage-obligation checking here, not the internal relationships dict:
     an external/IMP source has no artifact entry of its own to hyperlink to
-    in this JSON, but a `\\reqcover{satisfy}{IMP}` obligation should still
-    read as met once source code actually satisfies it."""
+    in this JSON, but a `\\reqexpect{satisfy}{IMP-...}` or
+    `\\reqcover{satisfy}{IMP}` obligation should still read as met once
+    source code actually satisfies it."""
     outgoing = defaultdict(list)
     incoming = defaultdict(list)
     for lnk in links:
@@ -1832,7 +1857,7 @@ def generate_reqtables(outdir, jobname, artifacts, links, obligations, ext_links
                 met    = obligation_met(ob, aid, covered_pairs, covered_specific)
                 symbol = r"$\checkmark$" if met else r"$\square$"
                 items.append(rf"{symbol}~{fmt_obligation(ob, prefix_reqtype, art_ids)}")
-            rows.append({"label": "Required coverage", "cell": r"\newline ".join(items)})
+            rows.append({"label": "Required coverage", "cells": items})
         elif aid in terminal_reqs:
             reason = terminal_reqs[aid]
             cell   = r"\textit{terminal}" + (f" --- {fmt_title(reason)}" if reason else "")

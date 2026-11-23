@@ -198,8 +198,9 @@
 % Inside a requirement: mark this artifact as terminal -- it deliberately
 % carries no coverage obligations (nothing further needs to refine, satisfy,
 % or verify it). The optional reason is recorded for the audit trail.
-% Artifacts that neither state a \reqcover obligation nor are terminal (by
-% type flag or this marker) are listed as unaccounted in the tracing report.
+% Artifacts that neither state a \reqexpect or \reqcover obligation nor are
+% terminal (by type flag or this marker) are listed as unaccounted in the
+% tracing report.
 \NewDocumentCommand{\reqterminal}{O{}}{%
   \immediate\write\@reqman@reqfile{\currentreqid,terminal,,,"#1"}%
 }
@@ -210,7 +211,7 @@
 %
 % The optional [flags] supports one flag: "terminal". A terminal type ends
 % the refinement chain (test cases, implementations): its artifacts are never
-% flagged as unaccounted for carrying no \reqcover obligations. Examples:
+% flagged as unaccounted for carrying no coverage obligations. Examples:
 %   \reqmantype{ADR}{designConstraint}{Architecture decision record}
 %   \reqmantype{TC}{verify}{Test case}[terminal]
 \NewDocumentCommand{\reqmantype}{m m m O{}}{%
