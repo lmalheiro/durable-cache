@@ -74,9 +74,10 @@
 % (test cases, implementations): its artifacts are never listed as
 % unaccounted for lacking coverage obligations. A terminal artifact may still
 % declare some, and they are checked like any other -- every TC here
-% declares \reqcover{satisfy}{IMP} for the code that implements it.
-% Coverage obligations themselves name both the relationship and the type at
-% the demand site, e.g. \reqcover{verify}{TC}.
+% declares a \reqexpect{satisfy}{IMP-TC....}{...} for each marker of the code
+% that implements it. Coverage obligations themselves name the relationship,
+% the full ID of the artifact expected to cover the demand, and what it is
+% expected to cover, e.g. \reqexpect{verify}{TC-PERSISTENCE.RESTART-01}{...}.
 %
 %| Subtype                  | Keyword                    | Purpose                                               |
 %|--------------------------|----------------------------|-------------------------------------------------------|
@@ -147,18 +148,21 @@
 
 \chapter{Traceability Analysis}
 
-At this stage of the specification some coverage obligations are intentionally
-open. Each \textsf{IMP} obligation --- on the functional designs, the
-structural designs, and the test cases alike --- awaits the implementation
-itself, and closes automatically once that implementation exists:
+Every coverage obligation in this specification names, by its full ID, the
+artifact expected to discharge it, and states what that artifact is expected
+to cover; the obligation closes only once that very artifact links back.
+Each \textsf{IMP} obligation --- on the functional designs, the structural
+designs, and the test cases alike --- names the marker of the implementation
+expected to satisfy it, and closes automatically once that marker exists:
 \texttt{reqman-report.py} scans the source tree for
 \texttt{// IMP-<SLUG>-<NN>: satisfy <TARGET-ID>} marker comments at every build
 and links each one back to the requirement it satisfies, alongside a pointer to
 the exact file and line. \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s satisfy
-obligation stays open for this version by the conflict
-\reqref{ADR-EFFICIENCY.COMPACTION-01} declares. Forward-declared expectations on
-artifacts not yet written, when there are any, are tracked in
-\textbf{Planned Requirements} below.
+obligation names \reqbreakid{ADR-EFFICIENCY.COMPACTION-02}, the later decision
+that is to revisit compaction, and stays open for this version by the conflict
+\reqref{ADR-EFFICIENCY.COMPACTION-01} declares. Expectations on artifacts not
+yet written, such as that one, are tracked in
+Section~\ref{sec:tracing-planned}.
 
 The retarget of this document from Pingora 0.8.1 to 0.9.0 --- the revision of
 \reqref{HLR-COMPAT.PINGORA-01} that release calls for --- landed one revision

@@ -2,9 +2,9 @@
 % Stage 5 -- Test Case Specifications.
 %
 % The final stage of the refinement flow. Every verifiable artifact in the
-% preceding stages carries a verify obligation -- \reqcover{verify}{TC}, or a
-% \reqexpect naming the specific TC; each is discharged here by a test-case
-% specification that \verify's it.
+% preceding stages carries a verify obligation -- a \reqexpect naming the
+% specific TC; each is discharged here by a test-case specification that
+% \verify's it.
 %
 % These specifications are drafts -- the objective and the shape of each
 % test are fixed, but the concrete fixtures, sample responses, and exact
@@ -84,7 +84,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.RFC-02}{Run the cache-tests suite
+  against the same proxy on each backend in turn and fail when a test ranks
+  lower on this backend than on MemCache, outside the triaged baseline.}
 
   \verify{HLR-COMPLIANCE.RFC-01}
 \end{requirement}
@@ -122,7 +124,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.HEADERS-01}{Implement the tests that
+  store responses and compare the returned response head, status code, version
+  and every header field, with the stored one, also after a restart.}
 
   \verify{FRE-COMPLIANCE.HEADERS-01}
 \end{requirement}
@@ -156,7 +160,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.TRAILERS-01}{Implement the test that
+  backs the inspection: a published record ends exactly where its body ends,
+  with no section a trailer could occupy.}
 
   \verify{FRE-COMPLIANCE.TRAILERS-01}
 \end{requirement}
@@ -192,7 +198,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.BODY-01}{Implement the tests that
+  compare the served body with the stored one byte for byte, for full reads and
+  for reads from a sought position.}
 
   \verify{FRE-COMPLIANCE.BODY-01}
 \end{requirement}
@@ -230,7 +238,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.FRESHNESS-01}{Implement the tests that
+  compare the freshness lifetime and age computed from a retrieved object with
+  those computed before it was stored, also after a restart.}
 
   \verify{FRE-COMPLIANCE.FRESHNESS-01}
 \end{requirement}
@@ -264,7 +274,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.VALIDATORS-01}{Implement the tests that
+  store strong, weak and empty entity tags and Last-Modified, and compare them
+  byte for byte after retrieval and after a metadata update.}
 
   \verify{FRE-COMPLIANCE.VALIDATORS-01}
   \verify{FRE-COMPLIANCE.REVALIDATION-01}
@@ -347,7 +359,13 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.REVALIDATION-01}{Implement the tests of
+  the metadata update itself: the body left intact, only the validated object
+  updated, atomic against racing lookups, visible when update_meta returns and
+  after a restart, and the absent-key error.}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.REVALIDATION-02}{Implement the tests of
+  the update's observability: the warning logged and, with the metrics feature,
+  the counter raised when an update outgrows the headroom.}
 
   \verify{FRE-COMPLIANCE.REVALIDATION-01}
   \verify{FRE-COMPLIANCE.METAATOMIC-01}
@@ -390,7 +408,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.VARY-01}{Implement the tests that store
+  several variants of one primary key, select each through the framework, and
+  replace, freshen and purge one while checking the others, also after a
+  restart.}
 
   \verify{FRE-COMPLIANCE.VARY-01}
   \verify{FRE-COMPLIANCE.VARYISOLATION-01}
@@ -439,7 +460,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.PURGE-01}{Implement the tests that purge
+  a key with variants, purge it again and purge a key never stored, purge during
+  a read and a store, and check the outcome across clean and killed restarts.}
 
   \verify{FRE-COMPLIANCE.PURGE-01}
   \verify{FRE-COMPLIANCE.PURGEABSENT-01}
@@ -484,7 +507,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.INCOMPLETE-01}{Implement the tests that
+  abort stores and kill the process mid-store, and check that nothing incomplete
+  is served, that followers end with an error, and that the temporaries are
+  removed.}
 
   \verify{FRE-COMPLIANCE.INCOMPLETE-02}
   \verify{FRE-COMPLIANCE.PARTIALABORT-01}
@@ -524,7 +550,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPLIANCE.REPLACE-01}{Implement the tests that
+  replace an occupied key while readers stream it and other writers race it, and
+  check that no reader or lookup is ever torn.}
 
   \verify{FRE-COMPLIANCE.REPLACE-01}
   \verify{FRE-COMPLIANCE.READERISOLATION-01}
@@ -578,7 +606,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.PERSISTENCE.CRASHSAFE-02}{Implement the tests that
+  construct the on-disk states a host crash can leave, torn updates, unfinished
+  temporaries, purges half on disk and unsynchronised bodies, and check that the
+  restarted cache serves none of them wrongly.}
 
   \verify{HLR-PERSISTENCE.CRASHSAFE-02}
   \verify{FRE-COMPLIANCE.INCOMPLETE-02}
@@ -652,7 +683,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.PERSISTENCE.CRASHDISCARD-01}{Implement the tests
+  that publish unsynchronised stores, simulate a host restart through the boot
+  identity the test hooks set, and check the cache with the discard off and on,
+  flushed and not.}
 
   \verify{FDS-PERSISTENCE.CRASHDISCARD-01}
 \end{requirement}
@@ -685,7 +719,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.PERSISTENCE.RESTART-01}{Implement the test that
+  stores objects through the proxy, stops the cache process in an orderly way
+  and by killing it, and checks that the next process serves every completed
+  object.}
 
   \verify{HLR-PERSISTENCE.DURABLE-01}
 \end{requirement}
@@ -716,7 +753,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.PERSISTENCE.CAPACITY-01}{Implement the measurement
+  that stores more data than the host's RAM and checks that the cache still
+  holds and serves it.}
 
   \verify{HLR-PERSISTENCE.CAPACITY-01}
 \end{requirement}
@@ -756,7 +795,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.EFFICIENCY.SPACE-01}{Implement the measurement of
+  the on-disk space overhead over the TC's object-size mix, printed against the
+  bound.}
 
   \verify{HLR-EFFICIENCY.SPACE-01}
 \end{requirement}
@@ -799,7 +840,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.PERFORMANCE.LOOKUP-01}{Implement the measurement of
+  the 99th-percentile lookup latency at both cache sizes and of their ratio,
+  asserted at the requirement's own scale.}
 
   \verify{HLR-PERFORMANCE.LOOKUP-01}
 \end{requirement}
@@ -837,7 +880,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.PERFORMANCE.HITRATE-01}{Implement the benchmark
+  that measures the hit request rate for each body size on this backend and on
+  the in-memory backend, and reports their ratio.}
 
   \verify{HLR-PERFORMANCE.HITRATE-01}
 \end{requirement}
@@ -870,7 +915,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.PERFORMANCE.STORERATE-01}{Implement the benchmark
+  that measures the store request rate with stores unsynchronised, on this
+  backend and on the in-memory backend, and reports their ratio.}
 
   \verify{HLR-PERFORMANCE.STORERATE-01}
 \end{requirement}
@@ -928,7 +975,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.PERFORMANCE.BURSTHITS-01}{Implement the benchmark
+  that measures the hits' 99th-percentile latency with and without a burst of 1
+  MiB stores over 16 connections, synchronised and unsynchronised.}
 
   \verify{HLR-PERFORMANCE.BURSTHITS-01}
 \end{requirement}
@@ -974,7 +1023,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.EVICTION-01}{Implement the tests that
+  compare the eviction manager's entries and totals after the restart procedure
+  with the durably published objects.}
 
   \verify{FRE-COMPAT.EVICTION-01}
 \end{requirement}
@@ -1040,7 +1091,13 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.HOTUPGRADE-02}{Implement the tests of the
+  hot-upgrade helper's steps: when the restart scan starts, which signal makes a
+  backend read-only, and what each recovery service does while the server shuts
+  down.}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.HOTUPGRADE-01}{Implement the test that runs
+  a real hot upgrade between two processes and checks what the outgoing process
+  publishes, refuses and streams, and what the incoming one sees.}
 
   \verify{FRE-COMPAT.HOTUPGRADE-01}
   \verify{FDS-COMPAT.READONLY-02}
@@ -1110,7 +1167,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.STREAMING-02}{Implement the test that sends
+  followers while a leader writes through the proxy, and checks the advertised
+  flag, the writer each follower is bound to, the chunk-delivery latency and
+  each follower's body and end.}
 
   \verify{FRE-COMPAT.STREAMFLAG-01}
   \verify{FRE-COMPAT.STREAMING-01}
@@ -1161,7 +1221,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.UNSIZED-02}{Implement the tests that store
+  bodies of undeclared length chunk by chunk and check that each is persisted
+  completely with no more than one chunk held in memory.}
 
   \verify{FRE-COMPAT.UNSIZED-02}
 \end{requirement}
@@ -1203,7 +1265,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.CONCURRENT-01}{Implement the tests that run
+  concurrent writes of one key and check that their bytes never interleave, that
+  each is published whole or not at all, and that they converge on one winner.}
 
   \verify{FRE-COMPAT.CONCURRENT-01}
 \end{requirement}
@@ -1245,7 +1309,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.FORMATUPGRADE-01}{Implement the tests that
+  plant records of another format version and check that they are misses and
+  never decoded, while current records are returned exactly.}
 
   \verify{FRE-COMPAT.FORMATUPGRADE-01}
 \end{requirement}
@@ -1283,7 +1349,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.WRITEFAIL-01}{Implement the tests that make
+  writes and synchronisations fail and check that the failing call returns the
+  error and that nothing is published.}
 
   \verify{FRE-COMPAT.WRITEFAIL-01}
   \verify{FDS-LAYOUT.STARTUP-01}
@@ -1319,7 +1387,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.COMPAT.ABORTSPACE-01}{Implement the tests that end
+  stores without publishing them in each way a store can end, and check that the
+  temporary is gone when the handler is dropped and its storage freed.}
 
   \verify{FRE-COMPAT.ABORTSPACE-01}
 \end{requirement}
@@ -1369,7 +1439,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.EVICTION.RECONSTRUCT-01}{Implement the tests that
+  run recover() with serving waiting for it and alongside it, and compare the
+  manager's entries and sizes with the published set.}
 
   \verify{FDS-EVICTION.STARTUP-01}
 \end{requirement}
@@ -1437,7 +1509,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.PUBLISH-03}{Implement the tests of
+  publication: atomic rename, isolated concurrent writers, no reuse of another
+  writer's file, synchronisation unless stores are unsynchronised, and the
+  outcomes reported.}
 
   \verify{FDS-STORAGE.PUBLISH-03}
 \end{requirement}
@@ -1537,7 +1612,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.PURGE-01}{Implement the tests that purge
+  through each kind of target and check the path unlinked, the outcome reported,
+  idempotence, the effect on a store in flight, and an undisturbed reader.}
 
   \verify{FDS-STORAGE.PURGE-01}
 \end{requirement}
@@ -1614,7 +1691,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.EXPIRE-01}{Implement the tests that expire
+  objects with and without headroom left and check that they stop being fresh
+  hits, keep their body readable, and report the outcome each case calls for.}
 
   \verify{FRE-COMPAT.EXPIRE-01}
   \verify{FDS-STORAGE.EXPIRE-01}
@@ -1674,7 +1753,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.EXECUTOR-02}{Implement the tests that drive
+  cache traffic beside a timekeeper task on a single worker and bound the
+  timekeeper's longest gap, for storage calls, streaming reads and the restart
+  scan.}
 
   \verify{FDS-STORAGE.EXECUTOR-05}
 \end{requirement}
@@ -1738,7 +1820,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.PAGECACHE-01}{Implement the tests that
+  check, through the test hooks, which lookups and body reads complete on the
+  worker and which fall back to the blocking pool.}
 
   \verify{FDS-STORAGE.PAGECACHE-01}
 \end{requirement}
@@ -1786,7 +1870,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.INLINEWRITES-02}{Implement the tests that
+  count the operations of unsynchronised stores running in inline slots against
+  the slot limit and the runtime's workers less one.}
 
   \verify{FDS-STORAGE.INLINEWRITES-02}
 \end{requirement}
@@ -1845,7 +1931,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.IOURING-01}{Implement the tests of the
+  ring: which writes go on it, a failed write failing the store, a dropped store
+  leaving nothing behind, construction failing where the ring cannot be set up,
+  and completions outliving their runtime.}
 
   \verify{FDS-STORAGE.IOURING-01}
 \end{requirement}
@@ -1927,7 +2016,13 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.RECLAIM-01}{Implement the tests of what the
+  restart-time scan reclaims and leaves: temporaries by their writer's liveness,
+  leases, damaged, foreign and withdrawn records, variants and freshly replaced
+  records.}
+  \reqexpect{satisfy}{IMP-TC.STORAGE.RECLAIM-02}{Implement the tests of the
+  scan's reporting: the summary line per class of reclaimed file and, with the
+  metrics feature, the reclaim counters.}
 
   \verify{FDS-STORAGE.RECLAIM-01}
 \end{requirement}
@@ -1989,7 +2084,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.LAYOUT.SHARDING-01}{Implement the tests that derive
+  the shard path from full and compact keys, with and without a variance, and
+  check the two levels and the directory bound.}
 
   \verify{SDS-LAYOUT.SHARDING-01}
   \verify{REQ-EFFICIENCY.DIRSCALE-01}
@@ -2035,7 +2132,9 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.LAYOUT.DIRCACHE-01}{Implement the tests that
+  construct the backend over existing trees and compare the shard directory
+  cache with the disk, and race first-time stores into one new shard.}
 
   \verify{FDS-LAYOUT.STARTUP-01}
 \end{requirement}
@@ -2103,7 +2202,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.LAYOUT.OBJECTFILE-01}{Implement the tests that
+  damage each field a reader validates, one at a time, and check that each
+  record is a miss left in place, and that a corrupted body is read to a normal
+  end.}
 
   \verify{SDS-LAYOUT.OBJECTFILE-03}
 \end{requirement}
@@ -2142,7 +2244,10 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-TC.LAYOUT.KEYSEGMENT-01}{Implement the tests that
+  round-trip keys with and without a variance and a user tag through the key
+  segment, reject malformed segments, and check that the restart-time scan
+  reclaims a record whose key does not decode.}
 
   \verify{SDS-LAYOUT.KEYSEGMENT-01}
 \end{requirement}

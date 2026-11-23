@@ -113,8 +113,13 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{verify}{TC}
-  \reqcover{satisfy}{IMP}
+  \reqexpect{verify}{TC-LAYOUT.SHARDING-01}{Verify that the sharded path derived
+  from an object's full CacheKey equals the one derived from its
+  CompactCacheKey, with and without a variance, and that the two-level fan-out
+  keeps every directory within its entry bound.}
+  \reqexpect{satisfy}{IMP-LAYOUT.SHARDING-01}{Implement the derivation of an
+  object's file name from its key's hash and of its two shard directory levels
+  from that name's leading hexadecimal digits.}
 
   \refine{ADR-PERSISTENCE.MECHANISM-01}
   \satisfy{REQ-EFFICIENCY.DIRSCALE-01}
@@ -218,7 +223,9 @@
   \reqexpect{verify}{TC-LAYOUT.DIRCACHE-01}{Verify the cache is rebuilt
   accurately from disk at every construction, and that concurrent
   first-time stores into the same shard never fail or double-create.}
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-LAYOUT.STARTUP-01}{Implement the in-memory shard
+  directory cache: built from the existing tree at construction, consulted and
+  grown on each store.}
 
   \refine{SDS-LAYOUT.SHARDING-01}
 \end{requirement}
@@ -654,7 +661,12 @@
   and leaves the file in place; that a body whose checksum mismatches is read
   to a normal end, and is logged when the read-time check is on; and that a
   metadata read racing an in-place update returns one complete version.}
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-LAYOUT.OBJECTFILE-03}{Implement the fixed record
+  header exactly as it lies on disk, with its fields' encoding and the checks a
+  reader applies to it.}
+  \reqexpect{satisfy}{IMP-STORAGE.LOOKUP-01}{Implement the read side of the
+  record: the order in which a lookup validates the header, key and metadata,
+  its retry, the optional body check, and seeking within the body.}
 
   \refine{ADR-STORAGE.OBJECTFILE-01}
   \refine{ADR-PERSISTENCE.DURABILITY-02}
@@ -721,7 +733,9 @@
   short for its fields, a variance flag other than 0 or 1, and a tag that is
   not UTF-8 are each rejected; and that the restart-time scan reclaims a
   record whose key does not decode.}
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-LAYOUT.KEYSEGMENT-01}{Implement the encoding and
+  decoding of the record's key segment: primary hash, variance flag, optional
+  variance hash and user tag, in that order with no padding.}
 
   \refine{SDS-LAYOUT.OBJECTFILE-03}
   \trace{FDS-EVICTION.STARTUP-01}
@@ -852,7 +866,9 @@
   returns the manager holds exactly the published set with record sizes,
   including when stores, replacements, and purges run during the scan, and
   that no snapshot or delta log is read or written at any point.}
-  \reqcover{satisfy}{IMP}
+  \reqexpect{satisfy}{IMP-EVICTION.STARTUP-01}{Implement Eviction Recovery: the
+  once-per-start scan that admits every durably published record to the eviction
+  manager and reports what it did.}
 
   \refine{ADR-COMPAT.EVICTION-01}
   \trace{ADR-PERSISTENCE.MECHANISM-01}
@@ -950,8 +966,15 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{verify}{TC}
-  \reqcover{satisfy}{IMP}
+  \reqexpect{verify}{TC-COMPAT.HOTUPGRADE-01}{Verify that, once the upgrade
+  signal makes the outgoing backend read-only, it publishes no store, fails
+  purges and metadata updates without changing anything on disk, and completes
+  the responses it is streaming, and that the incoming process's restart scan
+  starts no sooner than the close timeout after the hand-over.}
+  \reqexpect{satisfy}{IMP-COMPAT.READONLY-02}{Implement the wiring that makes
+  the backend read-only when its server announces the upgrade, and that holds
+  the incoming process's restart scan until the outgoing process's backend is
+  read-only.}
 
   \refine{ADR-COMPAT.READONLY-01}
   \satisfy{FRE-COMPAT.HOTUPGRADE-01}
