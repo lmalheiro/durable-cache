@@ -249,9 +249,21 @@ cover it:
   `\reqexpect{satisfy}{IMP-STORAGE.PURGE-01}{Implement ...}` — an `IMP` ID is
   the marker comment the code carries (`// IMP-STORAGE.PURGE-01: satisfy
   FDS-STORAGE.PURGE-01`), and a TC's is `IMP-TC.<its SUBID>-<NN>`.
-- The note says what the target covers of *this* requirement, in one or two
-  imperative sentences ("Verify that …", "Decide …", "Specify …",
-  "Implement …"), beyond the bare relationship.
+- The note states a need of *the declaring requirement* that the target
+  must meet, in one or two imperative sentences ("Verify that …",
+  "Decide …", "Specify …", "Derive …", "Implement …"), beyond the bare
+  relationship. Two checks, both required:
+  - The note is defined by the declaring requirement, in its own terms:
+    never a restatement of the target's text, nor the target design's
+    mechanisms (an FRE's note to its FDS says what the FRE needs, not
+    "the in-flight registry" or "the rename"). An ADR's note to a design
+    asks only what the ADR's decision says; a TC's note to its `IMP-TC.`
+    restates the TC's steps; a broad HLR's `deriveReqt` note names which
+    of its needs the child derives ("Derive what <the HLR's need>
+    requires of <aspect>").
+  - The target specifies what the note asks — read it; for an `IMP`
+    target, read the code at the marker. Where it does not, fix the note
+    or report the gap; never paper over it.
 - The note is plain text: `\immediate\write` copies it into a CSV, expanding
   macros on the way, and the report escapes only `_` and `&`. So no
   `\reqref`, `\texttt` or `\%`, no `~`, `#` or `"`; write IDs and code names
