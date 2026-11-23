@@ -29,7 +29,14 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{ADR}
+  \reqexpect{satisfy}{ADR-PERSISTENCE.MECHANISM-01}{Adopt, among the storage
+  substrates that meet the persistence requirements, the one that requires this
+  project to build the fewest mechanisms of its own, and state for each
+  substrate rejected on those grounds what it would have required building.}
+  \reqexpect{satisfy}{ADR-OBSERVABILITY.METRICS-01}{Adopt, among the ways of
+  exposing the backend's metrics, the one that requires this project to build
+  the fewest mechanisms of its own, and state for each way rejected on those
+  grounds what it would have required building.}
 \end{requirement}
 
 \begin{requirement}{HLR-PERSISTENCE.DURABLE-01}[draft][stakeholderRequirement]{Durable Persistence}
@@ -50,7 +57,9 @@
   \reqexpect{satisfy}{ADR-PERSISTENCE.MECHANISM-01}{Establish the storage
   substrate and mechanism that persists cached objects across an exit of the
   cache process.}
-  \reqcover{verify}{TC}
+  \reqexpect{verify}{TC-PERSISTENCE.RESTART-01}{Verify that every object whose
+  storage completed before the cache process exited, in an orderly way or by
+  crashing, is served by the process that starts next.}
 \end{requirement}
 
 \begin{requirement}{HLR-PERSISTENCE.CAPACITY-01}[draft][stakeholderRequirement]{Capacity beyond RAM}
@@ -62,10 +71,12 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{ADR-PERSISTENCE.MECHANISM-01}{Choose a storage
-  substrate whose capacity is bounded by persistent storage rather than by
-  process RAM.}
-  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{ADR-PERSISTENCE.MECHANISM-01}{Choose a storage substrate
+  that lets the cache hold a set of objects whose total size exceeds the RAM
+  installed on its host.}
+  \reqexpect{verify}{TC-PERSISTENCE.CAPACITY-01}{Verify that the cache holds,
+  and serves, a set of objects whose total size exceeds the RAM installed on its
+  host.}
 \end{requirement}
 
 \begin{requirement}{HLR-PERSISTENCE.CRASHSAFE-02}[draft][stakeholderRequirement]{Host-crash safety}
@@ -104,11 +115,14 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{ADR-PERSISTENCE.DURABILITY-02}{Decide which writes are
-  synchronised to stable storage, and what integrity check detects the rest,
-  so that a host crash can lose objects but never make the cache serve
-  corrupted or purged content.}
-  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{ADR-PERSISTENCE.DURABILITY-02}{Decide how the cache, once
+  running again after a host crash or power loss, serves no object whose purge
+  it had acknowledged and no object whose content differs from what was stored,
+  losing objects where it must.}
+  \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-02}{Verify that, in every state a
+  host crash or power loss can leave on disk, the restarted cache serves no
+  object whose purge it had acknowledged and no object whose content differs
+  from what was stored, in each configuration the requirement covers.}
 \end{requirement}
 
 \begin{requirement}{HLR-EFFICIENCY.SPACE-01}[draft][stakeholderRequirement]{Space Efficiency}
@@ -132,8 +146,13 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{deriveReqt}{REQ}
-  \reqcover{verify}{TC}
+  \reqexpect{deriveReqt}{REQ-EFFICIENCY.FRAGMENTATION-01}{Bound the overhead of
+  objects smaller than one file-system block, whose block rounding and per-file
+  costs make the largest share of the overhead this requirement limits, as the
+  number of such objects grows.}
+  \reqexpect{verify}{TC-EFFICIENCY.SPACE-01}{Measure the on-disk space overhead
+  as this requirement defines it, allocated blocks minus the objects' own
+  metadata and body bytes, and compare it with the bound.}
 \end{requirement}
 
 \begin{requirement}{HLR-PERFORMANCE.LOOKUP-01}[draft][stakeholderRequirement]{Lookup latency flat with size}
@@ -158,8 +177,13 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{deriveReqt}{REQ}
-  \reqcover{verify}{TC}
+  \reqexpect{deriveReqt}{REQ-EFFICIENCY.DIRSCALE-01}{Bound how the on-disk cost
+  of locating a stored object grows with the number of objects cached, so that a
+  lookup with $10^7$ objects cached stays within this requirement's bound over
+  one with $10^4$.}
+  \reqexpect{verify}{TC-PERFORMANCE.LOOKUP-01}{Verify that the 99th-percentile
+  lookup latency with $10^7$ objects cached stays within this requirement's
+  bound over that with $10^4$, on the same host under the same conditions.}
 \end{requirement}
 
 \begin{requirement}{HLR-PERFORMANCE.HITRATE-01}[draft][stakeholderRequirement]{Hit throughput near in-memory}
@@ -194,8 +218,12 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{ADR}
-  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{ADR-STORAGE.PAGECACHE-01}{Decide how the backend serves
+  hits on objects resident in the host's memory, of 1 KiB to 1 MiB, at no less
+  than this requirement's share of the in-memory backend's request rate.}
+  \reqexpect{verify}{TC-PERFORMANCE.HITRATE-01}{Verify that hits on objects the
+  host keeps in memory, of 1 KiB to 1 MiB, run at no less than this
+  requirement's share of the in-memory backend's request rate.}
 \end{requirement}
 
 \begin{requirement}{HLR-PERFORMANCE.STORERATE-01}[draft][stakeholderRequirement]{Store rate with host-crash loss}
@@ -233,8 +261,14 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{ADR}
-  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{ADR-PERSISTENCE.UNSYNCED-01}{Decide the configuration in
+  which the integrator accepts losing stored objects in a host crash, and how
+  stores of 4 KiB to 64 KiB reach this requirement's share of the in-memory
+  backend's request rate in it while a process exit still loses nothing.}
+  \reqexpect{verify}{TC-PERFORMANCE.STORERATE-01}{Verify that, configured to
+  accept losing stored objects in a host crash, the cache stores new objects of
+  4 KiB to 64 KiB at no less than this requirement's share of the in-memory
+  backend's request rate.}
 \end{requirement}
 
 \begin{requirement}{HLR-PERFORMANCE.BURSTHITS-01}[draft][stakeholderRequirement]{Hits during a burst of stores}
@@ -273,8 +307,14 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{satisfy}{ADR}
-  \reqcover{verify}{TC}
+  \reqexpect{satisfy}{ADR-STORAGE.IOURING-01}{Decide how the cache stores a
+  burst of large objects so that hits on objects resident in the host's memory
+  keep their 99th-percentile latency within twice its value with no store in
+  progress, whatever the configured durability.}
+  \reqexpect{verify}{TC-PERFORMANCE.BURSTHITS-01}{Verify that, while new objects
+  of 1 MiB are stored over 16 connections, hits on objects resident in the
+  host's memory keep their 99th-percentile latency within twice its value with
+  no store in progress, whatever the configured durability.}
 \end{requirement}
 
 \begin{requirement}{HLR-COMPAT.PINGORA-01}[draft][stakeholderRequirement]{Compatible with Pingora}
@@ -303,7 +343,40 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{deriveReqt}{FRE}
+  \reqexpect{deriveReqt}{FRE-COMPAT.UNSIZED-02}{Derive what storing a response
+  through the public miss handler requires of the backend, given that the
+  handler receives the body chunk by chunk and the Storage interface declares no
+  total length.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.CONCURRENT-01}{Derive what the public
+  Storage interface requires of the backend when, as the framework permits with
+  or without its cache lock, several writes of one key are in flight at once.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.EVICTION-01}{Derive what keeping the
+  framework's eviction manager, a separately configured public extension point,
+  consistent with the persisted objects across a restart requires of the
+  backend.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.HOTUPGRADE-01}{Derive what Pingora's hot
+  upgrade, during which an outgoing and an incoming process run at once over the
+  same configuration, requires of a cache the two processes share.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.STREAMFLAG-01}{Derive what the Storage
+  interface's streaming-partial-write flag, on which the framework's stampede
+  protection depends, requires the backend to report.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.STREAMING-01}{Derive what the framework's
+  lookups of a key whose store is still in flight require of a backend that
+  advertises streaming partial writes.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.STREAMDELIVERY-02}{Derive what a reader the
+  framework hands to a follower of an in-flight store owes that follower while
+  the store is still writing.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.STREAMEND-01}{Derive how a reader the
+  framework hands to a follower of an in-flight store must end when that store
+  completes.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.FORMATUPGRADE-01}{Derive what the persisted
+  cache owes across a change of Pingora release, given that the metadata it
+  persists is the framework's own serialisation.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.WRITEFAIL-01}{Derive what the public miss
+  handler's calls, each of which returns a result, require of the backend when
+  writing a store's data to persistent storage fails.}
+  \reqexpect{deriveReqt}{FRE-COMPAT.EXPIRE-01}{Derive what the expire operation
+  of the 0.9 Storage interface, new since 0.8.1, requires of the backend.}
 \end{requirement}
 
 \begin{requirement}{HLR-COMPLIANCE.RFC-01}[draft][stakeholderRequirement]{No added RFC 9111/9110 deviation}
@@ -325,8 +398,64 @@
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqcover{deriveReqt}{FRE}
-  \reqcover{verify}{TC}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.HEADERS-01}{Derive what adding no
+  deviation from MemCache requires of the stored response head a lookup returns,
+  across a restart as within one process run.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.TRAILERS-01}{Derive what adding no
+  deviation requires of trailer fields, which RFC 9110 keeps apart from header
+  fields.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.BODY-01}{Derive what adding no deviation
+  from MemCache requires of the stored body a hit delivers, read from its start
+  or from a sought position.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.FRESHNESS-01}{Derive what adding no
+  deviation from MemCache requires of the inputs to the freshness and age
+  calculations RFC 9111 defines, across a restart as within one process run.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.VALIDATORS-01}{Derive what adding no
+  deviation requires of the validator fields on which conditional revalidation
+  under RFC 9110 and RFC 9111 depends.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.REVALIDATION-01}{Derive what adding no
+  deviation from MemCache requires when the framework freshens a stored response
+  after a successful validation, as RFC 9111 has a cache do.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.METAATOMIC-01}{Derive what adding no
+  deviation requires of the lookups that race the freshening of a stored
+  response.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.METAPERSIST-01}{Derive what a freshened
+  response owes across a restart, compared with what MemCache shows of it within
+  one process run.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.METAABSENT-01}{Derive what adding no
+  deviation requires when the framework asks the backend to freshen a response
+  it does not hold, for which RFC 9111 leaves a cache nothing to update.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.REPLACE-01}{Derive what adding no
+  deviation from MemCache requires when a new response replaces the one stored
+  under a key, as RFC 9111 has a cache do.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.READERISOLATION-01}{Derive what adding
+  no deviation requires of a stored response still being delivered when it is
+  replaced or invalidated.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.VARY-01}{Derive what adding no deviation
+  from MemCache requires of storing and selecting the responses that vary with
+  request header fields under RFC 9111's Vary.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.VARYISOLATION-01}{Derive what adding no
+  deviation requires of the other responses stored for a primary key when one of
+  its variants is stored, replaced, freshened or purged.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.PURGE-01}{Derive what adding no
+  deviation from MemCache requires of an invalidation of a stored response, as
+  RFC 9111 describes it.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.PURGEABSENT-01}{Derive what adding no
+  deviation from MemCache requires of an invalidation or expiry of a key that
+  holds no stored response.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.PURGEDURABLE-01}{Derive what an
+  invalidation owes across a restart, compared with what MemCache shows of it
+  within one process run.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.INCOMPLETE-02}{Derive what adding no
+  deviation requires of a store that never completed, which RFC 9111 forbids a
+  cache to serve as if it were complete.}
+  \reqexpect{deriveReqt}{FRE-COMPLIANCE.PARTIALABORT-01}{Derive what adding no
+  deviation requires of a response streamed to followers when the store it
+  streams aborts.}
+  \reqexpect{verify}{TC-COMPLIANCE.RFC-02}{Verify that, within one process run,
+  the proxy's observable caching behaviour with this backend matches its
+  behaviour with the stock MemCache in every respect RFC 9111 and RFC 9110
+  govern.}
 \end{requirement}
 
 \begin{requirement}{HLR-VERIFICATION.FORMAL-01}[draft][stakeholderRequirement]{Machine-checked properties}
