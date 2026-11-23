@@ -76,8 +76,9 @@ Full rationale, all six patterns, and worked examples:
 
 - **S1 Verifiability route.** For each requirement, name the verification
   method (test / analysis / demonstration / inspection) implied by its wording
-  and check it is consistent with its declared coverage (`\reqcover{verify}{TC}`
-  present for testable leaves; terminal marker justified). A requirement whose
+  and check it is consistent with its declared coverage (a
+  `\reqexpect{verify}{TC-…}{…}` present for testable leaves; terminal marker
+  justified). A requirement whose
   verifying test cannot be sketched in one sentence fails S1 even if its
   grammar is perfect.
 - **S2 Quantitative-where-quantifiable.** Qualitative wording ("durable",

@@ -29,7 +29,7 @@ writing (never guess parent text); use `req-checking` to audit the result.
 4. **Apply the INCOSE quality pass** to the draft.
 5. **Assign the ID, status, and stereotype.**
 6. **Declare relationships** (`\deriveReqt`, `\refine`, …) and **coverage
-   obligations** (`\reqcover`, `\reqexpect`, or `\reqterminal`).
+   obligations** (`\reqexpect` or `\reqterminal`).
 7. **Emit the LaTeX** and remind the user to rebuild (`latexmk -pdf <jobname>`)
    so the tracing report and `<jobname>-requirements.json` pick it up.
 
@@ -77,7 +77,7 @@ Classify how the requirement will be shown satisfied — this drives both the
 wording precision and the coverage obligation:
 
 - **Test** — behavior exercised against pass/fail criteria. Most functional
-  requirements. Obligation: `\reqcover{verify}{TC}`.
+  requirements. Obligation: `\reqexpect{verify}{TC-…}{…}` naming the test case.
 - **Analysis** — shown by calculation, model, or simulation (e.g. timing
   budgets, capacity math). Quantitative wording with units is mandatory.
 - **Demonstration** — observed qualitative behavior without instrumented
@@ -235,30 +235,52 @@ Derivation guidance:
   the user rather than writing it.
 
 Coverage — every non-terminal artifact must state what it expects downstream,
-or the tracing report lists it as *unaccounted*:
-- `\reqcover{refine}{UC}` — "a use case must refine me"
-- `\reqcover{deriveReqt}{DFR}` — "a DFR must be derived from me"
-- `\reqcover{satisfy}{DSN}` — "a design artifact must satisfy me"
-- `\reqcover{verify}{TC}` — "a test case must verify me"
+or the tracing report lists it as *unaccounted*. This project states each
+obligation with `\reqexpect`, naming the full ID of the artifact expected to
+cover it:
 - `\reqexpect{rel}{FULL-ID}{note}` — "specifically FULL-ID must cover me via
-  rel, and here is what it must specify." Use this instead of `\reqcover`
-  when you already know the exact downstream ID — even if it doesn't exist
-  yet, or exists but hasn't linked back — and what it needs to say. Unlike
-  `\reqcover` (satisfied by *any* artifact of a class), this is satisfied
-  only by that exact ID; the tracing report's "Planned Requirements" section
-  lists every unmet one. Two typical uses: recording a decomposition plan
-  before the children are written ("this HLR will be split into
-  `DFR-CACHE.EVICT-01` and `DFR-CACHE.ADMIT-01`, each covering half of it");
-  and needing *more than one* distinct artifact of the same class/relation,
-  which class-level `\reqcover` cannot express — a second
-  `\reqcover{verify}{TC}` on the same requirement is a no-op, since the
-  first matching TC already satisfies it.
+  rel, and here is what it must cover." It is satisfied only by a link from
+  that exact ID; the tracing report's "Planned Requirements" section lists
+  every unmet one, IDs not yet written included. Write one per expected
+  artifact: a requirement two test cases verify carries two, each saying what
+  its test case verifies. Examples:
+  `\reqexpect{verify}{TC-PERSISTENCE.RESTART-01}{Verify that ...}`,
+  `\reqexpect{deriveReqt}{REQ-EFFICIENCY.DIRSCALE-01}{Bound ...}`,
+  `\reqexpect{satisfy}{IMP-STORAGE.PURGE-01}{Implement ...}` — an `IMP` ID is
+  the marker comment the code carries (`// IMP-STORAGE.PURGE-01: satisfy
+  FDS-STORAGE.PURGE-01`), and a TC's is `IMP-TC.<its SUBID>-<NN>`.
+- The note states a need of *the declaring requirement* that the target
+  must meet, in one or two imperative sentences ("Verify that …",
+  "Decide …", "Specify …", "Derive …", "Implement …"), beyond the bare
+  relationship. Two checks, both required:
+  - The note is defined by the declaring requirement, in its own terms:
+    never a restatement of the target's text, nor the target design's
+    mechanisms (an FRE's note to its FDS says what the FRE needs, not
+    "the in-flight registry" or "the rename"). An ADR's note to a design
+    asks only what the ADR's decision says; a TC's note to its `IMP-TC.`
+    restates the TC's steps; a broad HLR's `deriveReqt` note names which
+    of its needs the child derives ("Derive what <the HLR's need>
+    requires of <aspect>").
+  - The target specifies what the note asks — read it; for an `IMP`
+    target, read the code at the marker. Where it does not, fix the note
+    or report the gap; never paper over it.
+- The note is plain text: `\immediate\write` copies it into a CSV, expanding
+  macros on the way, and the report escapes only `_` and `&`. So no
+  `\reqref`, `\texttt` or `\%`, no `~`, `#` or `"`; write IDs and code names
+  plainly, and math only inside `$…$`.
+- When the downstream artifact does not exist yet, choose the ID it will take
+  — the next free SUBID, or the next VERSION of an artifact it will revise —
+  and say in the note what it is to decide or specify.
+- `\reqcover{rel}{PREFIX}` ("any artifact of that class") is still in
+  `reqman.sty`, but this project does not use it: it names no artifact and
+  says nothing of what that artifact must cover.
 - `\reqterminal[reason]` — deliberately no further coverage; always give the
   reason.
 
 Choose obligations from the verification method (Step 2) and the level: an HLR
 typically demands refinement/derivation; a leaf functional requirement demands
-`verify{TC}`; a TC is terminal by type.
+a `verify` by a named test case; a TC is terminal by type, and expects the
+`IMP-TC.` marker of the code that implements it.
 
 ## Step 7 — LaTeX emission
 
@@ -276,8 +298,10 @@ the 200~ms bound comes from the hazard analysis in \reqref{ADR-HAZOP-01}.
 \deriveReqt{HLR-SAFETY-01}
 \deriveReqt{HLR-DRIVE-02}
 \trace{ADR-HAZOP-01}
-\reqcover{satisfy}{DSN}
-\reqcover{verify}{TC}
+\reqexpect{satisfy}{DSN-ESTOP.TORQUE-01}{Specify the torque-removal path and
+  its timing budget, from the button press to zero motor torque.}
+\reqexpect{verify}{TC-ESTOP.TORQUE-01}{Verify that motor torque reaches zero
+  within 200 ms of the emergency-stop press, at every drive speed.}
 \end{requirement}
 ```
 
@@ -321,7 +345,8 @@ When the service restarts following an ungraceful shutdown, the cache
 subsystem shall restore every entry committed before the shutdown, without
 corruption.
 \deriveReqt{HLR-PERSISTENCE-01}
-\reqcover{verify}{TC}
+\reqexpect{verify}{TC-CACHE.DURABLE-01}{Verify that every entry committed
+  before an ungraceful shutdown is restored, uncorrupted, after the restart.}
 \end{requirement}
 
 \begin{requirement}{DFR-CACHE.RESTORE-01}[draft][performanceRequirement]{Cache restore time}
@@ -329,7 +354,8 @@ When the service restarts, the cache subsystem shall complete cache
 restoration within 30~s for a cache of up to 10~GB.
 \deriveReqt{HLR-PERSISTENCE-01}
 \deriveReqt{HLR-AVAILABILITY-01}
-\reqcover{verify}{TC}
+\reqexpect{verify}{TC-CACHE.RESTORE-01}{Measure the restoration time of a
+  10 GB cache after a restart and compare it with the 30 s bound.}
 \end{requirement}
 ```
 
@@ -356,8 +382,11 @@ mechanism to the ADR that satisfies this requirement:
 After a crash, the index shall reflect exactly the writes committed before
 the crash: no committed write missing, no uncommitted write present.
 \deriveReqt{HLR-PERSISTENCE-01}
-\reqcover{satisfy}{ADR}
-\reqcover{verify}{TC}
+\reqexpect{satisfy}{ADR-INDEX.RECOVERY-01}{Decide the mechanism that restores
+  the index after a crash --- log replay, mirroring or snapshots --- and how
+  it keeps exactly the committed writes.}
+\reqexpect{verify}{TC-INDEX.CONSISTENT-01}{Verify that, after a crash at any
+  point of a write, the index holds every committed write and no other.}
 \end{requirement}
 ```
 
