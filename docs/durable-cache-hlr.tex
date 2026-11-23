@@ -328,3 +328,64 @@
   \reqcover{deriveReqt}{FRE}
   \reqcover{verify}{TC}
 \end{requirement}
+
+\begin{requirement}{HLR-VERIFICATION.FORMAL-01}[draft][stakeholderRequirement]{Machine-checked properties}
+
+  \localreqdiagram*{hlrverifyformal01}{\reqid}{\reqdesc}
+
+  The project shall check by machine each property this specification
+  states of the backend that a mechanical checker can establish, over every
+  input, thread schedule and crash point within the bounds the check
+  declares, in a run of at most 15~minutes on each proposed change or of at
+  most 2~hours once a day.
+
+  Tests establish a property for the cases they run. The properties this
+  specification states --- that a record reads back as it was written, that
+  a host crash leaves each object as a version that was stored or a miss
+  (\reqref{HLR-PERSISTENCE.CRASHSAFE-02}), that an acknowledged purge stays
+  purged --- are claims about every case. A checker that explores every case
+  within its bounds, or proves a claim outright, establishes more than a test
+  can, and establishes it again on every change.
+
+  The two durations keep the checking practical. A check that cannot finish
+  within either does not count towards this requirement, however strong its
+  result: the property it would have checked stays with the tests.
+
+  The requirement is verified by inspection: a record kept with the checks
+  lists each property checked, with its checker, its bounds and the duration
+  of its runs, and each property of this specification that no check
+  establishes, with the reason.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{ADR-VERIFICATION.FORMAL-01}{Choose, for each kind of
+  property, the checker that establishes it; state what each check trusts,
+  and how the checks run within the two durations.}
+\end{requirement}
+
+\begin{requirement}{HLR-VERIFICATION.MODELS-01}[draft][stakeholderRequirement]{Dependency models stand alone}
+
+  \localreqdiagram*{hlrverifymodels01}{\reqid}{\reqdesc}
+
+  Each model of a dependency that the project writes for the checks of
+  \reqref{HLR-VERIFICATION.FORMAL-01} shall be publishable, without change
+  to its content, as an open-source project of its own.
+
+  A check of code that calls a dependency needs a model of what the
+  dependency does: of the operating system's file calls, of the Rust standard
+  library, of a crate, of the storage contract of \texttt{pingora-cache}.
+  Such a model is of use well beyond this backend, and other projects can
+  use, correct and extend it only once it is published on its own. Writing a
+  model to stand alone from its first line costs little; separating one
+  later means undoing whatever ties it to this project.
+
+  The requirement is verified by inspection: each model builds on its own,
+  outside this repository; it carries a licence and a copyright notice of its
+  own; and nothing in it names this backend or cites this specification.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{ADR-VERIFICATION.MODELS-01}{Decide where the models
+  live until they are published, and what keeps each one publishable on its
+  own.}
+\end{requirement}

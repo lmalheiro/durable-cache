@@ -1,0 +1,448 @@
+% =====================================================================
+% Appendix: Formal Verification Plan.
+%
+% The plan that carries out ADR-VERIFICATION.FORMAL-01 and
+% ADR-VERIFICATION.MODELS-01: the checkers and what each reaches, the
+% properties each one checks, the phases of the work, the Lean
+% libraries, the budgets the checks run within, and what stays
+% unchecked. The decisions are in those records; a property listed here
+% becomes normative with the test case that checks it.
+% =====================================================================
+
+This appendix is the plan that carries out
+\reqref{ADR-VERIFICATION.FORMAL-01} and \reqref{ADR-VERIFICATION.MODELS-01},
+which answer \reqref{HLR-VERIFICATION.FORMAL-01} and
+\reqref{HLR-VERIFICATION.MODELS-01}. The decisions are in those records;
+this appendix lists what each check is to establish, and the order the work
+takes. A property listed here becomes normative when the test case that
+checks it is written: each phase writes the test cases of its checks, or new
+versions of the test cases its checks extend. What it says of the tools was
+checked in November 2026. They change quickly, and each phase begins by
+checking again what it relies on.
+
+\section{The Checkers}
+\label{app:verification-checkers}
+
+The checkers are Kani,\footnote{\url{https://github.com/model-checking/kani};
+its function contracts and its stubbing are unstable features, enabled with
+\texttt{-Z function-contracts} and \texttt{-Z stubbing}.}
+loom,\footnote{\url{https://github.com/tokio-rs/loom}}
+shuttle,\footnote{\url{https://github.com/awslabs/shuttle}}
+Veil,\footnote{\url{https://github.com/verse-lab/veil}} and Aeneas with its
+front end Charon,\footnote{\url{https://github.com/AeneasVerif/aeneas} and
+\url{https://github.com/AeneasVerif/charon}.} beside the replay of a
+device-mapper \texttt{log-writes} device that
+\reqref{TC-PERSISTENCE.CRASHSAFE-02} already specifies.
+Table~\ref{tab:verification-checkers} gives what each establishes and its
+limits, as of November 2026.
+
+\begin{table}[tb]
+\centering\small\renewcommand{\arraystretch}{1.3}%
+\caption{The checkers}\label{tab:verification-checkers}
+\begin{tabularx}{\linewidth}{|>{\raggedright\arraybackslash}p{0.15\linewidth}|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}p{0.17\linewidth}|>{\raggedright\arraybackslash}X|}
+\hline
+\textbf{Checker} & \textbf{Establishes} & \textbf{On the code itself} & \textbf{Limits} \\
+\hline
+Kani & That no input up to a bound makes the code panic, overflow, or fail an assertion & Yes, \texttt{unsafe} code included & One thread, no \texttt{await}; system calls stubbed; contracts and stubbing unstable \\
+\hline
+loom 0.7 & That a small concurrent test passes under every interleaving of its threads, up to a bound on preemptions & Yes, its \texttt{std::sync} types swapped & No Tokio; by its own documentation, misses some executions the C11 memory model allows \\
+\hline
+shuttle & That a concurrent test passes under many schedules, random or chosen by probabilistic concurrency testing & Yes, Tokio included through its wrappers & A test, not a proof \\
+\hline
+Veil 2.0 & That the invariants of a model written in Lean hold: by SMT solvers where they can, by Lean proof where they cannot; small instances also checked exhaustively & No: a model & Pins Lean 4.35.0 \\
+\hline
+Aeneas and Charon & Any theorem about the Rust code, as translated into Lean & A subset: no \texttt{async}, \texttt{unsafe}, trait objects or \texttt{Drop} behaviour & Charon in beta; the Lean library needs Lean 4.36.0 and Mathlib \\
+\hline
+\texttt{log-writes} replay & The disk state at each flush and FUA point of a real run & Yes, on the real kernel & Root and a scratch device; one kernel and one file system per run \\
+\hline
+\end{tabularx}
+\end{table}
+
+\section{What Is Checked}
+\label{app:verification-properties}
+
+Each property below names the requirements it checks. The data formats, the
+\texttt{unsafe} code and the concurrency are checked on the code itself; the
+protocol is checked on a model, tied to the code by the tests' logs, and in
+the end by proofs about the code.
+
+\subsection{Data formats}
+
+With Kani, for every input up to a bound; in phase 5, with proofs in Lean
+for inputs of every size.
+\begin{itemize}
+  \item \emph{Key segment}: decoding an encoded key gives the key back, no
+    two keys share an encoding, and decoding any bytes returns a key or an
+    error, never a panic (\reqref{SDS-LAYOUT.KEYSEGMENT-01}).
+  \item \emph{Record header}: parsing a built header gives back its fields,
+    its sealed CRC matches, and parsing any 44 bytes returns a header or an
+    error, never a panic or an overflow (\reqref{SDS-LAYOUT.OBJECTFILE-03}).
+    The header has a fixed size, so the check covers every possible header,
+    not a sample.
+  \item \emph{Read-time validation}: a record is accepted only when every
+    check of \reqref{SDS-LAYOUT.OBJECTFILE-03} passes, and malformed bytes
+    never make the reader panic.
+  \item \emph{Sharding}: an object's path depends only on its key's combined
+    hash and tag, stays inside the cache directory, and ends in the 32
+    hexadecimal characters of its name (\reqref{SDS-LAYOUT.SHARDING-01}). The
+    hash is stubbed, since the property holds whatever its value.
+  \item \emph{Shard-directory bitset}: every index it computes is in range
+    (\reqref{FDS-LAYOUT.STARTUP-01}).
+  \item \emph{Expiry never lengthens the metadata}: for every stored deadline
+    and every instant, the internal-metadata segment an expiry writes is no
+    longer than the one it replaces, through the MessagePack encoder of
+    \texttt{pingora-cache} itself (\reqref{FDS-STORAGE.EXPIRE-01}). Should
+    the encoder not fit the budget, the existing tests, which cover every
+    width the encoding gives a deadline, remain the check.
+  \item \emph{Writer-lease names}: parsing a lease's name gives back the
+    identity it was formatted from (\reqref{ADR-STORAGE.WRITERID-01}).
+\end{itemize}
+
+\subsection{Unsafe code}
+
+With Kani, the system calls stubbed by every result they may return.
+\begin{itemize}
+  \item \emph{Reads that must not wait}: for every result \texttt{preadv2}
+    or \texttt{pread} may return, the buffer's new length covers only bytes
+    the call wrote (\reqref{FDS-STORAGE.PAGECACHE-01}).
+  \item \emph{The ring}: a buffer submitted to the \texttt{io\_uring} ring,
+    and the file it writes to, stay alive until the kernel's completion for
+    it is collected, for any sequence of submissions, completions and drops
+    (\reqref{FDS-STORAGE.IOURING-01}).
+\end{itemize}
+The other \texttt{unsafe} blocks call \texttt{libc} functions that take no
+pointer --- \texttt{flock} on a descriptor the caller borrows,
+\texttt{sync}, \texttt{geteuid} --- and leave nothing to check beyond the
+call.
+
+\subsection{Concurrency}
+
+With loom where the code uses only \texttt{std::sync}, and with shuttle where
+Tokio is involved.
+\begin{itemize}
+  \item \emph{Publication lock and read-only gate} (loom): one change per key
+    at a time; when the switch to read-only returns, every change that
+    entered the gate before it has ended, and none enters afterwards; no
+    deadlock (\reqref{FDS-COMPAT.READONLY-02}).
+  \item \emph{Inline slots} (loom): never more slots taken than the limit,
+    nor than the runtime's workers less one, and every operation gives its
+    slot back, on every path out of it
+    (\reqref{FDS-STORAGE.INLINEWRITES-02}).
+  \item \emph{In-flight registry} (shuttle): a purge that invalidates a key
+    ends the key's in-flight stores, the readers waiting on them wake, and a
+    store's entry leaves the registry when the store completes or aborts
+    (\reqref{FDS-STORAGE.PARTIAL-02}, \reqref{FRE-COMPLIANCE.PURGE-01}).
+  \item \emph{Ring completions} (shuttle): the store waiting on each write
+    the ring takes learns that write's result exactly once, whatever order
+    the completions arrive in (\reqref{FDS-STORAGE.IOURING-01}).
+\end{itemize}
+
+\subsection{The protocol across crashes}
+
+Invariants of the protocol model, which Veil proves for any number of keys,
+writers and calls --- or a Lean proof does, where its solvers cannot --- and
+which the crash explorer of phase 3 checks on the real backend:
+\begin{enumerate}
+  \item \emph{Synchronised stores}: a published name never refers to data
+    that is not on stable storage (\reqref{ADR-PERSISTENCE.DURABILITY-02},
+    \reqref{FDS-STORAGE.PUBLISH-03}, \reqref{ADR-STORAGE.ATOMICPUBLISH-01}).
+  \item \emph{No mixtures}: in every state a crash can leave, the restarted
+    backend serves each object as one version it stored, or misses it ---
+    after stores, in-place metadata updates and withdrawals alike
+    (\reqref{HLR-PERSISTENCE.CRASHSAFE-02},
+    \reqref{FDS-STORAGE.METAUPDATE-01}).
+  \item \emph{Purges hold}: no crash undoes a purge the backend acknowledged
+    (\reqref{FRE-COMPLIANCE.PURGEDURABLE-01}).
+  \item \emph{Purges end in-flight stores}: no store in flight when a purge
+    invalidates its key lands after the purge
+    (\reqref{FRE-COMPLIANCE.PURGE-01}, \reqref{FDS-STORAGE.PURGE-01}).
+  \item \emph{Unsynchronised stores} (\reqref{ADR-PERSISTENCE.UNSYNCED-01},
+    \reqref{FDS-PERSISTENCE.CRASHDISCARD-01}): with the discard on, no record
+    or temporary written before a host restart is reachable after it; with
+    the discard off, on a file system that records a file's length only once
+    its data is written, a record whose body did not reach the device reads
+    short, and is a miss.
+  \item \emph{The restart scan removes only leftovers}: never the temporary
+    of a writer still running, process identifiers reused and hot upgrades
+    included (\reqref{FDS-STORAGE.RECLAIM-01},
+    \reqref{ADR-STORAGE.WRITERID-01}).
+  \item \emph{Recovery beside live traffic} admits no ghost entry, one for a
+    record that is gone, and leaves the eviction manager's entries matching
+    the records that are published (\reqref{FDS-EVICTION.STARTUP-01}).
+  \item \emph{Hot upgrade}: once the switch to read-only has returned, the
+    old process publishes, purges, updates, expires and reclaims nothing
+    (\reqref{FDS-COMPAT.READONLY-02}, \reqref{FRE-COMPAT.HOTUPGRADE-01}); its
+    flush still removes the markers of unsynchronised stores
+    (\reqref{FDS-PERSISTENCE.CRASHDISCARD-01}).
+\end{enumerate}
+
+\subsection{The code against the model}
+
+In phase 5, proofs in Lean that the synchronous code does what the protocol
+model's steps say: publishing a store, purging, expiring, updating
+metadata, and classifying what the restart scan finds. Each proof assumes
+that the caller holds the key's publication lock, which the concurrency
+checks and the model establish.
+
+\section{How the Checks Are Kept Honest}
+\label{app:verification-rules}
+
+The rules of \reqref{ADR-VERIFICATION.FORMAL-01}, in practice:
+\begin{itemize}
+  \item Every run lists the axioms each theorem rests on (Lean's
+    \texttt{\#print axioms}) and fails on one outside the reviewed list, and
+    a proof that uses \texttt{sorry} fails the build. Proofs keep Lean's
+    default limit on the work one proof may take (\texttt{maxHeartbeats});
+    raising it for a proof is a reviewed exception.
+  \item Each Kani stub, and each model a proof assumes of a dependency, is
+    named in the same list.
+  \item Kani and loom harnesses are named \texttt{tc\_<id>\_\ldots}, after
+    the test case they implement, so that \texttt{cargo xtask trace-report}
+    and the tracing report count them as they count tests. A Lean file that
+    checks a test case carries the marker
+    \texttt{-{}- IMP-TC.<ID>: satisfy TC-<ID>}.
+  \item A change to checked code updates its checks in the same pull
+    request. Lake, the Lean build tool, checks again only the files a change
+    reaches and the files that depend on them.
+\end{itemize}
+
+\section{Phases}
+\label{app:verification-phases}
+
+Each phase is useful on its own. Phases~0 and~1 need no Lean code: they
+prepare the ground and check the code itself. Each later phase builds on
+what the earlier ones established.
+The pilot of phase~4 measures what the proofs about the code cost before
+phase~5 commits to them.
+
+\subsection*{Phase 0: groundwork}
+\begin{itemize}
+  \item The two tools that link test cases to code,
+    \texttt{reqman-report.py} and \texttt{cargo xtask trace-report}, read
+    Rust files only; they learn to read the markers in Lean's
+    \texttt{-{}-} comments.
+  \item The header check (\texttt{cargo xtask headers}) covers Lean files,
+    and accepts in each library's directory that library's own copyright
+    line.
+  \item The crate declares \texttt{cfg(kani)} and \texttt{cfg(loom)} to the
+    compiler's check of configuration names.
+  \item A module \texttt{crate::sync} gives the code the \texttt{std::sync}
+    types, or loom's under \texttt{cfg(loom)}, one declaration with a block
+    for each, as \texttt{crate::platform} is laid out.
+  \item The Nix shell provides elan, the Lean toolchain manager, and Kani;
+    Charon and Aeneas join it in phase~4.
+  \item A \texttt{verification/} directory holds the record of checked
+    properties, and the CI workflow holds the jobs of
+    Section~\ref{app:verification-budgets}, each with its time limit.
+  \item The two designs \reqref{ADR-VERIFICATION.FORMAL-01} expects --- how
+    the checks run, and where they live --- are written.
+\end{itemize}
+
+\subsection*{Phase 1: the code itself}
+\begin{itemize}
+  \item Kani harnesses for the data formats and the \texttt{unsafe} code,
+    each with bounds that fit a run on each change, and deeper bounds in the
+    daily run.
+  \item loom tests for the publication lock, the read-only gate and the
+    inline slots; shuttle tests for the in-flight registry and the ring's
+    completions.
+  \item The \texttt{log-writes} harness \reqref{TC-PERSISTENCE.CRASHSAFE-02}
+    specifies, which the repository does not have yet: the test case's test
+    builds, by hand, the states such a replay produces. The harness runs
+    daily in a privileged job, on ext4 as the test case says, and on XFS too.
+    Should the kernel of the CI runners lack the device-mapper target, it
+    needs a runner of the project's own, or a virtual machine.
+  \item Exit: every check passes within its budget, with a test case for
+    each property.
+\end{itemize}
+
+\subsection*{Phase 2: the protocol in Lean}
+\begin{itemize}
+  \item The storage-contract library, a first version: what
+    \texttt{pingora-cache} expects of \texttt{Storage}, \texttt{HandleHit},
+    \texttt{HandleMiss} and \texttt{EvictionManager}, with a reference
+    implementation that runs. \texttt{MemCache}, the backend
+    \reqref{TC-COMPLIANCE.RFC-02} compares against, is run through it:
+    everything it does must be allowed.
+  \item The protocol model, in Veil. Its state: names, records, temporaries,
+    leases, the per-key locks, the read-only gate, the in-flight stores, and
+    which data and directory entries are on stable storage. Its steps: the
+    storage calls, a crash, a restart, the restart scan, a hot-upgrade
+    handover. The invariants of Section~\ref{app:verification-properties}
+    are proved, and small instances also checked exhaustively.
+  \item Every behaviour of the model is one the storage contract allows.
+  \item Trace checking: the test hooks, which compile to nothing outside
+    tests, log the steps the backend takes; a Lean program replays each test
+    run's log through the model, and fails on a step the model forbids.
+  \item Exit: the invariants proved, and the logs of the crate's tests and
+    of the compatibility tests replayed without a forbidden step.
+\end{itemize}
+
+\subsection*{Phase 3: the file system and its crashes}
+\begin{itemize}
+  \item The file-system library: the POSIX calls the backend makes; what a
+    crash may leave of them under four profiles --- the POSIX minimum, ext4
+    with \texttt{data=ordered}, ext4 with \texttt{data=writeback}, and XFS;
+    a program that lists every state a crash may leave after a sequence of
+    calls; and a harness that compares its behaviour without crashes with
+    Linux.
+  \item The crash explorer, on the method of
+    ALICE:\footnote{T.~S.~Pillai, V.~Chidambaram, R.~Alagappan, S.~Al-Kiswany,
+    A.~C.~Arpaci-Dusseau and R.~H.~Arpaci-Dusseau, ``All File Systems Are Not
+    Created Equal: On the Complexity of Crafting Crash-Consistent
+    Applications'', \emph{OSDI~2014}.} record the system calls of the
+    scenario tests with \texttt{strace}, which the benchmark's census of
+    system calls already uses; list the states the library allows a crash to
+    leave;
+    build each state in a scratch directory and restart the backend on it;
+    and check the expected result of \reqref{TC-PERSISTENCE.CRASHSAFE-02}.
+    Small scenarios run on each change, every scenario of the compatibility
+    tests daily.
+  \item The cross-check: each state a replay of the \texttt{log-writes}
+    harness produces must be one the library's profile for that file system
+    allows, which checks the library against the kernel.
+\end{itemize}
+
+\subsection*{Phase 4: the pilot of Aeneas}
+\begin{itemize}
+  \item Translate the key codec, then the sharding, then the record format,
+    with the crate models.
+  \item Known obstacles. The guard that edits a record header reseals the
+    header's CRC when it is dropped, and Charon does not model what
+    \texttt{Drop} does; an explicit call in its place would make the code
+    worse, so that proof waits for Charon. The restart scan takes the
+    eviction manager as a trait object, which Charon does not translate.
+    Error paths and logging become calls the proofs treat as opaque.
+  \item Measured: what translates unchanged, the size of the proofs, the
+    time they take to check, and how much proof a typical change to the code
+    breaks.
+  \item Criteria: no code made worse for the translation, the proofs checked
+    within their budget, and little proof to repair after a typical change.
+    Should the pilot miss one, a revision of
+    \reqref{ADR-VERIFICATION.FORMAL-01} decides how phase~5 proceeds: with
+    Aeneas once the Charon issues the pilot hit are closed, or with Verus.
+\end{itemize}
+
+\subsection*{Phase 5: proofs of the synchronous code}
+\begin{itemize}
+  \item The library of Rust Unix I/O, built on the file-system library.
+    Every outcome a call may have --- a short read, \texttt{EINTR},
+    \texttt{EAGAIN}, an error --- is an input the theorems quantify over.
+  \item Module by module, as each settles: publishing a store, purging,
+    expiring, updating metadata, classifying what the restart scan finds;
+    and the data-format properties of phase~1 for inputs of every size. A
+    module joins the record of checked properties when its proofs are
+    complete.
+\end{itemize}
+
+\section{The Lean Libraries}
+\label{app:verification-libraries}
+
+Table~\ref{tab:verification-libraries} lists the four libraries of
+\reqref{ADR-VERIFICATION.MODELS-01} by what they model; each is named when it
+is created.
+
+\begin{table}[tb]
+\centering\small\renewcommand{\arraystretch}{1.3}%
+\caption{The Lean libraries}\label{tab:verification-libraries}
+\begin{tabularx}{\linewidth}{|>{\raggedright\arraybackslash}p{0.15\linewidth}|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}p{0.17\linewidth}|>{\raggedright\arraybackslash}p{0.2\linewidth}|}
+\hline
+\textbf{Library} & \textbf{Models} & \textbf{Depends on} & \textbf{Checked against} \\
+\hline
+File system & The POSIX calls the backend makes; what a crash may leave of them, per profile; the list of those states & Lean core & Linux; the \texttt{log-writes} replays \\
+\hline
+Rust Unix I/O & \texttt{std::fs}, \texttt{std::io} and \texttt{std::os::unix}; \texttt{libc}; \texttt{rustix} & The Aeneas library; the file-system library & The real calls \\
+\hline
+Crates & \texttt{bytes}; \texttt{hex}; \texttt{zerocopy}, its little-endian integers and \texttt{repr(C)} layout; \texttt{crc32c}, with the law for extending a running CRC that a record's body CRC relies on; \texttt{blake2}, as an arbitrary function; \texttt{thiserror}; \texttt{log}; \texttt{pingora-error} & The Aeneas library & Property tests against the crates \\
+\hline
+Storage contract & The types of \texttt{pingora-cache}, the contract of its storage traits, the laws of \texttt{CacheMeta} & Lean core & \texttt{MemCache}, through the reference implementation \\
+\hline
+\end{tabularx}
+\end{table}
+
+Not modelled: \texttt{tokio}, \texttt{async-trait} and \texttt{pingora-core},
+the async layer and the process's life cycle; \texttt{io-uring}, the kernel's
+side of the ring; and \texttt{pingora-prometheus}, which does not change what
+the backend does.
+
+In November 2026, Veil 2.0 pinned Lean 4.35.0, and the Lean library of
+Aeneas required Lean 4.36.0 with Mathlib. The file-system library and the
+storage contract depend on Lean's core library alone, so they build under
+both; this project's own Lean code sits in two projects: the protocol model
+under Veil's version, the proofs about the code under that of Aeneas.
+
+\section{Budgets}
+\label{app:verification-budgets}
+
+Table~\ref{tab:verification-budgets} gives the budget of each check: within
+the two durations of \reqref{HLR-VERIFICATION.FORMAL-01}, and in jobs that
+run side by side.
+
+\begin{table}[tb]
+\centering\small\renewcommand{\arraystretch}{1.3}%
+\caption{The budgets of the checks}\label{tab:verification-budgets}
+\begin{tabularx}{\linewidth}{|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}p{0.3\linewidth}|>{\raggedright\arraybackslash}p{0.17\linewidth}|}
+\hline
+\textbf{Check} & \textbf{When} & \textbf{Budget} \\
+\hline
+Kani, the bounds for each change & Each pull request & 10~min \\
+\hline
+loom and shuttle, small bounds & Each pull request & 5~min \\
+\hline
+The Lean libraries and the protocol model & Each pull request that changes them & 10~min, dependencies cached \\
+\hline
+Aeneas: the translation up to date, and the proofs about the code & Each pull request that touches a checked module & 15~min \\
+\hline
+The crash explorer, small scenarios & Each pull request & 10~min \\
+\hline
+Deeper Kani, loom and shuttle bounds; the model's exhaustive checks; the full crash exploration; trace checking & Daily & 2~h in all \\
+\hline
+The \texttt{log-writes} replays, ext4 and XFS & Daily, in a privileged job & 1~h \\
+\hline
+Each library against what it models, in its own workflow & Each pull request that changes the library; daily & 15~min; 30~min daily \\
+\hline
+\end{tabularx}
+\end{table}
+
+A check that runs past its budget fails. Each runs in a job of its own: the
+prebuilt files of Mathlib alone take several gigabytes, and the existing
+jobs already free disk space before they build. The translation Aeneas
+produces is committed, and its check regenerates it and fails on a
+difference, as the formatting check does, so that a reviewer sees which
+proofs a change reaches. A job whose inputs a change does not touch finishes
+at once, but still reports, so that it can be a required check.
+
+For now no check blocks a merge or a release
+(\reqref{ADR-VERIFICATION.FORMAL-01}): the checks report their results, as
+the daily runs of the compliance workflow do.
+
+\section{Risks}
+\label{app:verification-risks}
+
+\begin{itemize}
+  \item \emph{A wrong model.} A proof about a model that does not match what
+    it models proves nothing about the code. The comparisons with Linux and
+    with the crates, the cross-check with the \texttt{log-writes} replays, and
+    trace checking are there to catch it.
+  \item \emph{Young tools}: Charon in beta, the function contracts of Kani
+    unstable, Veil young, and loom missing some executions by its own
+    account.
+  \item \emph{Toolchains that move.} The Lean versions, Mathlib, Charon and
+    Kani change often; each is pinned, in the Nix shell or the Lake
+    manifest, and an upgrade is a reviewed change like any other.
+  \item \emph{Upkeep while the code changes.} The modules that have settled
+    are checked first, and phase~5 follows the work on the write path.
+\end{itemize}
+
+\section{What Stays Unchecked}
+\label{app:verification-unchecked}
+
+\begin{itemize}
+  \item The async layer and Tokio's scheduling.
+  \item Pingora beyond the storage contract.
+  \item The kernel and the file systems: their behaviour is assumed, per
+    profile, and checked only by the \texttt{log-writes} replays.
+  \item A storage device that honours flushes, which
+    \reqref{HLR-PERSISTENCE.CRASHSAFE-02} already assumes.
+  \item The kernel's side of \texttt{io\_uring}.
+\end{itemize}

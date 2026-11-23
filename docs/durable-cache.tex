@@ -169,9 +169,13 @@ artifacts that retarget added --- \reqref{FRE-COMPAT.EXPIRE-01},
 closed by code built against 0.9.0, as are the ones it rewrote to match that
 release's interfaces, chiefly \reqref{FDS-STORAGE.PURGE-01},
 \reqref{FDS-EVICTION.STARTUP-01} and \reqref{ADR-OBSERVABILITY.METRICS-01}.
-No \textsf{IMP} link in the report below is stale on that account, and the one
-gap it reports is \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s, deliberately
-left open by \reqref{ADR-EFFICIENCY.COMPACTION-01}'s declared conflict.
+No \textsf{IMP} link in the report below is stale on that account. Of the
+gaps it reports, \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s is deliberately
+left open by \reqref{ADR-EFFICIENCY.COMPACTION-01}'s declared conflict. The
+other two are the designs \reqref{ADR-VERIFICATION.FORMAL-01} and
+\reqref{ADR-VERIFICATION.MODELS-01} expect, listed among the planned
+requirements, which phase~0 of the plan in Appendix~\ref{app:verification}
+writes.
 
 \includetracingreport
 
@@ -188,5 +192,9 @@ left open by \reqref{ADR-EFFICIENCY.COMPACTION-01}'s declared conflict.
 \chapter{Storage I/O Without the Blocking Pool}
 \label{app:executor}
 \input{durable-cache-executor}
+
+\chapter{Formal Verification Plan}
+\label{app:verification}
+\input{durable-cache-verification}
 
 \end{document}
