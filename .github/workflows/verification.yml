@@ -1,0 +1,35 @@
+name: Verification
+
+# The formal checks of ADR-VERIFICATION.FORMAL-01, which carry no time limit
+# (HLR-VERIFICATION.FORMAL-01 leaves it to a later decision) and, for now,
+# block neither a merge nor a release: no job here sets `timeout-minutes`,
+# and none is a required check.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "30 4 * * *" # daily, the checks with the deeper bounds
+  workflow_dispatch:
+
+env:
+  # Line tables keep file:line in backtraces at a fraction of full debug
+  # info's size, which otherwise fills the runner's disk.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+
+      - name: TC-VERIFICATION.RECORD-01 — the record of checked properties
+        # verification/record.toml against the repository: each entry's test
+        # case and requirements are declared in the specification, and each
+        # check's harness exists once, named after its test case.
+        run: nix develop -c cargo xtask verify

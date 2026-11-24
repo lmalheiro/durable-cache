@@ -95,6 +95,7 @@ pub(crate) mod record;
 mod recovery;
 pub(crate) mod sharding;
 mod storage_impl;
+mod sync;
 // `cfg(io_uring)`, which build.rs sets, holds where stores can write through
 // an `io_uring` ring; elsewhere, `uring` is a stand-in without one.
 #[cfg(io_uring)]

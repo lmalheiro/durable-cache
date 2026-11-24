@@ -1640,6 +1640,9 @@ def build_source_index(source_root, skip_dirs=()):
 #   // IMP-<SLUG>-<NN>: <relationship> <TARGET-ID> [optional note]
 #   // IMP-STORAGE.PUBLISH-03: satisfy FDS-STORAGE.PUBLISH-03
 #
+# in a Rust file, and the same after `--` in a Lean file, the language of the
+# formal checks of ADR-VERIFICATION.FORMAL-01.
+#
 # The IMP id is a real, citable identifier (same PREFIX-SLUG-NN shape as
 # every other requirement ID in this project), authored deliberately at the
 # implementation site, not derived from file/line -- file/line is only used
@@ -1648,7 +1651,8 @@ def build_source_index(source_root, skip_dirs=()):
 # the IMP id, Target_ID = what it satisfies), so callers can simply
 # concatenate the two lists.
 
-SOURCE_EXTENSIONS = {".rs"}
+# The files scanned for markers, each with the leader of its line comments.
+SOURCE_COMMENT_LEADERS = {".rs": "//", ".lean": "--"}
 SOURCE_SKIP_DIRS  = {"target", "third_party", "node_modules", ".git", "docs"}
 
 
@@ -1680,7 +1684,8 @@ def extract_imp_links(repo_root, skip_dirs=SOURCE_SKIP_DIRS):
     """Scan source files under repo_root for IMP marker comments (see above)
     and return rows shaped like externals.csv: Source_ID/Target_ID/Rel_Type/
     URL/Display. A marker must be the entire content of a comment line (after
-    leading whitespace and the `//`/`///`/`//!` leader) -- this keeps markers
+    leading whitespace and the `//`/`///`/`//!` leader of a Rust file, or the
+    `--` leader of a Lean file) -- this keeps markers
     greppable as dedicated lines and avoids false positives from a stray
     ID-shaped token in a trailing end-of-line comment.
 
@@ -1692,7 +1697,8 @@ def extract_imp_links(repo_root, skip_dirs=SOURCE_SKIP_DIRS):
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
         for fn in sorted(filenames):
-            if os.path.splitext(fn)[1] not in SOURCE_EXTENSIONS:
+            leader = SOURCE_COMMENT_LEADERS.get(os.path.splitext(fn)[1])
+            if leader is None:
                 continue
             path    = os.path.join(dirpath, fn)
             relpath = os.path.relpath(path, repo_root)
@@ -1703,7 +1709,7 @@ def extract_imp_links(repo_root, skip_dirs=SOURCE_SKIP_DIRS):
                 continue
             for lineno, line in enumerate(lines, start=1):
                 stripped = line.strip()
-                if not stripped.startswith("//"):
+                if not stripped.startswith(leader):
                     continue
                 m = _IMP_MARKER_RE.search(stripped)
                 if not m:

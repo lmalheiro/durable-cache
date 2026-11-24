@@ -84,9 +84,9 @@
 //! read-only, and FDS-STORAGE.METAUPDATE-01 accepts the race there.
 
 use std::cell::Cell;
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
 use crate::sharding::RADIX;
+use crate::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
 /// How many leading hex digits of a key's name pick its stripe.
 const STRIPE_DIGITS: usize = 3;

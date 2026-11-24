@@ -16,6 +16,7 @@ use clap::{Parser, Subcommand};
 
 mod bench;
 mod cfg_matrix;
+mod verification;
 
 #[derive(Parser)]
 struct Cli {
@@ -64,10 +65,11 @@ enum Cmd {
     /// against test functions named `tc_<id>` anywhere in the workspace,
     /// and print a coverage table.
     TraceReport,
-    /// Check that every source file (Rust, shell, Python, Nix) starts with
-    /// the project's SPDX header, after the shebang if it has one: a
+    /// Check that every source file (Rust, Lean, shell, Python, Nix) starts
+    /// with the project's SPDX header, after the shebang if it has one: a
     /// `SPDX-FileCopyrightText` line naming the durable-cache authors
-    /// (see AUTHORS), then `SPDX-License-Identifier: Apache-2.0`.
+    /// (see AUTHORS), or in a library under `verification/libs/<name>/` the
+    /// authors of `<name>`, then `SPDX-License-Identifier: Apache-2.0`.
     Headers,
     /// Format the workspace with the nightly rustfmt pinned in
     /// `.config/rustfmt-toolchain`, since rustfmt.toml's import options are
@@ -92,6 +94,12 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
+    /// Check `verification/record.toml`, the record of the properties the
+    /// formal checks establish (ADR-VERIFICATION.FORMAL-01), against the
+    /// repository: every test case and requirement it names is declared in
+    /// the specification, and every check's harness exists once, named after
+    /// its test case (TC-VERIFICATION.RECORD-01).
+    Verify,
     /// Lint and test durable-cache in every build its `#[cfg]` gates select:
     /// clippy for each feature set and for a release build, and nextest with
     /// the default features and with all of them. On Linux, and again on a
@@ -200,6 +208,7 @@ fn main() -> Result<()> {
         Cmd::Fmt { check } => fmt(check),
         Cmd::ReadmeLinks { check } => readme_links(check),
         Cmd::CfgMatrix { no_tests } => cfg_matrix::cfg_matrix(&workspace_root()?, !no_tests),
+        Cmd::Verify => verification::verify(&workspace_root()?),
         Cmd::Bench {
             nginx,
             oha,
@@ -763,14 +772,24 @@ fn trace_report() -> Result<()> {
     // is the usual form, but a TC verified by tooling rather than by a
     // `#[test]` (TC-COMPLIANCE.RFC-02, which `cargo xtask cache-tests`
     // discharges) has only the marker -- the same marker `reqman-report.py`
-    // reads, so the two tools agree by construction.
+    // reads, so the two tools agree by construction. A Lean file, of the
+    // checks of ADR-VERIFICATION.FORMAL-01, carries the marker in a `--`
+    // comment, as a Rust file does in a `//` one.
     let mut found_fns: Vec<String> = Vec::new();
     let mut found_markers: Vec<String> = Vec::new();
     for entry in walkdir::WalkDir::new(&root).into_iter().filter_entry(|e| {
-        e.file_name() != "target" && e.file_name() != "third_party" && e.file_name() != ".git"
+        e.file_name() != "target"
+            && e.file_name() != "third_party"
+            && e.file_name() != ".git"
+            && e.file_name() != ".lake"
     }) {
         let entry = entry?;
-        if entry.file_type().is_file() && entry.path().extension().is_some_and(|e| e == "rs") {
+        let leader = match entry.path().extension().and_then(|e| e.to_str()) {
+            Some("rs") => "//",
+            Some("lean") => "--",
+            _ => continue,
+        };
+        if entry.file_type().is_file() {
             let contents = std::fs::read_to_string(entry.path()).unwrap_or_default();
             for line in contents.lines() {
                 let line = line.trim_start();
@@ -782,15 +801,20 @@ fn trace_report() -> Result<()> {
                 for prefix in ["pub(crate) ", "pub ", "async ", "unsafe ", "const "] {
                     decl = decl.strip_prefix(prefix).unwrap_or(decl);
                 }
-                if let Some(rest) = decl.strip_prefix("fn ") {
-                    if let Some(name) = rest.split(['(', '<']).next() {
-                        if name.starts_with("tc_") {
-                            found_fns.push(name.to_string());
+                if leader == "//" {
+                    if let Some(rest) = decl.strip_prefix("fn ") {
+                        if let Some(name) = rest.split(['(', '<']).next() {
+                            if name.starts_with("tc_") {
+                                found_fns.push(name.to_string());
+                            }
                         }
                     }
                 }
 
-                if let Some(rest) = line.strip_prefix("// IMP-TC.") {
+                let marker = line
+                    .strip_prefix(leader)
+                    .and_then(|comment| comment.strip_prefix(" IMP-TC."));
+                if let Some(rest) = marker {
                     if let Some(imp_id) = rest.split(':').next() {
                         found_markers.push(format!("TC-{imp_id}"));
                     }
@@ -848,12 +872,28 @@ fn trace_report() -> Result<()> {
 fn header_comment(path: &str) -> Option<&'static str> {
     if path.ends_with(".rs") {
         Some("//")
+    } else if path.ends_with(".lean") {
+        Some("--")
     } else if [".sh", ".py", ".nix"].iter().any(|ext| path.ends_with(ext))
         || path.starts_with(".githooks/")
     {
         Some("#")
     } else {
         None
+    }
+}
+
+/// Whom a file's copyright line names: the durable-cache authors, but in a
+/// Lean library under `verification/libs/<name>/`, that library's own
+/// authors, as the library is to be published on its own
+/// (ADR-VERIFICATION.MODELS-01, SDS-VERIFICATION.LAYOUT-01).
+fn copyright_holder(path: &str) -> String {
+    match path
+        .strip_prefix("verification/libs/")
+        .and_then(|rest| rest.split_once('/'))
+    {
+        Some((library, _)) => format!("The {library} authors"),
+        None => "The durable-cache authors".to_owned(),
     }
 }
 
@@ -885,7 +925,7 @@ fn check_headers() -> Result<()> {
         let copyright = lines.next().unwrap_or_default();
         let licence = lines.next().unwrap_or_default();
         let ok = copyright.starts_with(&format!("{c} SPDX-FileCopyrightText: "))
-            && copyright.ends_with(" The durable-cache authors")
+            && copyright.ends_with(&format!(" {}", copyright_holder(path)))
             && licence == format!("{c} SPDX-License-Identifier: Apache-2.0");
         if !ok {
             missing.push(path.to_owned());

@@ -1,0 +1,207 @@
+# The record of the properties the formal checks establish
+# (HLR-VERIFICATION.FORMAL-01, ADR-VERIFICATION.FORMAL-01), in the layout
+# SDS-VERIFICATION.LAYOUT-01 specifies. `cargo xtask verify` checks it
+# against the repository (TC-VERIFICATION.RECORD-01).
+#
+# Three kinds of entry:
+#
+# [[check]]     a property a check establishes:
+#   test_case     the test case the check implements, which names it
+#   property      what it establishes, in one sentence
+#   requirements  the requirements the property is of
+#   checker       kani or loom
+#   harness       the check's function, named tc_<test case>_<what>
+#   bounds        what the check covers: its inputs, threads or states
+#   runs          change (each proposed change) or daily
+#   assumes       the stubs and axioms its result rests on
+#   duration      how long its last run took, with where and when
+#
+# [[planned]]   a property a check is to establish, in the phase of the
+#               plan (Appendix D of the specification) that writes it:
+#   property, requirements, checker, phase
+#
+# [[unchecked]] what no check establishes, and why: property, reason
+#
+# A property moves from [[planned]] to [[check]] in the change that adds
+# its check, and its test case is written or takes a new version in the
+# same change. Dropping a [[check]] is a reviewed change like any other.
+
+# --- Data formats: Kani on the code (phase 1), Lean proofs for every size
+# (phase 5) -------------------------------------------------------------
+
+[[planned]]
+property = "Decoding an encoded key gives the key back, no two keys share an encoding, and decoding any bytes returns a key or an error, never a panic."
+requirements = ["SDS-LAYOUT.KEYSEGMENT-01"]
+checker = "kani"
+phase = 1
+
+[[planned]]
+property = "Parsing a built record header gives back its fields, its sealed CRC matches, and parsing any 44 bytes returns a header or an error, never a panic or an overflow."
+requirements = ["SDS-LAYOUT.OBJECTFILE-03"]
+checker = "kani"
+phase = 1
+
+[[planned]]
+property = "A record is accepted only when every read-time check passes, and malformed bytes never make the reader panic."
+requirements = ["SDS-LAYOUT.OBJECTFILE-03"]
+checker = "kani"
+phase = 1
+
+[[planned]]
+property = "An object's path depends only on its key's combined hash and tag, stays inside the cache directory, and ends in the 32 hexadecimal characters of its name."
+requirements = ["SDS-LAYOUT.SHARDING-01"]
+checker = "kani"
+phase = 1
+
+[[planned]]
+property = "Every index the shard-directory bitset computes is in range."
+requirements = ["FDS-LAYOUT.STARTUP-01"]
+checker = "kani"
+phase = 1
+
+[[planned]]
+property = "For every stored deadline and every instant, the internal-metadata segment an expiry writes is no longer than the one it replaces, through the MessagePack encoder of pingora-cache itself."
+requirements = ["FDS-STORAGE.EXPIRE-01"]
+checker = "kani"
+phase = 1
+
+[[planned]]
+property = "Parsing a writer lease's name gives back the identity it was formatted from."
+requirements = ["ADR-STORAGE.WRITERID-01"]
+checker = "kani"
+phase = 1
+
+# --- Unsafe code: Kani, the system calls stubbed (phase 1) ---------------
+
+[[planned]]
+property = "For every result preadv2 or pread may return, the buffer's new length covers only bytes the call wrote."
+requirements = ["FDS-STORAGE.PAGECACHE-01"]
+checker = "kani"
+phase = 1
+
+[[planned]]
+property = "A buffer submitted to the io_uring ring, and the file it writes to, stay alive until the kernel's completion for it is collected, for any sequence of submissions, completions and drops."
+requirements = ["FDS-STORAGE.IOURING-01"]
+checker = "kani"
+phase = 1
+
+# --- Concurrency: loom and shuttle (phase 1) -----------------------------
+
+[[planned]]
+property = "One change per key at a time; when the switch to read-only returns, every change that entered the gate before it has ended, and none enters afterwards; no deadlock."
+requirements = ["FDS-COMPAT.READONLY-02"]
+checker = "loom"
+phase = 1
+
+[[planned]]
+property = "Never more inline slots taken than the limit, nor than the runtime's workers less one, and every operation gives its slot back, on every path out of it."
+requirements = ["FDS-STORAGE.INLINEWRITES-02"]
+checker = "loom"
+phase = 1
+
+[[planned]]
+property = "A purge that invalidates a key ends the key's in-flight stores, the readers waiting on them wake, and a store's entry leaves the registry when the store completes or aborts."
+requirements = ["FDS-STORAGE.PARTIAL-02", "FRE-COMPLIANCE.PURGE-01"]
+checker = "shuttle"
+phase = 1
+
+[[planned]]
+property = "The store waiting on each write the ring takes learns that write's result exactly once, whatever order the completions arrive in."
+requirements = ["FDS-STORAGE.IOURING-01"]
+checker = "shuttle"
+phase = 1
+
+# --- The protocol across crashes --------------------------------------
+# The replay of a log-writes device (phase 1); the protocol model's
+# invariants, proved with Veil (phase 2); the crash explorer on the real
+# backend (phase 3).
+
+[[planned]]
+property = "In every state a replay of the device's writes reaches, on ext4 and on XFS, the restarted backend gives the expected result of TC-PERSISTENCE.CRASHSAFE-02."
+requirements = ["HLR-PERSISTENCE.CRASHSAFE-02"]
+checker = "log-writes"
+phase = 1
+
+[[planned]]
+property = "Synchronised stores: a published name never refers to data that is not on stable storage."
+requirements = ["ADR-PERSISTENCE.DURABILITY-02", "FDS-STORAGE.PUBLISH-03", "ADR-STORAGE.ATOMICPUBLISH-01"]
+checker = "veil"
+phase = 2
+
+[[planned]]
+property = "No mixtures: in every state a crash can leave, the restarted backend serves each object as one version it stored, or misses it, after stores, in-place metadata updates and withdrawals alike."
+requirements = ["HLR-PERSISTENCE.CRASHSAFE-02", "FDS-STORAGE.METAUPDATE-01"]
+checker = "veil"
+phase = 2
+
+[[planned]]
+property = "Purges hold: no crash undoes a purge the backend acknowledged."
+requirements = ["FRE-COMPLIANCE.PURGEDURABLE-01"]
+checker = "veil"
+phase = 2
+
+[[planned]]
+property = "Purges end in-flight stores: no store in flight when a purge invalidates its key lands after the purge."
+requirements = ["FRE-COMPLIANCE.PURGE-01", "FDS-STORAGE.PURGE-01"]
+checker = "veil"
+phase = 2
+
+[[planned]]
+property = "Unsynchronised stores: with the discard on, no record or temporary written before a host restart is reachable after it; with it off, on a file system that records a file's length only once its data is written, a record whose body did not reach the device reads short, and is a miss."
+requirements = ["ADR-PERSISTENCE.UNSYNCED-01", "FDS-PERSISTENCE.CRASHDISCARD-01"]
+checker = "veil"
+phase = 2
+
+[[planned]]
+property = "The restart scan removes only leftovers: never the temporary of a writer still running, process identifiers reused and hot upgrades included."
+requirements = ["FDS-STORAGE.RECLAIM-01", "ADR-STORAGE.WRITERID-01"]
+checker = "veil"
+phase = 2
+
+[[planned]]
+property = "Recovery beside live traffic admits no ghost entry, and leaves the eviction manager's entries matching the records that are published."
+requirements = ["FDS-EVICTION.STARTUP-01"]
+checker = "veil"
+phase = 2
+
+[[planned]]
+property = "Hot upgrade: once the switch to read-only has returned, the old process publishes, purges, updates, expires and reclaims nothing."
+requirements = ["FDS-COMPAT.READONLY-02", "FRE-COMPAT.HOTUPGRADE-01"]
+checker = "veil"
+phase = 2
+
+[[planned]]
+property = "In every state the file-system library allows a crash to leave after the scenario tests' system calls, the restarted backend gives the expected result of TC-PERSISTENCE.CRASHSAFE-02."
+requirements = ["HLR-PERSISTENCE.CRASHSAFE-02"]
+checker = "crash-explorer"
+phase = 3
+
+# --- The code against the model: Aeneas (pilot in phase 4, phase 5) ------
+
+[[planned]]
+property = "Publishing a store, purging, expiring, updating metadata, and classifying what the restart scan finds each do what the protocol model's step says, given that the caller holds the key's publication lock."
+requirements = ["FDS-STORAGE.PUBLISH-03", "FDS-STORAGE.PURGE-01", "FDS-STORAGE.EXPIRE-01", "FDS-STORAGE.METAUPDATE-01", "FDS-STORAGE.RECLAIM-01"]
+checker = "aeneas"
+phase = 5
+
+# --- What no check establishes ------------------------------------------
+
+[[unchecked]]
+property = "The async layer and Tokio's scheduling."
+reason = "No checker of the plan reaches async code: Kani runs no await, loom no Tokio, and Charon translates no async function."
+
+[[unchecked]]
+property = "pingora-cache beyond the storage contract."
+reason = "Its behaviour is the framework's; the checks assume the contract the storage-contract library states, checked against MemCache."
+
+[[unchecked]]
+property = "The kernel and the file systems."
+reason = "Their behaviour is assumed, per profile, by the file-system library; only the log-writes replays compare it with a real kernel."
+
+[[unchecked]]
+property = "A storage device that honours flushes."
+reason = "HLR-PERSISTENCE.CRASHSAFE-02 assumes it, as the storage layer's responsibility."
+
+[[unchecked]]
+property = "The kernel's side of io_uring."
+reason = "The kernel completes the ring's writes; the checks stub it with every completion it may give."
