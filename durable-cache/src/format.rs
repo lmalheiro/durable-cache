@@ -501,3 +501,72 @@ mod tests {
         assert_eq!((header.body_len(), header.body_crc()), (10, 0xABCD));
     }
 }
+
+/// The record header for every value of its 44 bytes, with Kani
+/// (TC-LAYOUT.FORMATS-01). Built only by Kani, which sets `cfg(kani)`.
+#[cfg(kani)]
+mod kani_checks {
+    use super::*;
+
+    // IMP-TC.LAYOUT.FORMATS-02: satisfy TC-LAYOUT.FORMATS-01
+
+    /// A stand-in for CRC-32C: another function of the same bytes. What the
+    /// checks establish holds whatever function computes the checksums, and
+    /// `crc32c` chooses its implementation by asking the processor, which
+    /// Kani cannot follow.
+    fn checksum(data: &[u8]) -> u32 {
+        checksum_append(0, data)
+    }
+
+    /// The stand-in's form of `crc32c::crc32c_append`.
+    fn checksum_append(crc: u32, data: &[u8]) -> u32 {
+        data.iter()
+            .fold(crc, |crc, byte| crc.rotate_left(5) ^ u32::from(*byte))
+    }
+
+    /// Any 44 bytes read as a header, and checking it, or computing the
+    /// offsets of its parts, never panics nor overflows.
+    #[kani::proof]
+    #[kani::stub(crc32c::crc32c, checksum)]
+    fn tc_layout_formats_01_any_header_checks_without_panic() {
+        let bytes: [u8; HEADER_LEN] = kani::any();
+        let header = RecordHeader::read_from_bytes(&bytes).expect("44 bytes are a header");
+        let _ = header.check();
+        let _ = header.meta_region_offset();
+        let _ = header.body_offset();
+        let _ = header.record_len();
+    }
+
+    /// A header built and sealed with any lengths passes its check exactly
+    /// when its metadata segments fit the capacity it records, and gives back
+    /// what it was built with; once withdrawn, it reads as withdrawn.
+    #[kani::proof]
+    #[kani::stub(crc32c::crc32c, checksum)]
+    #[kani::stub(crc32c::crc32c_append, checksum_append)]
+    fn tc_layout_formats_01_a_sealed_header_checks() {
+        let capacity: u32 = kani::any();
+        let (body_len, body_crc): (u64, u32) = kani::any();
+        let key = [7u8; 3];
+        let internal = [1u8; 2];
+        let header_segment = [2u8; 4];
+        let mut header = RecordHeader::new();
+        header
+            .edit()
+            .meta_capacity(capacity)
+            .key_and_metadata(&key, &internal, &header_segment)
+            .expect("short segments fit the length fields")
+            .body(body_len, body_crc);
+        let fits = internal.len() + header_segment.len() <= capacity as usize;
+        assert!(header.check().is_ok() == fits);
+        assert!(header.meta_capacity() == capacity);
+        assert!(header.key_len() as usize == key.len());
+        assert!(header.body_len() == body_len && header.body_crc() == body_crc);
+        assert!(
+            header.meta_crc()
+                == checksum_append(checksum_append(checksum(&key), &internal), &header_segment)
+        );
+
+        header.edit().withdraw();
+        assert!(header.check() == Err(HeaderError::Withdrawn));
+    }
+}

@@ -63,14 +63,18 @@ pub fn decode(buf: &[u8]) -> Result<CompactCacheKey, KeyDecodeError> {
         }
         flag => return Err(KeyDecodeError::BadVarianceFlag(flag)),
     };
-    let user_tag = std::str::from_utf8(tag)
-        .map_err(|_| KeyDecodeError::InvalidUserTag)?
-        .into();
+    let user_tag = user_tag(tag).ok_or(KeyDecodeError::InvalidUserTag)?.into();
     Ok(CompactCacheKey {
         primary: *primary,
         variance,
         user_tag,
     })
+}
+
+/// The user tag `bytes` hold, if they are UTF-8: one function, so that the
+/// Kani checks below can stand in for it.
+fn user_tag(bytes: &[u8]) -> Option<&str> {
+    std::str::from_utf8(bytes).ok()
 }
 
 #[cfg(test)]
@@ -154,5 +158,79 @@ mod tests {
         let mut bytes = encode(&key(None, ""));
         bytes.extend_from_slice(&[0xFF, 0xFE]);
         assert_eq!(decode(&bytes), Err(KeyDecodeError::InvalidUserTag));
+    }
+}
+
+/// The key segment for every input up to a bound, with Kani
+/// (TC-LAYOUT.FORMATS-01). Built only by Kani, which sets `cfg(kani)`.
+#[cfg(kani)]
+mod kani_checks {
+    use super::*;
+
+    // IMP-TC.LAYOUT.FORMATS-01: satisfy TC-LAYOUT.FORMATS-01
+
+    /// The longest segment the checks try: a variance and a user tag of four
+    /// bytes.
+    const MAX_SEGMENT: usize = HASH_LEN + 1 + HASH_LEN + 4;
+
+    /// A stand-in for [`user_tag`]: it accepts the ASCII tags, as
+    /// `std::str::from_utf8` does, and rejects every other. Kani cannot
+    /// follow `from_utf8` over bytes whose values or addresses it does not
+    /// know, so the checks cover the ASCII tags, and the rest of UTF-8 is
+    /// the standard library's.
+    fn ascii_user_tag(bytes: &[u8]) -> Option<&str> {
+        if bytes.iter().all(|byte| *byte < 0x80) {
+            // SAFETY: ASCII bytes are UTF-8.
+            Some(unsafe { std::str::from_utf8_unchecked(bytes) })
+        } else {
+            None
+        }
+    }
+
+    /// Decoding the encoding of a key with every primary hash, `variance`
+    /// and `user_tag` gives the key back.
+    fn round_trips(variance: Option<HashBinary>, user_tag: &str) {
+        let key = CompactCacheKey {
+            primary: kani::any(),
+            variance: variance.map(Box::new),
+            user_tag: String::from(user_tag).into_boxed_str(),
+        };
+        let decoded = decode(&encode(&key));
+        assert!(decoded == Ok(key));
+    }
+
+    // The round trip, for every primary hash, without a variance and with
+    // every one, one case to a harness, with a user tag of one character.
+    // Kani follows `std::str::from_utf8` over one known byte, but not over
+    // many, nor over bytes it does not know, nor in a harness that has
+    // freed and allocated memory before, as two cases in one harness would;
+    // and it does not finish with an empty tag. The empty tag's decoding is
+    // in the check of every segment below, and in the tests.
+
+    /// No variance.
+    #[kani::proof]
+    fn tc_layout_formats_01_a_key_round_trips() {
+        round_trips(None, "a");
+    }
+
+    /// Every variance.
+    #[kani::proof]
+    fn tc_layout_formats_01_a_key_with_a_variance_round_trips() {
+        round_trips(Some(kani::any()), "a");
+    }
+
+    /// Any segment of up to [`MAX_SEGMENT`] bytes decodes or fails, without
+    /// a panic, and one that decodes is the encoding of the key it decodes
+    /// to: each key has exactly one encoding.
+    #[kani::proof]
+    #[kani::stub(user_tag, ascii_user_tag)]
+    #[kani::unwind(40)]
+    fn tc_layout_formats_01_any_segment_decodes_or_fails() {
+        let bytes: [u8; MAX_SEGMENT] = kani::any();
+        let len: usize = kani::any_where(|len| *len <= MAX_SEGMENT);
+        let segment = &bytes[..len];
+        if let Ok(key) = decode(segment) {
+            assert!(encode(&key) == segment);
+        }
     }
 }

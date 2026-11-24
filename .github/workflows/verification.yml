@@ -33,3 +33,49 @@ jobs:
         # case and requirements are declared in the specification, and each
         # check's harness exists once, named after its test case.
         run: nix develop -c cargo xtask verify
+
+  loom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: loom # its builds carry --cfg durable_cache_loom
+
+      - name: The loom checks (TC-VERIFICATION.RUNS-01)
+        # Those the record marks `change`; daily, all of them, with a
+        # deeper preemption bound. Each result and duration goes to the
+        # job's summary.
+        run: >-
+          nix develop -c cargo xtask verify --checker loom
+          ${{ github.event_name == 'schedule' && '--daily' || '' }}
+
+  kani:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        # Kani builds the crate and its dependencies once more, with its own
+        # compiler; drop preinstalled toolchains no job here uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kani
+
+      - name: The Kani checks (TC-VERIFICATION.RUNS-01)
+        # Kani is not in nixpkgs: its action installs the pinned version,
+        # then runs the checks the record marks `change`, and daily all of
+        # them, each result and duration in the job's summary.
+        uses: model-checking/kani-github-action@v1.1
+        with:
+          kani-version: "0.68.0"
+          command: >-
+            cargo xtask verify --checker kani
+            ${{ github.event_name == 'schedule' && '--daily' || '' }}
