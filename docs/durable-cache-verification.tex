@@ -224,13 +224,22 @@ phase~5 commits to them.
   \item The header check (\texttt{cargo xtask headers}) covers Lean files,
     and accepts in each library's directory that library's own copyright
     line.
-  \item The crate declares \texttt{cfg(kani)} and \texttt{cfg(loom)} to the
-    compiler's check of configuration names.
+  \item The crate declares two configuration names to the compiler's check
+    of them: \texttt{kani}, which Kani sets, and
+    \texttt{durable\_cache\_loom}, which the loom checks build the crate's
+    tests with. They do not use the customary \texttt{loom}: a
+    \texttt{-{}-cfg} reaches every crate a build compiles, and a dependency,
+    \texttt{event-listener}, does not build as one under \texttt{cfg(loom)}.
   \item A module \texttt{crate::sync} gives the code the \texttt{std::sync}
-    types, or loom's under \texttt{cfg(loom)}, one declaration with a block
-    for each, as \texttt{crate::platform} is laid out.
-  \item The Nix shell provides elan, the Lean toolchain manager, and Kani;
-    Charon and Aeneas join it in phase~4.
+    types, or loom's in the tests built with
+    \texttt{cfg(durable\_cache\_loom)}, one declaration with a
+    \texttt{\#[cfg]} for each, as \texttt{crate::platform} is laid out. loom
+    never poisons a lock, so there its locks gain the two methods of the
+    standard library's that it leaves out, and no lock is ever poisoned.
+  \item The Nix shell provides elan, the Lean toolchain manager. Kani is not
+    in nixpkgs: it installs with \texttt{cargo install kani-verifier} and
+    \texttt{cargo kani setup}, and in CI with its GitHub action. Charon and
+    Aeneas join in phase~4.
   \item A \texttt{verification/} directory holds the record of checked
     properties, and the CI workflows hold the jobs of
     Section~\ref{app:verification-schedule}, none with a time limit of its

@@ -10,6 +10,11 @@
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(io_uring)");
+    // Set by the checkers of ADR-VERIFICATION.FORMAL-01, not by this script:
+    // `cfg(kani)` by Kani, and `cfg(durable_cache_loom)` by the loom checks,
+    // which build the crate's tests with it (crate::sync).
+    println!("cargo::rustc-check-cfg=cfg(kani)");
+    println!("cargo::rustc-check-cfg=cfg(durable_cache_loom)");
     println!("cargo::rerun-if-changed=build.rs");
     let os = std::env::var("CARGO_CFG_TARGET_OS")
         .expect("cargo sets CARGO_CFG_TARGET_OS for a build script");

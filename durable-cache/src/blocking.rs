@@ -28,10 +28,10 @@
 
 use std::fs::File;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use pingora_error::{Error, ErrorType, Result};
 
+use crate::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::FsCache;
 
 // IMP-STORAGE.EXECUTOR-05: satisfy FDS-STORAGE.EXECUTOR-05

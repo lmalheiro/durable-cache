@@ -69,6 +69,11 @@ pingora-http.workspace = true
 pingora-prometheus.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
+# loom runs the tests built with `--cfg durable_cache_loom` under every
+# interleaving of their threads (crate::sync, ADR-VERIFICATION.FORMAL-01).
+[target.'cfg(durable_cache_loom)'.dev-dependencies]
+loom.workspace = true
+
 [features]
 default = ["body-crc"]
 # Compute each body's CRC-32C while it is stored and record it in the header

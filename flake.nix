@@ -61,6 +61,13 @@
             pkgs.nodejs_24 # cache-tests' CLI (test-engine/cli.mjs); its
                            # package.json only requires node >=14.8.0.
             pkgs.git
+            # Lean's toolchain manager, for the Lean code of the formal
+            # checks (ADR-VERIFICATION.FORMAL-01): each Lake project under
+            # verification/ pins its own Lean version, which elan installs.
+            # Kani, the other checker with a toolchain of its own, is not in
+            # nixpkgs: it installs with `cargo install kani-verifier` and
+            # `cargo kani setup`, and in CI with its GitHub action.
+            pkgs.elan
           ];
 
           # openssl-sys needs this on some platforms even with pkg-config

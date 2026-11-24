@@ -64,6 +64,10 @@ rustix = "1.1.6"
 io-uring = "0.7"
 nix = { version = "0.29", features = ["signal", "process"] }
 tempfile = "3"
+# The checker of the concurrency of the publication locks and the inline
+# slots (ADR-VERIFICATION.FORMAL-01), in the tests built with
+# `--cfg durable_cache_loom`.
+loom = "0.7"
 reqwest = { version = "0.12", features = ["stream"] }
 futures-util = "0.3"
 hyper = { version = "1", features = ["full"] }

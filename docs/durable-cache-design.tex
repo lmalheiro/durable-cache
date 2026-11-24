@@ -984,3 +984,124 @@
   \trace{FRE-COMPLIANCE.REVALIDATION-01}
 \end{requirement}
 
+
+% ---------------------------------------------------------------------
+% Verification: where the formal checks and the record of what they
+% establish live, and how the checks run (ADR-VERIFICATION.FORMAL-01,
+% ADR-VERIFICATION.MODELS-01).
+% ---------------------------------------------------------------------
+
+\begin{requirement}{SDS-VERIFICATION.LAYOUT-01}[draft][structuralRequirement]{Where the checks live}
+
+  \localreqdiagram*{sdsverifylayout01}{\reqid}{\reqdesc}
+
+  The formal checks of \reqref{ADR-VERIFICATION.FORMAL-01}, the record of
+  what they establish, and the Lean libraries of
+  \reqref{ADR-VERIFICATION.MODELS-01} shall sit in the repository as follows.
+
+  \textbf{The record.} \texttt{verification/record.toml} lists:
+  \begin{itemize}
+    \item each property a check establishes: the test case the check
+      implements, the property in one sentence, the requirements it is of,
+      the checker, the check's function, its bounds, whether it runs on each
+      proposed change or once a day, the stubs and axioms its result rests
+      on, and how long its last run took, with where and when;
+    \item each property a later phase of the plan is to check, with its
+      requirements, its checker and the phase;
+    \item each property no check establishes, with the reason.
+  \end{itemize}
+  A property moves from planned to checked in the change that adds its
+  check, and its test case is written, or takes a new version, in the same
+  change.
+
+  \textbf{Checks on the code.} A check of the crate's code sits in the
+  module it checks, in a module of its own that only its checker builds, and
+  is named \texttt{tc\_<test case>\_<what>}, after the test case it
+  implements, as a test is:
+  \begin{itemize}
+    \item a Kani harness is a \texttt{\#[kani::proof]} function in a
+      \texttt{kani\_checks} module under \texttt{cfg(kani)}, which Kani sets;
+    \item a loom test is in a \texttt{loom\_checks} module under
+      \texttt{cfg(all(test, durable\_cache\_loom))}, built with
+      \texttt{-{}-cfg durable\_cache\_loom}, which also gives the checked
+      module loom's synchronisation types, through \texttt{crate::sync}.
+  \end{itemize}
+  The name \texttt{durable\_cache\_loom} is the crate's own rather than the
+  customary \texttt{loom}: a \texttt{-{}-cfg} reaches every crate a build
+  compiles, and some of this crate's dependencies change under
+  \texttt{cfg(loom)} in ways that build only in their own tests.
+
+  \textbf{Lean code.} Under \texttt{verification/}, a Lake project for each
+  Lean version the checks need --- the protocol model under the version Veil
+  pins, the proofs about the code under the version Aeneas needs --- and
+  each library of \reqref{ADR-VERIFICATION.MODELS-01} in
+  \texttt{verification/libs/<name>/}, a Lake package of that name, with its
+  own namespace, README, licence and workflow. A Lean file that checks a
+  test case carries the marker \texttt{-{}- IMP-TC.<ID>: satisfy TC-<ID>},
+  which the tracing tools read as they read the marker of a Rust file.
+
+  \textbf{Headers.} A Lean file starts with the SPDX header every other
+  source file carries, in \texttt{-{}-} comments. In a library's directory,
+  its copyright line names the library's own authors, \texttt{The <name>
+  authors}.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{verify}{TC-VERIFICATION.RECORD-01}{Verify that the record names
+  only what the repository holds: test cases and requirements the
+  specification declares, and for each check one function, named after its
+  test case.}
+  \reqexpect{satisfy}{IMP-VERIFICATION.LAYOUT-01}{Implement the record, and
+  its check against the specification and the crate's sources.}
+
+  \refine{ADR-VERIFICATION.FORMAL-01}
+  \refine{ADR-VERIFICATION.MODELS-01}
+\end{requirement}
+
+\begin{requirement}{FDS-VERIFICATION.RUNS-01}[draft][functionalRequirement]{How the checks run}
+
+  \localreqdiagram*{fdsverifyruns01}{\reqid}{\reqdesc}
+
+  WHEN a change is proposed, and once a day, the project's continuous
+  integration shall run each check the record
+  (\reqref{SDS-VERIFICATION.LAYOUT-01}) has due then, and report each one's
+  result and the duration of its run.
+
+  \textbf{When.} A check the record marks \emph{change} runs on each pull
+  request and on each push to the main branch; one it marks \emph{daily}
+  runs once a day, with all the others, so that the daily run covers every
+  check. The checks run in the \texttt{Verification} workflow, apart from the
+  workflow whose jobs test the crate, each checker in a job of its own.
+
+  \textbf{What runs.} Every run first checks the record against the
+  repository (\texttt{cargo xtask verify}). The job of each checker then
+  compares the record's checks for that checker with the harnesses the
+  checker itself finds, and fails on one that only one of the two holds;
+  it runs the checks due, one at a time.
+
+  \textbf{What a check trusts.} A check's result rests on the stubs and
+  axioms the record lists for it, and on nothing else. A Lean proof's axioms
+  are compared with that list at every run, and a proof with a gap
+  (\texttt{sorry}) fails.
+
+  \textbf{What it reports.} Each job reports, in its summary, each check it
+  ran, the result, and how long the run took. The record keeps the duration
+  of each check's last run, updated when the check changes.
+
+  \textbf{No limits yet.} No job sets a time limit of its own, and no check
+  is one that a change must pass to merge, or a release to be published:
+  \reqref{HLR-VERIFICATION.FORMAL-01} and
+  \reqref{ADR-VERIFICATION.FORMAL-01} leave both to a later decision.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{verify}{TC-VERIFICATION.RUNS-01}{Verify that each checker's job
+  runs exactly the record's checks due, fails when the record and the
+  harnesses its checker finds differ, and reports each check's result and
+  the duration of its run.}
+  \reqexpect{satisfy}{IMP-VERIFICATION.RUNS-01}{Implement the running of the
+  checks the record has due, the comparison of the record with the harnesses
+  each checker finds, and the report of each check's result and duration.}
+
+  \refine{ADR-VERIFICATION.FORMAL-01}
+\end{requirement}

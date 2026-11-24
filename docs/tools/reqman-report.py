@@ -262,10 +262,10 @@ TMPL_TIKZ_DIAGRAM = r"""(% for color in colors %)
 # a later one (see generate_overview_diagram). So requirement domains stand above the
 # design domains that answer them, and only domains of equal stage can form a
 # cycle for dot to break; the other relationships are routed without moving a
-# domain. A domain that no such relationship ranks shares the rank of the
-# domain nearest its stage, at the left end of it. A label only reserves room
-# for the counts the TikZ draws, so it holds no spaces, which -Tplain would not
-# quote.
+# domain. A domain that no such relationship ranks shares the rank of another,
+# at one end of it, wherever the layout comes out narrowest. A label only
+# reserves room for the counts the TikZ draws, so it holds no spaces, which
+# -Tplain would not quote.
 TMPL_LAYOUT_OVERVIEW_DOT = r"""digraph overview {
   rankdir=BT;
   splines=true;
@@ -1089,6 +1089,22 @@ def domain_of(aid):
     return aid.split("-")[1].split(".")[0]
 
 
+def write_overview_layout(dotpath, domains, edges, placement):
+    """Write the domain overview's dot file to dotpath and lay it out. Each
+    domain in placement, a name mapped to (peer, first), shares the rank of
+    the domain peer, and is declared first if first, else last, which sets
+    the end of the rank dot puts it at."""
+    firsts = [d for d in domains if placement.get(d["name"], (None, False))[1]]
+    lasts = [d for d in domains if d["name"] in placement and not placement[d["name"]][1]]
+    middle = [d for d in domains if d["name"] not in placement]
+    same_rank = [(peer, name) for name, (peer, _) in sorted(placement.items())]
+    with open(dotpath, "w") as f:
+        f.write(JINJA_ENV.from_string(TMPL_LAYOUT_OVERVIEW_DOT).render(
+            box_h=OVERVIEW_BOX_H, label_pt=OVERVIEW_LABEL_PT,
+            domains=firsts + middle + lasts, edges=edges, same_rank=same_rank))
+    return parse_dot_plain(dotpath)
+
+
 def generate_overview_diagram(outdir, jobname, artifacts, links, type_order,
                               terminal_prefixes):
     r"""Write {outdir}/{jobname}-overview-tikz.tikz, the domain overview.
@@ -1143,26 +1159,32 @@ def generate_overview_diagram(outdir, jobname, artifacts, links, type_order,
     edges = [{"src": s, "tgt": t, "ranks": stage[s] >= stage[t],
               "dot_label": "_".join(f"{n}{REL_MAP[r][3]}" for r, n in rels.items())}
              for (s, t), rels in sorted(pair_counts.items())]
-    # A domain that no ranking relationship reaches would sit on the bottom
-    # rank, whatever its stage. It takes instead the rank of the ranked domain
-    # whose stage is nearest its own, the first by name on a tie, and is
-    # declared first, which puts it at the left end of that rank: dot keeps
-    # the order a domain without relationships starts in, and the left side
-    # leaves the room the arrows to the other domains need.
-    ranked = sorted({d for e in edges if e["ranks"] for d in (e["src"], e["tgt"])})
-    same_rank = [(min(ranked, key=lambda r: abs(stage[r] - stage[name])), name)
-                 for name in sorted(members) if ranked and name not in ranked]
-    unranked = {name for _, name in same_rank}
-    layout_order = ([d for d in domains if d["name"] in unranked]
-                    + [d for d in domains if d["name"] not in unranked])
-
+    # A domain that no ranking relationship reaches has nothing to rank it:
+    # dot would set it on the bottom rank, at whichever end its declaration
+    # falls on, and that can widen the figure past the page. It is set
+    # instead where the layout comes out narrowest, on the rank of a ranked
+    # domain and at one end of it, and among places alike, on the rank whose
+    # domain's stage is nearest its own, then at the left end. dot keeps the
+    # order a domain without relationships starts in, so declaring it first
+    # or last sets the end.
     dotpath = f"{outdir}/{jobname}-overview-layout.dot"
-    with open(dotpath, "w") as f:
-        f.write(JINJA_ENV.from_string(TMPL_LAYOUT_OVERVIEW_DOT).render(
-            box_h=OVERVIEW_BOX_H, label_pt=OVERVIEW_LABEL_PT,
-            domains=layout_order, edges=edges, same_rank=same_rank))
+    ranked = sorted({d for e in edges if e["ranks"] for d in (e["src"], e["tgt"])})
+    placement = {}
+    for name in sorted(members):
+        if not ranked or name in ranked:
+            continue
+        trials = []
+        for peer in ranked:
+            for first in (True, False):
+                trial = write_overview_layout(dotpath, domains, edges,
+                                              {**placement, name: (peer, first)})
+                width = trial["width"] if trial else float("inf")
+                trials.append((round(width, 2), abs(stage[peer] - stage[name]),
+                               not first, peer))
+        _, _, last, peer = min(trials)
+        placement[name] = (peer, not last)
+    layout = write_overview_layout(dotpath, domains, edges, placement)
     print(f"  wrote {dotpath}")
-    layout = parse_dot_plain(dotpath)
     if not (layout and layout["nodes"]):
         print("  WARNING: layout failed for the domain overview")
         return
@@ -1618,6 +1640,9 @@ def build_source_index(source_root, skip_dirs=()):
 #   // IMP-<SLUG>-<NN>: <relationship> <TARGET-ID> [optional note]
 #   // IMP-STORAGE.PUBLISH-03: satisfy FDS-STORAGE.PUBLISH-03
 #
+# in a Rust file, and the same after `--` in a Lean file, the language of the
+# formal checks of ADR-VERIFICATION.FORMAL-01.
+#
 # The IMP id is a real, citable identifier (same PREFIX-SLUG-NN shape as
 # every other requirement ID in this project), authored deliberately at the
 # implementation site, not derived from file/line -- file/line is only used
@@ -1626,7 +1651,8 @@ def build_source_index(source_root, skip_dirs=()):
 # the IMP id, Target_ID = what it satisfies), so callers can simply
 # concatenate the two lists.
 
-SOURCE_EXTENSIONS = {".rs"}
+# The files scanned for markers, each with the leader of its line comments.
+SOURCE_COMMENT_LEADERS = {".rs": "//", ".lean": "--"}
 SOURCE_SKIP_DIRS  = {"target", "third_party", "node_modules", ".git", "docs"}
 
 
@@ -1658,7 +1684,8 @@ def extract_imp_links(repo_root, skip_dirs=SOURCE_SKIP_DIRS):
     """Scan source files under repo_root for IMP marker comments (see above)
     and return rows shaped like externals.csv: Source_ID/Target_ID/Rel_Type/
     URL/Display. A marker must be the entire content of a comment line (after
-    leading whitespace and the `//`/`///`/`//!` leader) -- this keeps markers
+    leading whitespace and the `//`/`///`/`//!` leader of a Rust file, or the
+    `--` leader of a Lean file) -- this keeps markers
     greppable as dedicated lines and avoids false positives from a stray
     ID-shaped token in a trailing end-of-line comment.
 
@@ -1670,7 +1697,8 @@ def extract_imp_links(repo_root, skip_dirs=SOURCE_SKIP_DIRS):
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
         for fn in sorted(filenames):
-            if os.path.splitext(fn)[1] not in SOURCE_EXTENSIONS:
+            leader = SOURCE_COMMENT_LEADERS.get(os.path.splitext(fn)[1])
+            if leader is None:
                 continue
             path    = os.path.join(dirpath, fn)
             relpath = os.path.relpath(path, repo_root)
@@ -1681,7 +1709,7 @@ def extract_imp_links(repo_root, skip_dirs=SOURCE_SKIP_DIRS):
                 continue
             for lineno, line in enumerate(lines, start=1):
                 stripped = line.strip()
-                if not stripped.startswith("//"):
+                if not stripped.startswith(leader):
                     continue
                 m = _IMP_MARKER_RE.search(stripped)
                 if not m:
