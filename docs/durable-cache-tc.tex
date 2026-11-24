@@ -2272,3 +2272,40 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \verify{SDS-LAYOUT.KEYSEGMENT-01}
 \end{requirement}
+
+\begin{requirement}{TC-VERIFICATION.RECORD-01}[draft][verify]{Record matches the repository}
+
+  \localreqdiagram*{tcverifyrecord01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The record of checked properties names only what the
+  repository holds: each test case and requirement it names is declared in
+  this specification, and each check names one function of the crate, named
+  after the test case it implements.
+
+  \textbf{Setup:} \texttt{cargo xtask verify} and its tests, which check the
+  repository's own record, \texttt{verification/record.toml}, and records
+  written for the test, against the specification's sources and the
+  crate's.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Check the repository's record.
+    \item Check a record whose every entry matches.
+    \item Check records that each differ from it in one way: a check whose
+      function the sources lack, or hold twice; a check whose function is not
+      named after its test case; an entry naming an ID the specification
+      does not declare; an unchecked property with no reason; a field the
+      record does not define.
+  \end{enumerate}
+
+  \textbf{Expected result:} The repository's record and the matching record
+  hold; each record of step~3 fails, naming what differs.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.VERIFICATION.RECORD-01}{Implement the tests that
+  check the repository's record, a matching record, and records that each
+  differ from it in one way.}
+
+  \verify{SDS-VERIFICATION.LAYOUT-01}
+\end{requirement}
