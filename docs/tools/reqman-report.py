@@ -262,8 +262,10 @@ TMPL_TIKZ_DIAGRAM = r"""(% for color in colors %)
 # a later one (see generate_overview_diagram). So requirement domains stand above the
 # design domains that answer them, and only domains of equal stage can form a
 # cycle for dot to break; the other relationships are routed without moving a
-# domain. A label only reserves room for the counts the TikZ draws, so it
-# holds no spaces, which -Tplain would not quote.
+# domain. A domain that no such relationship ranks shares the rank of the
+# domain nearest its stage, at the left end of it. A label only reserves room
+# for the counts the TikZ draws, so it holds no spaces, which -Tplain would not
+# quote.
 TMPL_LAYOUT_OVERVIEW_DOT = r"""digraph overview {
   rankdir=BT;
   splines=true;
@@ -278,6 +280,10 @@ TMPL_LAYOUT_OVERVIEW_DOT = r"""digraph overview {
 
 (% for e in edges %)
   "(( e.src ))" -> "(( e.tgt ))" [label="(( e.dot_label ))"(% if not e.ranks %), constraint=false(% endif %)];
+(% endfor %)
+
+(% for peer, name in same_rank %)
+  { rank=same; "(( peer ))"; "(( name ))"; }
 (% endfor %)
 }
 """
@@ -1137,12 +1143,24 @@ def generate_overview_diagram(outdir, jobname, artifacts, links, type_order,
     edges = [{"src": s, "tgt": t, "ranks": stage[s] >= stage[t],
               "dot_label": "_".join(f"{n}{REL_MAP[r][3]}" for r, n in rels.items())}
              for (s, t), rels in sorted(pair_counts.items())]
+    # A domain that no ranking relationship reaches would sit on the bottom
+    # rank, whatever its stage. It takes instead the rank of the ranked domain
+    # whose stage is nearest its own, the first by name on a tie, and is
+    # declared first, which puts it at the left end of that rank: dot keeps
+    # the order a domain without relationships starts in, and the left side
+    # leaves the room the arrows to the other domains need.
+    ranked = sorted({d for e in edges if e["ranks"] for d in (e["src"], e["tgt"])})
+    same_rank = [(min(ranked, key=lambda r: abs(stage[r] - stage[name])), name)
+                 for name in sorted(members) if ranked and name not in ranked]
+    unranked = {name for _, name in same_rank}
+    layout_order = ([d for d in domains if d["name"] in unranked]
+                    + [d for d in domains if d["name"] not in unranked])
 
     dotpath = f"{outdir}/{jobname}-overview-layout.dot"
     with open(dotpath, "w") as f:
         f.write(JINJA_ENV.from_string(TMPL_LAYOUT_OVERVIEW_DOT).render(
             box_h=OVERVIEW_BOX_H, label_pt=OVERVIEW_LABEL_PT,
-            domains=domains, edges=edges))
+            domains=layout_order, edges=edges, same_rank=same_rank))
     print(f"  wrote {dotpath}")
     layout = parse_dot_plain(dotpath)
     if not (layout and layout["nodes"]):

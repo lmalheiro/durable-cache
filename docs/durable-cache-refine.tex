@@ -4342,3 +4342,112 @@
   \trace{FRE-COMPAT.STREAMING-01}
 \end{requirement}
 
+% ---------------------------------------------------------------------
+% Verification: where the models of the dependencies the checks of
+% ADR-VERIFICATION.FORMAL-01 need are written, and what keeps each one
+% publishable on its own (HLR-VERIFICATION.MODELS-01).
+% ---------------------------------------------------------------------
+
+\begin{requirement}{ADR-VERIFICATION.MODELS-01}[draft][designConstraint]{Split-ready Lean packages}
+
+  \localreqdiagram*{adrverifymodels01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} The checks of \reqref{ADR-VERIFICATION.FORMAL-01} need
+  models of what the backend depends on: the POSIX file calls it makes, with
+  what a crash may leave of their effects; the Unix I/O of the Rust standard
+  library, with \texttt{libc} and \texttt{rustix}; the crates whose functions
+  the proofs reach --- \texttt{bytes}, \texttt{hex}, \texttt{zerocopy},
+  \texttt{crc32c}, \texttt{blake2}, \texttt{thiserror}, \texttt{log} and
+  \texttt{pingora-error}; and the storage contract of \texttt{pingora-cache}.
+  Little of this exists. Aeneas ships a model of part of the standard
+  library. FileSpec\footnote{\url{https://github.com/scidonia/FileSpec}}
+  models POSIX file calls in Lean, one call at a time, with no crash, no
+  concurrent call and no lock, and carried no licence when this was written,
+  in November 2026. Nothing models the storage contract.
+  \reqref{HLR-VERIFICATION.MODELS-01} asks that each model can be published
+  on its own.
+
+  \textbf{Decision:} Write the models as four Lean libraries, each a Lake
+  package of its own, in a directory of its own in this repository until its
+  first release; at that release it moves, with its history, to a repository
+  of its own:
+  \begin{itemize}
+    \item a model of the file system: the POSIX calls the backend makes,
+      what a crash may leave of them on each of several file systems, and a
+      program that lists those states;
+    \item a model of the Unix I/O of the Rust standard library, of
+      \texttt{libc} and of \texttt{rustix}, built on the first;
+    \item models of the crates;
+    \item the storage contract of \texttt{pingora-cache}, with a reference
+      implementation that runs.
+  \end{itemize}
+  From its first commit, each library:
+  \begin{itemize}
+    \item has its own namespace, README, licence (Apache-2.0) and copyright
+      line, in the name of its own authors;
+    \item names nothing of this project --- no name of the backend, no ID of
+      this specification --- and its comments cite the standards and the
+      documentation of what it models;
+    \item states the version of what it models;
+    \item is checked against what it models by a workflow of its own: the
+      file-system model against Linux, the crate models against the crates,
+      the storage contract against \texttt{MemCache};
+    \item changes only in commits that touch its own directory alone, so that
+      its history can move out with it;
+    \item depends, for the file-system model and the storage contract, on
+      the core library of Lean alone, so that both build under each Lean
+      version the checks use: Veil and Aeneas each pin a different one.
+  \end{itemize}
+  The file-system model is written from scratch, from the POSIX standard,
+  the Linux manual pages and kernel documentation, and the published research
+  on crash consistency: nothing of FileSpec is copied, and its source is not
+  consulted while the model is written. Each library is named when it is
+  created, and no name includes the Pingora or Cloudflare marks.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{A repository for each library from the start}: published
+      from the first day. Rejected for now: while the models settle, a change
+      to a model and to the check that uses it would be two pull requests in
+      two repositories, reviewed apart. Under the rules above, the move to a
+      repository of its own is a mechanical step at a library's first
+      release (\texttt{git subtree split}).
+    \item \emph{One Lake package for all the Lean code}: one build and one
+      version to follow. Rejected: no model could then be published without
+      first being untangled from the rest, which
+      \reqref{HLR-VERIFICATION.MODELS-01} rules out.
+    \item \emph{The file-system model built on FileSpec}: a start on the
+      POSIX calls. Rejected: with no licence, nothing gives the right to use
+      it; and what the model is for --- crashes, concurrent calls, locks ---
+      is what FileSpec leaves out.
+    \item \emph{Each model inside the proofs that use it}: no package
+      boundaries to keep. Rejected by \reqref{HLR-VERIFICATION.MODELS-01}.
+  \end{itemize}
+  No alternative was rejected on the grounds of \reqref{HLR-SCOPE.V1-03};
+  the libraries are no mechanism of the backend, since none of them ships in
+  the crate.
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] Each library can leave this repository with its history at its
+      first release, for others to use, correct and extend.
+    \item[+] A model written for others has to state what it models without
+      this backend's vocabulary, which keeps what it assumes in plain view.
+    \item[--] Four packages and two Lean versions: the Lean code of this
+      project's own checks sits in two projects, one for each version, and
+      the two libraries that depend on the core library alone must build
+      under both.
+    \item[--] The rules need checks of their own: the header check accepts,
+      in each library's directory, that library's copyright line, and a check
+      finds any name of this project inside a library.
+  \end{itemize}
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{refine}{SDS-VERIFICATION.LAYOUT-01}{Specify each library's
+  directory, package, namespace, licence and copyright line, and the
+  workflow that checks it against what it models.}
+
+  \refine{ADR-VERIFICATION.FORMAL-01}
+  \satisfy{HLR-VERIFICATION.MODELS-01}
+\end{requirement}

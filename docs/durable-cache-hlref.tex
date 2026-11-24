@@ -946,3 +946,159 @@
   \deriveReqt{HLR-PERFORMANCE.LOOKUP-01}
 \end{requirement}
 
+% ---------------------------------------------------------------------
+% Verification: the foundational decision on how the properties this
+% specification states are checked by machine
+% (HLR-VERIFICATION.FORMAL-01). Appendix D holds the plan that carries
+% it out.
+% ---------------------------------------------------------------------
+
+\begin{requirement}{ADR-VERIFICATION.FORMAL-01}[draft][designConstraint]{Formal checks by property kind}
+
+  \localreqdiagram*{adrverifyformal01}{\reqid}{\reqdesc}
+
+  \textbf{Context:} \reqref{HLR-VERIFICATION.FORMAL-01} asks for every
+  property that a mechanical checker can establish, and no single checker
+  reaches all of this backend. Lean~4 proves statements
+  written in Lean; Rust code reaches it only through a translation, and the
+  one that targets Lean, Aeneas with its front end Charon, takes a subset of
+  Rust without \texttt{async} functions, \texttt{unsafe} code, trait objects,
+  or what a \texttt{Drop} implementation does.\footnote{Charon's tracking
+  issue for unsupported Rust features:
+  \url{https://github.com/AeneasVerif/charon/issues/142}.} Kani, a bounded
+  model checker, checks the compiled Rust itself, \texttt{unsafe} code
+  included, for every input up to a bound, but on one thread and with the
+  file I/O stubbed. loom runs a small concurrent test under every
+  interleaving of its threads, up to a bound, but not on Tokio. And what
+  matters most here --- the state a crash leaves on disk, and what the
+  restart makes of it (\reqref{HLR-PERSISTENCE.CRASHSAFE-02}) --- depends on
+  the kernel and the file system, which no Rust checker sees.
+
+  The properties this specification states fall into kinds that need
+  different checkers: the data formats, pure functions of bounded input; the
+  \texttt{unsafe} code, at the boundary with the kernel; the concurrency of
+  the locks, the inline slots and the in-flight registry; and the protocol
+  --- the states a sequence of calls and a crash can leave, and what the
+  restart does with each.
+
+  \textbf{Decision:} Check each kind of property with a checker that reaches
+  it, on the code itself wherever one can:
+  \begin{itemize}
+    \item the data formats and the \texttt{unsafe} code with Kani, on the
+      code itself, its system calls stubbed;
+    \item the concurrency with loom, and with shuttle where Tokio is
+      involved, on the code itself, through one module that gives the code
+      the \texttt{std::sync} types in every build but loom's, and loom's own
+      types in that one;
+    \item the protocol with a model in Lean of the backend's state and of the
+      steps that change it --- the storage calls, a crash, the restart, a
+      hot-upgrade handover --- whose invariants are proved with Veil, and
+      which replays the steps the tests log, failing on a step the code took
+      and the model forbids;
+    \item the crash behaviour with a model in Lean of the file system, which
+      lists every state a crash may leave after a sequence of system calls,
+      and an explorer that restarts the real backend on each such state;
+    \item the synchronous code against the protocol model with proofs in Lean
+      about the code as Aeneas translates it, once a pilot has measured what
+      such proofs cost.
+  \end{itemize}
+  Every check keeps four rules. What it assumes is explicit: each assumption
+  is a named Lean axiom or a named stub, every run compares the axioms each
+  theorem rests on with a reviewed list, and a proof with a gap
+  (\texttt{sorry}) fails. A change to checked code changes its checks in the
+  same pull request. The code is never made worse to suit a checker. And a
+  record lists the checked modules and properties, with the duration of each
+  check's runs, so that dropping one is a reviewed change.
+
+  How long a check may run is not limited, as
+  \reqref{HLR-VERIFICATION.FORMAL-01} leaves it open: no job that runs a
+  check sets a time limit of its own. The limits are a later revision of
+  that requirement and of this decision, made from the durations the record
+  shows.
+
+  A check verifies through a test case, as a test does: it is named after
+  the test case it implements, and the property it checks is a step of that
+  test case --- of a new one, or of a new version of the test case that
+  already verifies the requirement.
+
+  For now the checks report their results and stop neither the merge of a
+  change nor a release. The intended end state is that a check run on a
+  change blocks its merge when it fails, and that a release needs a passing
+  daily run; a later revision of this decision makes that change, once the
+  checks have run reliably.
+
+  Appendix~\ref{app:verification} holds the plan that carries this decision
+  out: the properties, the phases, when each check runs, and what stays
+  unchecked.
+
+  \textbf{Alternatives considered:}
+  \begin{itemize}
+    \item \emph{Tests alone}, as up to version 0.3.0: nothing new to learn,
+      run or maintain. Rejected: a test establishes a property for the cases
+      it runs, and \reqref{HLR-VERIFICATION.FORMAL-01} asks for every case
+      within the checker's bounds.
+    \item \emph{One checker for everything}: proofs in Lean of the code as
+      Aeneas translates it, one method and one trusted checker. Rejected:
+      the translation reaches neither the \texttt{async} layer nor the
+      \texttt{unsafe} code, trait objects or \texttt{Drop}, and a
+      translation of sequential code says nothing of interleavings or
+      crashes, which hold most of what can go wrong in this backend.
+    \item \emph{Verus}: proofs written into the Rust code and checked by an
+      SMT solver, with no translation. Not adopted: it proves Rust code, so
+      the protocol model and the file-system model would need a second
+      language, where Lean holds the models and the proofs about the code
+      under one checker. It remains the alternative for the proofs about the
+      code, should the pilot of Aeneas miss its criteria.
+    \item \emph{TLA+ for the protocol model}, with its TLC and Apalache
+      checkers: established and well documented. Not adopted: a second
+      language and toolchain beside Lean, whose model could share no
+      definition with the file-system model or the proofs about the code.
+    \item \emph{Crash testing on the real kernel alone}, replaying a log of
+      the device's writes (dm-log-writes) to each point a power loss could
+      stop it at: the real kernel and file system, and no model to get
+      wrong. Not adopted alone: it reaches the states one run's flushes
+      expose, on one kernel and one file system. It is kept, as the check of
+      the file-system model against the kernel and as the harness
+      \reqref{TC-PERSISTENCE.CRASHSAFE-02} already specifies.
+  \end{itemize}
+  No alternative was rejected on the grounds of \reqref{HLR-SCOPE.V1-03},
+  and this decision builds none of the mechanisms it counts: the checks and
+  the models live beside the crate, the harnesses compile only under their
+  checkers, and the module the concurrency checks swap types through adds no
+  behaviour.
+
+  \textbf{Consequences:}
+  \begin{itemize}
+    \item[+] A checked property holds for every input, schedule and crash
+      state within the declared bounds, and is checked again on every change.
+    \item[+] What each result rests on is a list, reviewed like code.
+    \item[--] New toolchains --- Kani, Lean with Veil, Aeneas and Charon ---
+      each with versions to follow, and their cost in CI time and disk: the
+      prebuilt files of Mathlib, which Aeneas needs, take several gigabytes.
+    \item[--] A model can be wrong, and a proof about a wrong model proves
+      nothing about the code. Each model is therefore checked against what it
+      models: the file-system model against Linux and the replayed logs, the
+      crate models against the crates, the storage contract against
+      \texttt{MemCache}, the protocol model against the tests' logs.
+    \item[--] Proofs need upkeep: a change to checked code updates its proofs
+      too, which costs most while the code still changes.
+    \item[--] The tools are young: Charon is in beta, the function contracts
+      of Kani are unstable, Veil is at its second major version, and the
+      documentation of loom says that it does not explore every execution
+      the C11 memory model allows.
+    \item[--] Some of what the backend relies on stays unchecked, chiefly the
+      async layer, Pingora beyond the storage contract, and the kernel and
+      the file systems; Appendix~\ref{app:verification-unchecked} lists it.
+  \end{itemize}
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{refine}{FDS-VERIFICATION.RUNS-01}{Specify each check: what it
+  runs on, when it runs --- on each proposed change, or once a day ---, what
+  it trusts, and how its result and the duration of its run are reported.}
+  \reqexpect{refine}{SDS-VERIFICATION.LAYOUT-01}{Specify where the checks and
+  the record of the checked modules and properties live in the repository, and
+  how each check is named after the test case it implements.}
+
+  \satisfy{HLR-VERIFICATION.FORMAL-01}
+\end{requirement}
