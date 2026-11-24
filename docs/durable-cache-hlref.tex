@@ -958,8 +958,8 @@
   \localreqdiagram*{adrverifyformal01}{\reqid}{\reqdesc}
 
   \textbf{Context:} \reqref{HLR-VERIFICATION.FORMAL-01} asks for every
-  property that a mechanical checker can establish within its two durations,
-  and no single checker reaches all of this backend. Lean~4 proves statements
+  property that a mechanical checker can establish, and no single checker
+  reaches all of this backend. Lean~4 proves statements
   written in Lean; Rust code reaches it only through a translation, and the
   one that targets Lean, Aeneas with its front end Charon, takes a subset of
   Rust without \texttt{async} functions, \texttt{unsafe} code, trait objects,
@@ -1007,9 +1007,14 @@
   theorem rests on with a reviewed list, and a proof with a gap
   (\texttt{sorry}) fails. A change to checked code changes its checks in the
   same pull request. The code is never made worse to suit a checker. And a
-  check that runs past its budget fails, as a failed proof does; a record
-  lists the checked modules and properties, so that dropping one is a
-  reviewed change.
+  record lists the checked modules and properties, with the duration of each
+  check's runs, so that dropping one is a reviewed change.
+
+  How long a check may run is not limited, as
+  \reqref{HLR-VERIFICATION.FORMAL-01} leaves it open: no job that runs a
+  check sets a time limit of its own. The limits are a later revision of
+  that requirement and of this decision, made from the durations the record
+  shows.
 
   A check verifies through a test case, as a test does: it is named after
   the test case it implements, and the property it checks is a step of that
@@ -1023,7 +1028,7 @@
   checks have run reliably.
 
   Appendix~\ref{app:verification} holds the plan that carries this decision
-  out: the properties, the phases, the budget of each check, and what stays
+  out: the properties, the phases, when each check runs, and what stays
   unchecked.
 
   \textbf{Alternatives considered:}
@@ -1089,8 +1094,8 @@
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
   \reqexpect{refine}{FDS-VERIFICATION.RUNS-01}{Specify each check: what it
-  runs on, when it runs --- on each proposed change, or once a day ---, its
-  budget, what it trusts, and how its result is reported.}
+  runs on, when it runs --- on each proposed change, or once a day ---, what
+  it trusts, and how its result and the duration of its run are reported.}
   \reqexpect{refine}{SDS-VERIFICATION.LAYOUT-01}{Specify where the checks and
   the record of the checked modules and properties live in the repository, and
   how each check is named after the test case it implements.}

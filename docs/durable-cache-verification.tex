@@ -4,8 +4,7 @@
 % The plan that carries out ADR-VERIFICATION.FORMAL-01 and
 % ADR-VERIFICATION.MODELS-01: the checkers and what each reaches, the
 % properties each one checks, the phases of the work, the Lean
-% libraries, the budgets the checks run within, and what stays
-% unchecked. The decisions are in those records; a property listed here
+% libraries, when the checks run, and what stays unchecked. The decisions are in those records; a property listed here
 % becomes normative with the test case that checks it.
 % =====================================================================
 
@@ -92,7 +91,7 @@ for inputs of every size.
     and every instant, the internal-metadata segment an expiry writes is no
     longer than the one it replaces, through the MessagePack encoder of
     \texttt{pingora-cache} itself (\reqref{FDS-STORAGE.EXPIRE-01}). Should
-    the encoder not fit the budget, the existing tests, which cover every
+    Kani prove unable to check the encoder, the existing tests, which cover every
     width the encoding gives a deadline, remain the check.
   \item \emph{Writer-lease names}: parsing a lease's name gives back the
     identity it was formatted from (\reqref{ADR-STORAGE.WRITERID-01}).
@@ -191,9 +190,10 @@ The rules of \reqref{ADR-VERIFICATION.FORMAL-01}, in practice:
 \begin{itemize}
   \item Every run lists the axioms each theorem rests on (Lean's
     \texttt{\#print axioms}) and fails on one outside the reviewed list, and
-    a proof that uses \texttt{sorry} fails the build. Proofs keep Lean's
-    default limit on the work one proof may take (\texttt{maxHeartbeats});
-    raising it for a proof is a reviewed exception.
+    a proof that uses \texttt{sorry} fails the build. A proof that needs
+    more than Lean's default allowance of work for one proof
+    (\texttt{maxHeartbeats}) raises it for itself alone, where a reviewer
+    sees it; that is no limit on how long the check runs.
   \item Each Kani stub, and each model a proof assumes of a dependency, is
     named in the same list.
   \item Kani and loom harnesses are named \texttt{tc\_<id>\_\ldots}, after
@@ -232,8 +232,9 @@ phase~5 commits to them.
   \item The Nix shell provides elan, the Lean toolchain manager, and Kani;
     Charon and Aeneas join it in phase~4.
   \item A \texttt{verification/} directory holds the record of checked
-    properties, and the CI workflow holds the jobs of
-    Section~\ref{app:verification-budgets}, each with its time limit.
+    properties, and the CI workflows hold the jobs of
+    Section~\ref{app:verification-schedule}, none with a time limit of its
+    own.
   \item The two designs \reqref{ADR-VERIFICATION.FORMAL-01} expects --- how
     the checks run, and where they live --- are written.
 \end{itemize}
@@ -241,8 +242,8 @@ phase~5 commits to them.
 \subsection*{Phase 1: the code itself}
 \begin{itemize}
   \item Kani harnesses for the data formats and the \texttt{unsafe} code,
-    each with bounds that fit a run on each change, and deeper bounds in the
-    daily run.
+    each with small bounds in the run on each change, and deeper bounds in
+    the daily run.
   \item loom tests for the publication lock, the read-only gate and the
     inline slots; shuttle tests for the in-flight registry and the ring's
     completions.
@@ -252,8 +253,8 @@ phase~5 commits to them.
     daily in a privileged job, on ext4 as the test case says, and on XFS too.
     Should the kernel of the CI runners lack the device-mapper target, it
     needs a runner of the project's own, or a virtual machine.
-  \item Exit: every check passes within its budget, with a test case for
-    each property.
+  \item Exit: every check passes, with a test case for each property, and
+    the record of checked properties shows how long each check's runs take.
 \end{itemize}
 
 \subsection*{Phase 2: the protocol in Lean}
@@ -316,8 +317,10 @@ phase~5 commits to them.
   \item Measured: what translates unchanged, the size of the proofs, the
     time they take to check, and how much proof a typical change to the code
     breaks.
-  \item Criteria: no code made worse for the translation, the proofs checked
-    within their budget, and little proof to repair after a typical change.
+  \item Criteria: no code made worse for the translation, and little proof to
+    repair after a typical change. The time the proofs take to check is
+    measured and recorded, for the later decision on how long a check may
+    run.
     Should the pilot miss one, a revision of
     \reqref{ADR-VERIFICATION.FORMAL-01} decides how phase~5 proceeds: with
     Aeneas once the Charon issues the pilot hit are closed, or with Verus.
@@ -371,46 +374,50 @@ storage contract depend on Lean's core library alone, so they build under
 both; this project's own Lean code sits in two projects: the protocol model
 under Veil's version, the proofs about the code under that of Aeneas.
 
-\section{Budgets}
-\label{app:verification-budgets}
+\section{When the Checks Run}
+\label{app:verification-schedule}
 
-Table~\ref{tab:verification-budgets} gives the budget of each check: within
-the two durations of \reqref{HLR-VERIFICATION.FORMAL-01}, and in jobs that
-run side by side.
+Table~\ref{tab:verification-schedule} gives when each check runs, in jobs
+that run side by side. No check has a time limit:
+\reqref{HLR-VERIFICATION.FORMAL-01} leaves how long a check may run to a
+later decision, and no job sets a limit of its own. Each job records how
+long its check took, in the record of checked properties, and that decision
+is to be made from those durations. Small bounds run on each pull request,
+and deeper ones daily.
 
 \begin{table}[tb]
 \centering\small\renewcommand{\arraystretch}{1.3}%
-\caption{The budgets of the checks}\label{tab:verification-budgets}
-\begin{tabularx}{\linewidth}{|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}p{0.3\linewidth}|>{\raggedright\arraybackslash}p{0.17\linewidth}|}
+\caption{When the checks run}\label{tab:verification-schedule}
+\begin{tabularx}{\linewidth}{|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}p{0.4\linewidth}|}
 \hline
-\textbf{Check} & \textbf{When} & \textbf{Budget} \\
+\textbf{Check} & \textbf{When} \\
 \hline
-Kani, the bounds for each change & Each pull request & 10~min \\
+Kani, small bounds & Each pull request \\
 \hline
-loom and shuttle, small bounds & Each pull request & 5~min \\
+loom and shuttle, small bounds & Each pull request \\
 \hline
-The Lean libraries and the protocol model & Each pull request that changes them & 10~min, dependencies cached \\
+The Lean libraries and the protocol model & Each pull request that changes them \\
 \hline
-Aeneas: the translation up to date, and the proofs about the code & Each pull request that touches a checked module & 15~min \\
+Aeneas: the translation up to date, and the proofs about the code & Each pull request that touches a checked module \\
 \hline
-The crash explorer, small scenarios & Each pull request & 10~min \\
+The crash explorer, small scenarios & Each pull request \\
 \hline
-Deeper Kani, loom and shuttle bounds; the model's exhaustive checks; the full crash exploration; trace checking & Daily & 2~h in all \\
+Deeper Kani, loom and shuttle bounds; the model's exhaustive checks; the full crash exploration; trace checking & Daily \\
 \hline
-The \texttt{log-writes} replays, ext4 and XFS & Daily, in a privileged job & 1~h \\
+The \texttt{log-writes} replays, ext4 and XFS & Daily, in a privileged job \\
 \hline
-Each library against what it models, in its own workflow & Each pull request that changes the library; daily & 15~min; 30~min daily \\
+Each library against what it models, in its own workflow & Each pull request that changes the library, and daily \\
 \hline
 \end{tabularx}
 \end{table}
 
-A check that runs past its budget fails. Each runs in a job of its own: the
-prebuilt files of Mathlib alone take several gigabytes, and the existing
-jobs already free disk space before they build. The translation Aeneas
-produces is committed, and its check regenerates it and fails on a
-difference, as the formatting check does, so that a reviewer sees which
-proofs a change reaches. A job whose inputs a change does not touch finishes
-at once, but still reports, so that it can be a required check.
+Each check runs in a job of its own: the prebuilt files of Mathlib alone
+take several gigabytes, and the existing jobs already free disk space before
+they build. The translation Aeneas produces is committed, and its check
+regenerates it and fails on a difference, as the formatting check does, so
+that a reviewer sees which proofs a change reaches. A job whose inputs a
+change does not touch finishes at once, but still reports, so that it can be
+a required check.
 
 For now no check blocks a merge or a release
 (\reqref{ADR-VERIFICATION.FORMAL-01}): the checks report their results, as

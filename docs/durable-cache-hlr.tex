@@ -465,8 +465,7 @@
   The project shall check by machine each property this specification
   states of the backend that a mechanical checker can establish, over every
   input, thread schedule and crash point within the bounds the check
-  declares, in a run of at most 15~minutes on each proposed change or of at
-  most 2~hours once a day.
+  declares.
 
   Tests establish a property for the cases they run. The properties this
   specification states --- that a record reads back as it was written, that
@@ -476,9 +475,10 @@
   within its bounds, or proves a claim outright, establishes more than a test
   can, and establishes it again on every change.
 
-  The two durations keep the checking practical. A check that cannot finish
-  within either does not count towards this requirement, however strong its
-  result: the property it would have checked stays with the tests.
+  How long a check may run is not limited yet. The limits --- for the checks
+  run on each proposed change, and for those run less often --- are to be
+  decided later, from the run times the checks show, in a revision of this
+  requirement.
 
   The requirement is verified by inspection: a record kept with the checks
   lists each property checked, with its checker, its bounds and the duration
@@ -489,9 +489,9 @@
 
   \reqexpect{satisfy}{ADR-VERIFICATION.FORMAL-01}{Decide which mechanical
   checker establishes each kind of property this specification states of the
-  backend, within declared bounds, how the checks run within 15 minutes on each
-  proposed change or 2 hours once a day, and how the record of the properties
-  checked and left unchecked is kept.}
+  backend, within declared bounds, how the checks run again on every change,
+  and how the record of the properties checked and left unchecked, with the
+  duration of their runs, is kept.}
 \end{requirement}
 
 \begin{requirement}{HLR-VERIFICATION.MODELS-01}[draft][stakeholderRequirement]{Dependency models stand alone}
