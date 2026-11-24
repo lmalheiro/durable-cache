@@ -29,17 +29,58 @@
 # --- Data formats: Kani on the code (phase 1), Lean proofs for every size
 # (phase 5) -------------------------------------------------------------
 
-[[planned]]
-property = "Decoding an encoded key gives the key back, no two keys share an encoding, and decoding any bytes returns a key or an error, never a panic."
+[[check]]
+test_case = "TC-LAYOUT.FORMATS-01"
+property = "Decoding the encoding of a key with a user tag and no variance gives the key back."
 requirements = ["SDS-LAYOUT.KEYSEGMENT-01"]
 checker = "kani"
-phase = 1
+harness = "tc_layout_formats_01_a_key_round_trips"
+bounds = "every primary hash; the user tag \"a\", as Kani finishes with no other: the empty tag is in the check of every segment and in the tests"
+runs = "change"
+duration = "3.9 s on a change (local, 2026-11-24)"
 
-[[planned]]
-property = "Parsing a built record header gives back its fields, its sealed CRC matches, and parsing any 44 bytes returns a header or an error, never a panic or an overflow."
+[[check]]
+test_case = "TC-LAYOUT.FORMATS-01"
+property = "Decoding the encoding of a key with a variance and a user tag gives the key back."
+requirements = ["SDS-LAYOUT.KEYSEGMENT-01"]
+checker = "kani"
+harness = "tc_layout_formats_01_a_key_with_a_variance_round_trips"
+bounds = "every primary hash and variance; the user tag \"a\""
+runs = "change"
+duration = "4.8 s on a change (local, 2026-11-24)"
+
+[[check]]
+test_case = "TC-LAYOUT.FORMATS-01"
+property = "Any key segment decodes or fails without a panic, and one that decodes is the encoding of the key it decodes to, so each key has one encoding."
+requirements = ["SDS-LAYOUT.KEYSEGMENT-01"]
+checker = "kani"
+harness = "tc_layout_formats_01_any_segment_decodes_or_fails"
+bounds = "every byte string of up to 37 bytes; loops unwound 40 times"
+runs = "change"
+assumes = ["key_codec::user_tag is stubbed: ASCII tags accepted and every other rejected; std::str::from_utf8, which Kani cannot follow over unknown bytes, is trusted for the rest of UTF-8"]
+duration = "1 min 51 s on a change (local, 2026-11-24)"
+
+[[check]]
+test_case = "TC-LAYOUT.FORMATS-01"
+property = "Any 44 bytes check as a record header, and the offsets of its parts compute, without a panic or an overflow."
 requirements = ["SDS-LAYOUT.OBJECTFILE-03"]
 checker = "kani"
-phase = 1
+harness = "tc_layout_formats_01_any_header_checks_without_panic"
+bounds = "every value of the 44 bytes"
+runs = "change"
+assumes = ["crc32c::crc32c is stubbed by another function of the same bytes; the property holds for any"]
+duration = "9.6 s on a change (local, 2026-11-24)"
+
+[[check]]
+test_case = "TC-LAYOUT.FORMATS-01"
+property = "A header built and sealed checks exactly when its metadata segments fit its capacity, gives back what it was built with, and once withdrawn checks as withdrawn."
+requirements = ["SDS-LAYOUT.OBJECTFILE-03"]
+checker = "kani"
+harness = "tc_layout_formats_01_a_sealed_header_checks"
+bounds = "every metadata capacity, body length and body checksum; fixed key and segments"
+runs = "change"
+assumes = ["crc32c::crc32c and crc32c::crc32c_append are stubbed by another function of the same bytes; the property holds for any"]
+duration = "20.4 s on a change (local, 2026-11-24)"
 
 [[planned]]
 property = "A record is accepted only when every read-time check passes, and malformed bytes never make the reader panic."
@@ -87,17 +128,57 @@ phase = 1
 
 # --- Concurrency: loom and shuttle (phase 1) -----------------------------
 
-[[planned]]
-property = "One change per key at a time; when the switch to read-only returns, every change that entered the gate before it has ended, and none enters afterwards; no deadlock."
+[[check]]
+test_case = "TC-STORAGE.CHANGELOCKS-01"
+property = "Two changes to one key never run at once."
+requirements = ["FDS-STORAGE.METAUPDATE-01"]
+checker = "loom"
+harness = "tc_storage_changelocks_01_one_change_per_key"
+bounds = "two threads changing one key; at most 2 preemptions on a change, 3 daily"
+runs = "change"
+assumes = ["loom's locks, swapped in through crate::sync, behave as the standard library's, without poisoning"]
+duration = "0.3 s on a change, 0.3 s daily (local, 2026-11-24)"
+
+[[check]]
+test_case = "TC-STORAGE.CHANGELOCKS-01"
+property = "When the switch to read-only returns, every change that began before it has ended, none begins after it, and a reader of the key's lock neither waits forever nor makes another thread wait forever."
 requirements = ["FDS-COMPAT.READONLY-02"]
 checker = "loom"
-phase = 1
+harness = "tc_storage_changelocks_01_read_only_waits_for_changes_and_admits_none"
+bounds = "a change, a reader and the switch to read-only; at most 2 preemptions on a change, 3 daily"
+runs = "change"
+assumes = ["loom's locks, swapped in through crate::sync, behave as the standard library's, without poisoning"]
+duration = "0.2 s on a change, 0.3 s daily (local, 2026-11-24)"
 
-[[planned]]
-property = "Never more inline slots taken than the limit, nor than the runtime's workers less one, and every operation gives its slot back, on every path out of it."
+[[check]]
+test_case = "TC-STORAGE.INLINESLOTS-01"
+property = "Never more inline slots taken than the limit, and every one given back."
 requirements = ["FDS-STORAGE.INLINEWRITES-02"]
 checker = "loom"
-phase = 1
+harness = "tc_storage_inlineslots_01_never_more_than_the_limit"
+bounds = "three operations, two slots, eight workers; at most 2 preemptions on a change, 3 daily"
+runs = "change"
+duration = "1.4 s on a change, 12.8 s daily (local, 2026-11-24)"
+
+[[check]]
+test_case = "TC-STORAGE.INLINESLOTS-01"
+property = "Never more inline slots taken than the runtime's workers less one, and every one given back."
+requirements = ["FDS-STORAGE.INLINEWRITES-02"]
+checker = "loom"
+harness = "tc_storage_inlineslots_01_never_more_than_the_workers_less_one"
+bounds = "three operations, three slots, two workers; at most 2 preemptions on a change, 3 daily"
+runs = "change"
+duration = "1.0 s on a change, 6.1 s daily (local, 2026-11-24)"
+
+[[check]]
+test_case = "TC-STORAGE.INLINESLOTS-01"
+property = "A runtime of one worker gives no inline slot."
+requirements = ["FDS-STORAGE.INLINEWRITES-02"]
+checker = "loom"
+harness = "tc_storage_inlineslots_01_one_worker_spares_none"
+bounds = "three operations, three slots, one worker; at most 2 preemptions on a change, 3 daily"
+runs = "change"
+duration = "0.3 s on a change, 0.5 s daily (local, 2026-11-24)"
 
 [[planned]]
 property = "A purge that invalidates a key ends the key's in-flight stores, the readers waiting on them wake, and a store's entry leaves the registry when the store completes or aborts."

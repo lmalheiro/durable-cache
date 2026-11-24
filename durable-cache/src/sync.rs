@@ -16,9 +16,25 @@
 
 #[cfg(not(all(test, durable_cache_loom)))]
 pub(crate) use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+// loom runs its threads on one of the process's own, so a thread-local of
+// the standard library's would be shared among them.
+#[cfg(not(all(test, durable_cache_loom)))]
+pub(crate) use std::thread_local;
 
 #[cfg(all(test, durable_cache_loom))]
 pub(crate) use loom::sync::{MutexGuard, RwLockReadGuard};
+
+/// loom's `thread_local!`, for the declarations the standard library's
+/// takes with a `const` initialiser, which loom's does not: there the cell
+/// is initialised with the block's value when its thread first reads it.
+#[cfg(all(test, durable_cache_loom))]
+macro_rules! loom_thread_local {
+    ($(#[$attr:meta])* static $name:ident: $t:ty = const { $init:expr };) => {
+        loom::thread_local! { $(#[$attr])* static $name: $t = $init; }
+    };
+}
+#[cfg(all(test, durable_cache_loom))]
+pub(crate) use loom_thread_local as thread_local;
 
 /// loom's `Mutex`, with the two methods of the standard library's that loom
 /// leaves out: loom never poisons a lock, so none is ever poisoned, and
@@ -81,4 +97,18 @@ pub(crate) mod atomic {
 
     #[cfg(all(test, durable_cache_loom))]
     pub(crate) use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+}
+
+/// Run `f` under loom, every interleaving of its threads up to the
+/// preemption bound `LOOM_MAX_PREEMPTIONS` sets, or 2 if it is unset, which
+/// `cargo xtask verify --checker loom` uses on each change: unbounded, a
+/// check of three threads runs for hours.
+#[cfg(all(test, durable_cache_loom))]
+pub(crate) fn model<F>(f: F)
+where
+    F: Fn() + Sync + Send + 'static,
+{
+    let mut builder = loom::model::Builder::new();
+    builder.preemption_bound.get_or_insert(2);
+    builder.check(f);
 }

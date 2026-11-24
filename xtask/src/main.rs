@@ -99,7 +99,18 @@ enum Cmd {
     /// repository: every test case and requirement it names is declared in
     /// the specification, and every check's harness exists once, named after
     /// its test case (TC-VERIFICATION.RECORD-01).
-    Verify,
+    Verify {
+        /// Then run this checker's checks: those the record marks
+        /// `change`, after comparing the record with the harnesses the
+        /// checker finds, and report each one's result and duration
+        /// (FDS-VERIFICATION.RUNS-01).
+        #[arg(long, value_enum)]
+        checker: Option<verification::Checker>,
+        /// Run every check of the checker, the daily ones included, the
+        /// loom checks with a deeper preemption bound.
+        #[arg(long, requires = "checker")]
+        daily: bool,
+    },
     /// Lint and test durable-cache in every build its `#[cfg]` gates select:
     /// clippy for each feature set and for a release build, and nextest with
     /// the default features and with all of them. On Linux, and again on a
@@ -208,7 +219,13 @@ fn main() -> Result<()> {
         Cmd::Fmt { check } => fmt(check),
         Cmd::ReadmeLinks { check } => readme_links(check),
         Cmd::CfgMatrix { no_tests } => cfg_matrix::cfg_matrix(&workspace_root()?, !no_tests),
-        Cmd::Verify => verification::verify(&workspace_root()?),
+        Cmd::Verify { checker, daily } => {
+            let root = workspace_root()?;
+            match checker {
+                Some(checker) => verification::run_checks(&root, checker, daily),
+                None => verification::verify(&root).map(drop),
+            }
+        }
         Cmd::Bench {
             nginx,
             oha,

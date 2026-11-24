@@ -119,6 +119,11 @@ impl InlineSlots {
             .ok()?
             .metrics()
             .num_workers();
+        self.try_take_among(workers)
+    }
+
+    /// Take a slot, if one is free on a runtime of `workers` workers.
+    fn try_take_among(&self, workers: usize) -> Option<InlineSlot<'_>> {
         let usable = self.limit.min(workers.saturating_sub(1));
         if usable < self.limit && !self.cut_logged.swap(true, Ordering::Relaxed) {
             log::info!(
@@ -217,5 +222,70 @@ mod tests {
     #[should_panic(expected = "a bug in a storage operation")]
     async fn a_panicking_operation_panics_whoever_awaits_it_in_the_test_build() {
         let _ = run(|| -> Result<()> { panic!("a bug in a storage operation") }).await;
+    }
+}
+
+/// The inline slots under every interleaving of the operations that take
+/// them, up to loom's bounds (TC-STORAGE.INLINESLOTS-01). Built only in the
+/// crate's tests with `--cfg durable_cache_loom`, which gives this module
+/// loom's atomics through `crate::sync`.
+#[cfg(all(test, durable_cache_loom))]
+mod loom_checks {
+    use loom::sync::atomic::{AtomicUsize, Ordering};
+    use loom::sync::Arc;
+    use loom::thread;
+
+    use super::InlineSlots;
+
+    // IMP-TC.STORAGE.INLINESLOTS-01: satisfy TC-STORAGE.INLINESLOTS-01
+
+    /// Three operations take a slot at once, each giving it back as it
+    /// ends: never more are held than the slots usable on a runtime of
+    /// `workers` workers, and all of them are free once the operations end.
+    fn three_operations(limit: usize, workers: usize) {
+        crate::sync::model(move || {
+            let usable = limit.min(workers.saturating_sub(1));
+            let slots = Arc::new(InlineSlots::new(limit));
+            let held = Arc::new(AtomicUsize::new(0));
+            let operations: Vec<_> = (0..3)
+                .map(|_| {
+                    let (slots, held) = (slots.clone(), held.clone());
+                    thread::spawn(move || {
+                        if let Some(_slot) = slots.try_take_among(workers) {
+                            let now = held.fetch_add(1, Ordering::SeqCst) + 1;
+                            assert!(now <= usable, "{now} slots held, {usable} usable");
+                            held.fetch_sub(1, Ordering::SeqCst);
+                        }
+                    })
+                })
+                .collect();
+            for operation in operations {
+                operation.join().expect("an operation ends");
+            }
+            assert_eq!(
+                slots.taken.load(Ordering::SeqCst),
+                0,
+                "a slot was not given back"
+            );
+        });
+    }
+
+    /// Fewer slots than operations, on a runtime that leaves them all
+    /// usable.
+    #[test]
+    fn tc_storage_inlineslots_01_never_more_than_the_limit() {
+        three_operations(2, 8);
+    }
+
+    /// More slots asked for than a runtime of two workers can spare: one.
+    #[test]
+    fn tc_storage_inlineslots_01_never_more_than_the_workers_less_one() {
+        three_operations(3, 2);
+    }
+
+    /// A runtime of one worker spares none.
+    #[test]
+    fn tc_storage_inlineslots_01_one_worker_spares_none() {
+        three_operations(3, 1);
     }
 }

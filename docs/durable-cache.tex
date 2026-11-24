@@ -173,12 +173,9 @@ artifacts that retarget added --- \reqref{FRE-COMPAT.EXPIRE-01},
 closed by code built against 0.9.0, as are the ones it rewrote to match that
 release's interfaces, chiefly \reqref{FDS-STORAGE.PURGE-01},
 \reqref{FDS-EVICTION.STARTUP-01} and \reqref{ADR-OBSERVABILITY.METRICS-01}.
-No \textsf{IMP} link in the report below is stale on that account. Of the
-gaps it reports, \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s is deliberately
-left open by \reqref{ADR-EFFICIENCY.COMPACTION-01}'s declared conflict. The
-other is \reqref{FDS-VERIFICATION.RUNS-01}'s: the running of the formal
-checks, and its test case, come with the first checks, in phase~1 of the
-plan in Appendix~\ref{app:verification}.
+No \textsf{IMP} link in the report below is stale on that account, and the one
+gap it reports is \reqref{REQ-EFFICIENCY.FRAGMENTATION-01}'s, deliberately
+left open by \reqref{ADR-EFFICIENCY.COMPACTION-01}'s declared conflict.
 
 \includetracingreport
 

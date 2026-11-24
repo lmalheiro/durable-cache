@@ -2309,3 +2309,162 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \verify{SDS-VERIFICATION.LAYOUT-01}
 \end{requirement}
+
+\begin{requirement}{TC-VERIFICATION.RUNS-01}[draft][verify]{Checks run as recorded}
+
+  \localreqdiagram*{tcverifyruns01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Each checker's run runs exactly the record's checks
+  due, fails when the record and the harnesses its checker finds differ,
+  and reports each check's result and the duration of its run.
+
+  \textbf{Setup:} \texttt{cargo xtask verify -{}-checker} and its tests,
+  with records written for the test and the harnesses a checker would find.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Compare a record with the harnesses its checker finds: the same
+      ones; then one harness the record lacks and one check the checker does
+      not find.
+    \item Select the checks due from a record holding a check marked
+      \emph{change} and one marked \emph{daily}, for a run on a change and
+      for a daily run.
+    \item Report a run of a check that passed and one that failed.
+  \end{enumerate}
+
+  \textbf{Expected result:} The same harnesses give no difference, and the
+  others give one for each, naming it; a run on a change selects the
+  \emph{change} check alone, a daily run both; the report gives each check
+  its test case, its result and its duration, and says when none was due.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.VERIFICATION.RUNS-01}{Implement the tests that
+  compare records with the harnesses a checker finds, select the checks due
+  on a change and daily, and report results and durations.}
+
+  \verify{FDS-VERIFICATION.RUNS-01}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.CHANGELOCKS-01}[draft][verify]{Change locks in every interleaving}
+
+  \localreqdiagram*{tcstoragechangelocks01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Under every interleaving of the threads that take
+  them, up to loom's preemption bound, the publication lock lets one change
+  to a key run at a time; the switch to read-only returns only once every
+  change that entered the read-only gate before it has ended, and no change
+  begins after it; and no thread waits forever.
+
+  \textbf{Setup:} The publication locks and the read-only gate
+  (\texttt{ChangeLocks}) built with loom's locks, in the crate's tests built
+  with \texttt{-{}-cfg durable\_cache\_loom}, which loom runs under every
+  interleaving of their threads, with at most two preemptions on each change
+  and three in the daily run (\reqref{FDS-VERIFICATION.RUNS-01}).
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Two threads each begin a change to one key and, inside it, count
+      the changes to that key in progress.
+    \item One thread begins a change to a key, one takes the key's lock alone
+      as a reader does, and the main thread switches to read-only, then
+      begins a change itself.
+  \end{enumerate}
+
+  \textbf{Expected result:} In every interleaving: the count never exceeds
+  one; when the switch to read-only returns, no change is in progress, a
+  change that began did so before the switch returned, and the main thread's
+  change does not begin; every thread ends.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.STORAGE.CHANGELOCKS-01}{Implement the loom tests
+  of one change per key, and of the switch to read-only beside a change and
+  a reader.}
+
+  \verify{FDS-STORAGE.METAUPDATE-01}
+  \verify{FDS-COMPAT.READONLY-02}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.INLINESLOTS-01}[draft][verify]{Inline slots in every interleaving}
+
+  \localreqdiagram*{tcstorageinlineslots01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Under every interleaving of the operations that take
+  them, up to loom's preemption bound, never more inline slots are taken
+  than the limit, nor than the runtime's workers less one, and every slot
+  taken is given back.
+
+  \textbf{Setup:} The inline slots built with loom's atomics, in the crate's
+  tests built with \texttt{-{}-cfg durable\_cache\_loom}, given the number of
+  the runtime's workers rather than reading it from Tokio, with at most two
+  preemptions on each change and three in the daily run.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Three operations each take a slot if one is free, count the slots
+      held while they hold one, and give it back, with two slots on a runtime
+      of eight workers.
+    \item The same with three slots on a runtime of two workers.
+    \item The same with three slots on a runtime of one worker.
+  \end{enumerate}
+
+  \textbf{Expected result:} In every interleaving, the slots held never
+  exceed two, one and none in steps~1 to~3, and none is taken once the
+  operations have ended.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.STORAGE.INLINESLOTS-01}{Implement the loom tests
+  of three operations taking slots under each limit and number of workers.}
+
+  \verify{FDS-STORAGE.INLINEWRITES-02}
+\end{requirement}
+
+\begin{requirement}{TC-LAYOUT.FORMATS-01}[draft][verify]{Formats for every input}
+
+  \localreqdiagram*{tclayoutformats01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The key segment and the record header hold their
+  properties for every input up to Kani's bounds, not for the samples a test
+  picks: a key segment decodes to the key it encodes, any bytes decode or
+  fail without a panic, and only an encoding decodes; any 44 bytes check as
+  a header without a panic or an overflow, and a sealed header checks
+  exactly when its metadata segments fit its capacity.
+
+  \textbf{Setup:} Kani harnesses on the crate's code. Two functions stand in
+  for others, which the record of checked properties lists as what the
+  checks assume: CRC-32C is replaced by another function of the same bytes,
+  as the properties hold whatever function computes the checksums; and the
+  key segment's UTF-8 check accepts the ASCII tags and rejects the others,
+  as Kani cannot follow the standard library's validation of bytes it does
+  not know.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Encode and decode a key with every primary hash and every variance,
+      or none, with a user tag and without.
+    \item Decode every byte string of up to 37~bytes, and encode each key
+      one decodes to.
+    \item Read every 44 bytes as a header, check it, and compute the offsets
+      of its parts.
+    \item Build and seal a header with every metadata capacity, body length
+      and body checksum; check it, read its fields, withdraw it and check it
+      again.
+  \end{enumerate}
+
+  \textbf{Expected result:} Every decoded key is the key encoded; no byte
+  string makes decoding panic, and every one that decodes is the encoding of
+  its key; no header makes the check or the offsets panic or overflow; a
+  sealed header checks exactly when its segments fit its capacity, gives
+  back its fields, and once withdrawn checks as withdrawn.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.LAYOUT.FORMATS-01}{Implement the Kani harnesses
+  that encode and decode key segments, decode every short byte string, read
+  every header and seal headers of every capacity.}
+
+  \verify{SDS-LAYOUT.KEYSEGMENT-01}
+  \verify{SDS-LAYOUT.OBJECTFILE-03}
+\end{requirement}

@@ -5,10 +5,15 @@
 //! establish (HLR-VERIFICATION.FORMAL-01, ADR-VERIFICATION.FORMAL-01), checked
 //! against the repository: each entry's test case and requirements are
 //! declared in the specification, and each check's harness exists, named
-//! after its test case.
+//! after its test case. With `--checker`, it then runs that checker's checks
+//! (FDS-VERIFICATION.RUNS-01).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::io::Write;
 use std::path::Path;
+use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -51,15 +56,24 @@ struct Check {
 }
 
 /// The checkers whose checks run on the code itself, in this crate.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
-enum Checker {
+pub(crate) enum Checker {
     Kani,
     Loom,
 }
 
+impl fmt::Display for Checker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Kani => "Kani",
+            Self::Loom => "loom",
+        })
+    }
+}
+
 /// When a check runs: on each proposed change, or once a day.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Runs {
     Change,
@@ -87,8 +101,8 @@ struct Unchecked {
 // IMP-TC.VERIFICATION.RECORD-01: satisfy TC-VERIFICATION.RECORD-01
 
 /// `cargo xtask verify`: fail when the record does not match the
-/// repository.
-pub(crate) fn verify(root: &Path) -> Result<()> {
+/// repository; return it when it does.
+pub(crate) fn verify(root: &Path) -> Result<Record> {
     let path = root.join(RECORD);
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("failed to read {RECORD}"))?;
@@ -120,7 +134,235 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         record.planned.len(),
         record.unchecked.len()
     );
+    Ok(record)
+}
+
+// IMP-VERIFICATION.RUNS-01: satisfy FDS-VERIFICATION.RUNS-01
+
+/// The loom checks' preemption bound on each change, and in the daily run:
+/// how many times a thread may be stopped before it blocks or ends. The
+/// checks read it from `LOOM_MAX_PREEMPTIONS`, and fall back to the first
+/// (`crate::sync::model` in the crate).
+const LOOM_PREEMPTIONS: (u32, u32) = (2, 3);
+
+/// `cargo xtask verify --checker <checker>`: check the record, compare its
+/// checks for `checker` with the harnesses the checker finds, then run the
+/// checks due, one at a time: those the record marks `change`, and with
+/// `daily` all of them, the loom checks with a deeper bound. Report each
+/// one's result and duration, on the terminal and in the job's summary on
+/// GitHub. No run has a time limit (FDS-VERIFICATION.RUNS-01).
+pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<()> {
+    let record = verify(root)?;
+    let found = match checker {
+        Checker::Kani => kani_harnesses(root)?,
+        Checker::Loom => loom_tests(root)?,
+    };
+    let recorded: Vec<&Check> = record
+        .check
+        .iter()
+        .filter(|check| check.checker == checker)
+        .collect();
+    let differences = differences(checker, &recorded, &found);
+    if !differences.is_empty() {
+        bail!(
+            "{RECORD} and the {checker} harnesses differ:\n  {}",
+            differences.join("\n  ")
+        );
+    }
+
+    let mut results = Vec::new();
+    for check in due(&recorded, daily) {
+        let path = &found[&check.harness];
+        println!("==> {checker}: {path}");
+        let mut command = match checker {
+            Checker::Kani => kani_command(root, path),
+            Checker::Loom => loom_command(root, path, daily),
+        };
+        let start = Instant::now();
+        let status = command
+            .status()
+            .with_context(|| format!("failed to run {checker} on {path}"))?;
+        results.push((check, status.success(), start.elapsed()));
+    }
+
+    let report = report(checker, daily, &results);
+    println!("{report}");
+    if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&summary)
+            .and_then(|mut file| file.write_all(report.as_bytes()))
+            .context("failed to write the job's summary")?;
+    }
+    let failed = results.iter().filter(|(_, passed, _)| !passed).count();
+    if failed > 0 {
+        bail!("{failed} {checker} check(s) failed");
+    }
     Ok(())
+}
+
+/// How the record's checks for `checker` and the harnesses the checker
+/// finds, by name, differ: a harness the record lacks, or a check of the
+/// record the checker does not find.
+fn differences(
+    checker: Checker,
+    recorded: &[&Check],
+    found: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let names: BTreeSet<&str> = recorded
+        .iter()
+        .map(|check| check.harness.as_str())
+        .collect();
+    let mut differences: Vec<String> = found
+        .iter()
+        .filter(|(name, _)| !names.contains(name.as_str()))
+        .map(|(_, path)| format!("{path} is a {checker} harness the record does not list"))
+        .collect();
+    differences.extend(
+        names
+            .iter()
+            .filter(|name| !found.contains_key(**name))
+            .map(|name| format!("the record's {name} is no harness {checker} finds")),
+    );
+    differences
+}
+
+/// The checks due: those the record marks `change`, and with `daily` all.
+fn due<'a>(recorded: &[&'a Check], daily: bool) -> Vec<&'a Check> {
+    recorded
+        .iter()
+        .copied()
+        .filter(|check| daily || check.runs == Runs::Change)
+        .collect()
+}
+
+/// The report of a run: each check, its test case, its result, and how
+/// long it took, as a Markdown table.
+fn report(checker: Checker, daily: bool, results: &[(&Check, bool, Duration)]) -> String {
+    let mut report = format!(
+        "### {checker} checks, {}\n\n| Check | Test case | Result | Duration |\n|---|---|---|---|\n",
+        if daily { "daily" } else { "on a change" }
+    );
+    for (check, passed, took) in results {
+        report.push_str(&format!(
+            "| `{}` | {} | {} | {} |\n",
+            check.harness,
+            check.test_case,
+            if *passed { "passed" } else { "FAILED" },
+            human(*took)
+        ));
+    }
+    if results.is_empty() {
+        report.push_str("| (none due) | | | |\n");
+    }
+    report
+}
+
+/// A duration as the record states one: seconds to a tenth under a
+/// minute, then minutes and seconds.
+fn human(took: Duration) -> String {
+    let secs = took.as_secs_f64();
+    if secs < 60.0 {
+        format!("{secs:.1} s")
+    } else {
+        let whole = took.as_secs();
+        format!("{} min {} s", whole / 60, whole % 60)
+    }
+}
+
+/// The Kani harnesses of the crate, each name mapped to its path, as
+/// `cargo kani list` gives them. It takes no package, so it runs in the
+/// crate's directory, and writes the listing there.
+fn kani_harnesses(root: &Path) -> Result<BTreeMap<String, String>> {
+    let crate_dir = root.join("durable-cache");
+    let status = Command::new("cargo")
+        .args(["kani", "list", "-Z", "stubbing", "--format", "json"])
+        .current_dir(&crate_dir)
+        .status()
+        .context("failed to run cargo kani list; is Kani installed?")?;
+    if !status.success() {
+        bail!("cargo kani list failed");
+    }
+    let listing = crate_dir.join("kani-list.json");
+    let text = std::fs::read_to_string(&listing)
+        .with_context(|| format!("failed to read {}", listing.display()))?;
+    std::fs::remove_file(&listing).ok();
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    let mut harnesses = BTreeMap::new();
+    for paths in json["standard-harnesses"]
+        .as_object()
+        .context("the listing names no standard harnesses")?
+        .values()
+    {
+        for path in paths.as_array().context("a file's harnesses are no list")? {
+            let path = path.as_str().context("a harness path is no string")?;
+            let name = path.rsplit("::").next().unwrap_or(path);
+            harnesses.insert(name.to_owned(), path.to_owned());
+        }
+    }
+    Ok(harnesses)
+}
+
+/// `cargo kani` on the one harness at `path`.
+fn kani_command(root: &Path, path: &str) -> Command {
+    let mut command = Command::new("cargo");
+    command
+        .args(["kani", "-p", "durable-cache", "-Z", "stubbing"])
+        .args(["--harness", path, "--exact"])
+        .current_dir(root);
+    command
+}
+
+/// `cargo test` of the crate's library, built with loom's cfg, and the
+/// arguments that follow its `--`.
+fn loom_cargo(root: &Path, test_args: &[&str]) -> Command {
+    let rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+    let mut command = Command::new("cargo");
+    command
+        .args(["test", "-p", "durable-cache", "--lib", "--release", "--"])
+        .args(test_args)
+        .env(
+            "RUSTFLAGS",
+            format!("{rustflags} --cfg durable_cache_loom").trim_start(),
+        )
+        .current_dir(root);
+    command
+}
+
+/// The loom checks of the crate, each name mapped to its path, as the test
+/// binary lists them: the tests of its `loom_checks` modules.
+fn loom_tests(root: &Path) -> Result<BTreeMap<String, String>> {
+    let output = loom_cargo(root, &["--list"])
+        .output()
+        .context("failed to list the loom checks")?;
+    if !output.status.success() {
+        bail!(
+            "listing the loom checks failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8(output.stdout)?
+        .lines()
+        .filter_map(|line| line.strip_suffix(": test"))
+        .filter(|path| path.contains("::loom_checks::"))
+        .map(|path| {
+            let name = path.rsplit("::").next().unwrap_or(path);
+            (name.to_owned(), path.to_owned())
+        })
+        .collect())
+}
+
+/// The loom check at `path`, with the preemption bound of the run.
+fn loom_command(root: &Path, path: &str, daily: bool) -> Command {
+    let bound = if daily {
+        LOOM_PREEMPTIONS.1
+    } else {
+        LOOM_PREEMPTIONS.0
+    };
+    let mut command = loom_cargo(root, &["--exact", path]);
+    command.env("LOOM_MAX_PREEMPTIONS", bound.to_string());
+    command
 }
 
 /// What is wrong with `record`, given the IDs the specification declares
@@ -413,5 +655,95 @@ mod tests {
             .parent()
             .expect("xtask has a parent directory");
         verify(root).expect("the repository's record holds");
+    }
+
+    // IMP-TC.VERIFICATION.RUNS-01: satisfy TC-VERIFICATION.RUNS-01
+
+    /// Two checks, one for each change and one daily.
+    const TWO_CHECKS: &str = r#"
+        [[check]]
+        test_case = "TC-STORAGE.CHANGELOCKS-01"
+        property = "One change per key at a time."
+        requirements = ["FDS-COMPAT.READONLY-02"]
+        checker = "loom"
+        harness = "tc_storage_changelocks_01_one_change_per_key"
+        bounds = "two threads"
+        runs = "change"
+        duration = "0.1 s (example)"
+
+        [[check]]
+        test_case = "TC-STORAGE.CHANGELOCKS-01"
+        property = "The gate admits no change once read-only."
+        requirements = ["FDS-COMPAT.READONLY-02"]
+        checker = "loom"
+        harness = "tc_storage_changelocks_01_deeper"
+        bounds = "three threads"
+        runs = "daily"
+        duration = "9 s (example)"
+    "#;
+
+    fn found(names: &[&str]) -> BTreeMap<String, String> {
+        names
+            .iter()
+            .map(|name| (name.to_string(), format!("locks::loom_checks::{name}")))
+            .collect()
+    }
+
+    /// A harness the checker finds that the record lacks, and a check of the
+    /// record the checker does not find, are both reported, by name.
+    #[test]
+    fn tc_verification_runs_01_the_record_and_the_harnesses_must_agree() {
+        let record = parse(TWO_CHECKS);
+        let recorded: Vec<&Check> = record.check.iter().collect();
+        let agree = found(&[
+            "tc_storage_changelocks_01_one_change_per_key",
+            "tc_storage_changelocks_01_deeper",
+        ]);
+        assert!(differences(Checker::Loom, &recorded, &agree).is_empty());
+        let differ = found(&[
+            "tc_storage_changelocks_01_one_change_per_key",
+            "tc_storage_changelocks_01_unrecorded",
+        ]);
+        let differences = differences(Checker::Loom, &recorded, &differ);
+        assert_eq!(differences.len(), 2, "{differences:?}");
+        assert!(differences
+            .iter()
+            .any(|d| d.contains("_unrecorded is a loom harness")));
+        assert!(differences
+            .iter()
+            .any(|d| d.contains("_deeper is no harness")));
+    }
+
+    /// A run on a change runs the checks marked `change`; a daily run runs
+    /// all of them.
+    #[test]
+    fn tc_verification_runs_01_a_change_runs_its_checks_and_a_day_all() {
+        let record = parse(TWO_CHECKS);
+        let recorded: Vec<&Check> = record.check.iter().collect();
+        let names = |checks: Vec<&Check>| -> Vec<String> {
+            checks.iter().map(|check| check.harness.clone()).collect()
+        };
+        assert_eq!(
+            names(due(&recorded, false)),
+            ["tc_storage_changelocks_01_one_change_per_key"]
+        );
+        assert_eq!(due(&recorded, true).len(), 2);
+    }
+
+    /// The report gives each check run its test case, its result and its
+    /// duration, and says when none was due.
+    #[test]
+    fn tc_verification_runs_01_the_report_gives_each_result_and_duration() {
+        let record = parse(TWO_CHECKS);
+        let results = [
+            (&record.check[0], true, Duration::from_millis(1_250)),
+            (&record.check[1], false, Duration::from_secs(125)),
+        ];
+        let daily = report(Checker::Loom, true, &results);
+        assert!(daily.contains(
+            "| `tc_storage_changelocks_01_one_change_per_key` | TC-STORAGE.CHANGELOCKS-01 | passed | 1.2 s |"
+        ), "{daily}");
+        assert!(daily.contains("| FAILED | 2 min 5 s |"), "{daily}");
+        assert!(report(Checker::Kani, false, &[]).contains("(none due)"));
     }
 }

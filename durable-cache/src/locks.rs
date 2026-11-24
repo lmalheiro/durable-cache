@@ -86,7 +86,7 @@
 use std::cell::Cell;
 
 use crate::sharding::RADIX;
-use crate::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+use crate::sync::{thread_local, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
 /// How many leading hex digits of a key's name pick its stripe.
 const STRIPE_DIGITS: usize = 3;
@@ -524,5 +524,93 @@ mod tests {
         let locks = ChangeLocks::default();
         let _change = locks.begin_keyless().expect("a writable backend");
         let _key = locks.lock_key(&name_starting("abc"));
+    }
+}
+
+/// The publication locks and the read-only gate under every interleaving of
+/// the threads that take them, up to loom's bounds
+/// (TC-STORAGE.CHANGELOCKS-01). Built only in the crate's tests with
+/// `--cfg durable_cache_loom`, which gives this module loom's locks through
+/// `crate::sync`; loom also reports a deadlock, when every thread waits.
+#[cfg(all(test, durable_cache_loom))]
+mod loom_checks {
+    use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use loom::sync::Arc;
+    use loom::thread;
+
+    use super::ChangeLocks;
+
+    // IMP-TC.STORAGE.CHANGELOCKS-01: satisfy TC-STORAGE.CHANGELOCKS-01
+
+    /// A key's name: a hash in hex, as SDS-LAYOUT.SHARDING-01 names keys.
+    const NAME: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+
+    /// Two changes to one key never run at once.
+    #[test]
+    fn tc_storage_changelocks_01_one_change_per_key() {
+        crate::sync::model(|| {
+            let locks = Arc::new(ChangeLocks::default());
+            let inside = Arc::new(AtomicUsize::new(0));
+            let changes: Vec<_> = (0..2)
+                .map(|_| {
+                    let (locks, inside) = (locks.clone(), inside.clone());
+                    thread::spawn(move || {
+                        let _change = locks.begin(NAME).expect("the backend is writable");
+                        assert_eq!(
+                            inside.fetch_add(1, Ordering::SeqCst),
+                            0,
+                            "two changes to one key at once"
+                        );
+                        inside.fetch_sub(1, Ordering::SeqCst);
+                    })
+                })
+                .collect();
+            for change in changes {
+                change.join().expect("a change ends");
+            }
+        });
+    }
+
+    /// When the switch to read-only returns, every change that began before
+    /// it has ended, and none begins after it; a reader of the key's lock,
+    /// which takes no gate, neither waits forever nor makes anything else
+    /// wait forever.
+    #[test]
+    fn tc_storage_changelocks_01_read_only_waits_for_changes_and_admits_none() {
+        crate::sync::model(|| {
+            let locks = Arc::new(ChangeLocks::default());
+            let in_change = Arc::new(AtomicBool::new(false));
+            let read_only = Arc::new(AtomicBool::new(false));
+
+            let change = {
+                let (locks, in_change, read_only) =
+                    (locks.clone(), in_change.clone(), read_only.clone());
+                thread::spawn(move || {
+                    if let Some(_change) = locks.begin(NAME) {
+                        assert!(
+                            !read_only.load(Ordering::SeqCst),
+                            "a change began after the switch to read-only returned"
+                        );
+                        in_change.store(true, Ordering::SeqCst);
+                        in_change.store(false, Ordering::SeqCst);
+                    }
+                })
+            };
+            let reader = {
+                let locks = locks.clone();
+                thread::spawn(move || drop(locks.lock_key(NAME)))
+            };
+
+            locks.set_read_only();
+            read_only.store(true, Ordering::SeqCst);
+            assert!(
+                !in_change.load(Ordering::SeqCst),
+                "the switch to read-only returned while a change was in progress"
+            );
+            assert!(locks.begin(NAME).is_none(), "a change began once read-only");
+
+            change.join().expect("the change ends");
+            reader.join().expect("the reader ends");
+        });
     }
 }

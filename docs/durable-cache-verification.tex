@@ -265,6 +265,31 @@ phase~5 commits to them.
   \item Exit: every check passes, with a test case for each property, and
     the record of checked properties shows how long each check's runs take.
 \end{itemize}
+Phase~1 is carried out in parts, the first of which brings the runner of
+the checks (\reqref{FDS-VERIFICATION.RUNS-01}), the loom checks of the
+publication locks, the read-only gate and the inline slots
+(\reqref{TC-STORAGE.CHANGELOCKS-01}, \reqref{TC-STORAGE.INLINESLOTS-01}),
+and the Kani checks of the key segment and the record header
+(\reqref{TC-LAYOUT.FORMATS-01}). What it found:
+\begin{itemize}
+  \item loom bounds nothing unless told to, and three threads that each take
+    a slot then run for hours. The checks allow at most two preemptions on
+    each change and three daily, which keeps every one under 15~seconds.
+  \item Kani cannot follow \texttt{std::str::from\_utf8} over bytes whose
+    values or addresses it does not know: the loop that validates UTF-8 a
+    word at a time has no bound it can find. The key segment's UTF-8 check
+    is therefore one function of its own, and Kani's checks stand in for it
+    with one that accepts the ASCII tags, which the record lists as an
+    assumption. For the same reason the round trip is checked for every
+    primary hash and variance but fixed user tags, and decoding for every
+    byte string of up to 37~bytes.
+  \item \texttt{crc32c} chooses its implementation by asking the processor,
+    which Kani cannot follow either; the header's checks replace it with
+    another function of the same bytes, as their properties hold for any.
+\end{itemize}
+The rest of the phase follows: the other data formats, the expiry's
+length, the \texttt{unsafe} code, the shuttle checks, and the
+\texttt{log-writes} harness.
 
 \subsection*{Phase 2: the protocol in Lean}
 \begin{itemize}
