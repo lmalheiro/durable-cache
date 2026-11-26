@@ -104,11 +104,40 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/cache@v4
+        # Veil and its dependencies build from source in about 5 minutes,
+        # into 2 GB of Lake's build directory.
+        with:
+          path: verification/protocol/.lake
+          key: lake-${{ hashFiles('verification/protocol/lake-manifest.json', 'verification/protocol/lean-toolchain') }}
+
       - name: The Lean checks (TC-VERIFICATION.RUNS-01)
         # The theorems of verification/protocol, each checked by Lean's
         # kernel, and the axioms each rests on against the record's list.
         # elan installs the Lean version each Lake project names.
         run: nix develop -c cargo xtask verify --checker lean
+
+  veil:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        # Veil and its dependencies build from source in about 5 minutes,
+        # into 2 GB of Lake's build directory.
+        with:
+          path: verification/protocol/.lake
+          key: lake-${{ hashFiles('verification/protocol/lake-manifest.json', 'verification/protocol/lean-toolchain') }}
+
+      - name: The Veil checks (TC-VERIFICATION.RUNS-01)
+        # The protocol model's clauses, proved inductive with Lean checking
+        # each of the SMT solver's proofs, its executions found and a finite
+        # instance explored; and the axioms the proofs rest on against the
+        # record's list.
+        run: nix develop -c cargo xtask verify --checker veil
 
   trace:
     runs-on: ubuntu-latest

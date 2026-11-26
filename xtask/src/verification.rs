@@ -93,6 +93,12 @@ pub(crate) enum Checker {
     /// storage-contract library's workloads and writes their traces, which
     /// the library's `check-trace` then checks against the contract.
     Trace,
+    /// A `safety` or `invariant` clause of a Veil model in the project's
+    /// Lean checks: Veil proves the model's clauses inductive, Lean checking
+    /// each of the solver's proofs, and the build fails on a clause it
+    /// cannot prove; the file's `#assert_axioms_in` fails it on an axiom
+    /// outside the reviewed list.
+    Veil,
 }
 
 impl fmt::Display for Checker {
@@ -104,6 +110,7 @@ impl fmt::Display for Checker {
             Self::LogWrites => "log-writes",
             Self::Lean => "Lean",
             Self::Trace => "trace",
+            Self::Veil => "Veil",
         })
     }
 }
@@ -153,8 +160,9 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
             problems.join("\n  ")
         );
     }
-    let (mut kani, mut loom, mut exhaustive, mut replayed, mut lean, mut traced, mut daily) =
+    let (mut kani, mut loom, mut exhaustive, mut replayed, mut lean, mut traced, mut veil) =
         (0, 0, 0, 0, 0, 0, 0);
+    let mut daily = 0;
     for check in &record.check {
         match check.checker {
             Checker::Kani => kani += 1,
@@ -163,6 +171,7 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
             Checker::LogWrites => replayed += 1,
             Checker::Lean => lean += 1,
             Checker::Trace => traced += 1,
+            Checker::Veil => veil += 1,
         }
         if matches!(check.runs, Runs::Daily) {
             daily += 1;
@@ -170,8 +179,8 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
     }
     println!(
         "verify: {RECORD} holds: {} checked ({kani} by Kani, {loom} by loom, {exhaustive} \
-         exhaustively, {replayed} by log-writes replays, {lean} by Lean, {traced} by traces; \
-         {daily} of them daily), {} planned, {} unchecked",
+         exhaustively, {replayed} by log-writes replays, {lean} by Lean, {traced} by traces, \
+         {veil} by Veil; {daily} of them daily), {} planned, {} unchecked",
         record.check.len(),
         record.planned.len(),
         record.unchecked.len()
@@ -204,8 +213,9 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
             .filter(|name| name.as_str() == REPLAY_CHECK)
             .map(|name| (name, "the log-writes replays".to_owned()))
             .collect(),
-        Checker::Lean => lean_theorems(root)?,
+        Checker::Lean => lean_harnesses(root, LeanKind::Theorem)?,
         Checker::Trace => module_tests(root, false, TRACE_MODULE)?,
+        Checker::Veil => lean_harnesses(root, LeanKind::Clause)?,
     };
     let recorded: Vec<&Check> = record
         .check
@@ -220,14 +230,10 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
         );
     }
 
-    // What the checks of these checkers need built first: the Lean checks'
-    // dependencies, and the checker of traces.
-    let built = match checker {
-        Checker::Lean => lake(root, LEAN_CHECKS, &["build"]),
-        Checker::Trace => lake(root, CONTRACT_LIBRARY, &["build", "check-trace"]),
-        _ => Ok(()),
-    };
-    built?;
+    // The trace checks need the checker of traces built first.
+    if checker == Checker::Trace {
+        lake(root, CONTRACT_LIBRARY, &["build", "check-trace"])?;
+    }
 
     let mut results = Vec::new();
     for check in due(&recorded, daily) {
@@ -243,7 +249,7 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
                 results.push((check, passed, start.elapsed()));
                 continue;
             }
-            Checker::Lean => {
+            Checker::Lean | Checker::Veil => {
                 let start = Instant::now();
                 let passed = lean_check(root, check, path)?;
                 results.push((check, passed, start.elapsed()));
@@ -319,38 +325,54 @@ fn lake(root: &Path, dir: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// The theorems of the project's Lean checks named after a test case, each
-/// mapped to its file, from the Lake project's directory.
-fn lean_theorems(root: &Path) -> Result<BTreeMap<String, String>> {
-    let dir = root.join(LEAN_CHECKS);
-    let mut theorems = BTreeMap::new();
-    for (name, file) in lean_declarations(&dir)? {
-        let relative = file.strip_prefix(&dir).unwrap_or(&file);
-        theorems.insert(name, relative.to_string_lossy().into_owned());
-    }
-    Ok(theorems)
+/// What a harness of the project's Lean checks is: a theorem, or a clause
+/// of a Veil model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeanKind {
+    Theorem,
+    Clause,
 }
 
-/// The Lean check `check`: Lean on its theorem's file `file`, every warning
-/// an error, as the Lake project's own build makes it; then the axioms the
-/// file's `#assert_axioms` reports for the theorem, each of which the
-/// record's assumptions for the check must name (FDS-VERIFICATION.RUNS-01).
-/// Whether the theorem holds on those axioms alone.
+/// The harnesses of the project's Lean checks of `kind` named after a test
+/// case, each mapped to its file, from the Lake project's directory.
+fn lean_harnesses(root: &Path, kind: LeanKind) -> Result<BTreeMap<String, String>> {
+    let dir = root.join(LEAN_CHECKS);
+    let mut harnesses = BTreeMap::new();
+    for (name, found, file) in lean_declarations(&dir)? {
+        if found == kind {
+            let relative = file.strip_prefix(&dir).unwrap_or(&file);
+            harnesses.insert(name, relative.to_string_lossy().into_owned());
+        }
+    }
+    Ok(harnesses)
+}
+
+/// The Lean or Veil check `check`: the Lake project's build of its file
+/// `file`, every warning an error, as the project's options make it; then
+/// the axioms the file's `#assert_axioms` or `#assert_axioms_in` reports,
+/// each of which the record's assumptions for the check must name
+/// (FDS-VERIFICATION.RUNS-01). Whether the check holds on those axioms
+/// alone. A file Lake built before replays its messages.
 fn lean_check(root: &Path, check: &Check, file: &str) -> Result<bool> {
+    let module = file.trim_end_matches(".lean").replace('/', ".");
     let output = Command::new("lake")
-        .args(["env", "lean", "-DwarningAsError=true", file])
+        .args(["build", &module])
         .current_dir(root.join(LEAN_CHECKS))
         .output()
-        .with_context(|| format!("failed to run Lean on {file}"))?;
+        .with_context(|| format!("failed to build {module}"))?;
     let text = String::from_utf8_lossy(&output.stdout);
     print!("{text}");
     eprint!("{}", String::from_utf8_lossy(&output.stderr));
     if !output.status.success() {
         return Ok(false);
     }
-    let Some(axioms) = rests_on(&text, &check.harness) else {
+    let reported = match check.checker {
+        Checker::Veil => rests_on_any(&text),
+        _ => rests_on(&text, &check.harness),
+    };
+    let Some(axioms) = reported else {
         eprintln!(
-            "{file} reports no axioms for {}: it needs #assert_axioms",
+            "{file} reports no axioms for {}: it needs #assert_axioms or #assert_axioms_in",
             check.harness
         );
         return Ok(false);
@@ -376,13 +398,35 @@ fn lean_check(root: &Path, check: &Check, file: &str) -> Result<bool> {
 fn rests_on<'a>(output: &'a str, theorem: &str) -> Option<Vec<&'a str>> {
     let marker = format!("{theorem} rests on [");
     let line = output.lines().find(|line| line.contains(&marker))?;
-    let list = line.split_once(&marker)?.1.split_once(']')?.0;
-    Some(
-        list.split(',')
-            .map(str::trim)
-            .filter(|a| !a.is_empty())
-            .collect(),
-    )
+    Some(axiom_list(line.split_once(&marker)?.1))
+}
+
+/// Every axiom any `#assert_axioms` or `#assert_axioms_in` of a file
+/// reports, in Lean's output, or `None` when none reports.
+fn rests_on_any(output: &str) -> Option<Vec<&str>> {
+    let mut axioms = Vec::new();
+    let mut reported = false;
+    for line in output.lines() {
+        if let Some((_, rest)) = line.split_once(" rests on [") {
+            reported = true;
+            for axiom in axiom_list(rest) {
+                if !axioms.contains(&axiom) {
+                    axioms.push(axiom);
+                }
+            }
+        }
+    }
+    reported.then_some(axioms)
+}
+
+/// The names of a list `a, b, c]…`, up to its closing bracket.
+fn axiom_list(rest: &str) -> Vec<&str> {
+    rest.split_once(']')
+        .map_or(rest, |(list, _)| list)
+        .split(',')
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .collect()
 }
 
 /// The trace check `name`: the crate's test at `path` writes its traces,
@@ -721,16 +765,17 @@ pub(crate) fn declared_ids(docs: &Path) -> Result<BTreeSet<String>> {
 /// project's Lean checks.
 fn harness_index(root: &Path) -> Result<BTreeMap<String, usize>> {
     let mut index = rust_harnesses(&root.join(HARNESS_ROOTS[0]))?;
-    for (name, _) in lean_declarations(&root.join(LEAN_CHECKS))? {
+    for (name, _, _) in lean_declarations(&root.join(LEAN_CHECKS))? {
         *index.entry(name).or_default() += 1;
     }
     Ok(index)
 }
 
-/// Each `tc_` theorem or definition the Lean files under `dir` declare,
-/// with its file; Lake's own directory, which holds the packages it
-/// fetched, is not looked in.
-fn lean_declarations(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+/// Each `tc_` theorem or definition, and each `tc_` clause of a Veil model
+/// (`safety [name]`, `invariant [name]`), the Lean files under `dir`
+/// declare, with its kind and its file; Lake's own directory, which holds
+/// the packages it fetched, is not looked in.
+fn lean_declarations(dir: &Path) -> Result<Vec<(String, LeanKind, PathBuf)>> {
     let mut found = Vec::new();
     let walk = walkdir::WalkDir::new(dir)
         .into_iter()
@@ -743,13 +788,21 @@ fn lean_declarations(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
         let text = std::fs::read_to_string(entry.path())
             .with_context(|| format!("failed to read {}", entry.path().display()))?;
         for line in text.lines() {
-            if let Some(name) = ["theorem ", "def "]
+            let theorem = ["theorem ", "def "]
                 .iter()
                 .find_map(|keyword| line.strip_prefix(keyword))
                 .and_then(|rest| rest.split([' ', '(', ':', '{']).next())
-                .filter(|name| name.starts_with("tc_"))
+                .map(|name| (name, LeanKind::Theorem));
+            let clause = ["safety [", "invariant ["]
+                .iter()
+                .find_map(|keyword| line.strip_prefix(keyword))
+                .and_then(|rest| rest.split(']').next())
+                .map(|name| (name, LeanKind::Clause));
+            if let Some((name, kind)) = theorem
+                .or(clause)
+                .filter(|(name, _)| name.starts_with("tc_"))
             {
-                found.push((name.to_owned(), entry.path().to_owned()));
+                found.push((name.to_owned(), kind, entry.path().to_owned()));
             }
         }
     }
@@ -1003,6 +1056,13 @@ mod tests {
             Some(vec!["propext", "Classical.choice", "Quot.sound"])
         );
         assert_eq!(rests_on(output, "tc_x_01_other"), None);
+        let veil = "info: Protocol/Files.lean:293:0: Files (668 theorems) rests on \
+                    [propext, Quot.sound]\ninfo: x rests on [propext, extra]\n";
+        assert_eq!(
+            rests_on_any(veil),
+            Some(vec!["propext", "Quot.sound", "extra"])
+        );
+        assert_eq!(rests_on_any("no report"), None);
         assert_eq!(
             rests_on("t rests on []", "t"),
             Some(vec![]),

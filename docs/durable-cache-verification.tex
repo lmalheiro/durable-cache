@@ -457,9 +457,39 @@ it found:
     repository's workspace excludes. The header check now also fails when
     a library names this project or an ID of this specification.
 \end{itemize}
-The rest of the phase follows: the protocol model in Veil, its
-invariants, the model checked against the contract, and the logs of the
-tests replayed through the model.
+The second part brings the protocol model, with stores synchronised, and
+the first four of its invariants (\reqref{TC-STORAGE.PROTOCOL-01}), and a
+fifth kind of check, the Veil check: a clause of a Veil model, proved
+inductive. What it found:
+\begin{itemize}
+  \item Veil proves each clause inductive with an SMT solver, cvc5. With
+    its trust in the solver turned off, Lean reconstructs and checks every
+    one of the solver's proofs, and the 670 theorems they give rest on
+    Lean's three axioms alone. The proofs, the executions the model must
+    allow, and the exploration of an instance with one key, two files and
+    two versions take 3~minutes.
+  \item The four invariants needed twenty clauses more to become
+    inductive, each found from a counterexample to induction the solver
+    gave: among them, that a store in flight has not been published, and
+    that a store in flight whose key an invalidation unlinked was ended.
+  \item Veil states no theorem over the reachable states: its checks prove
+    that each clause holds initially and that every action keeps it, which
+    gives every reachable state by Veil's construction, and the record of
+    checked properties names that as an assumption. Veil's synthesiser,
+    whose certificate is such a theorem, cannot pose its queries for this
+    model.
+  \item The checks were seen to fail on four deliberate changes to the
+    model: a store published unsynchronised, an invalidation that answers
+    before it synchronises the directory, one that ends no store in
+    flight, and a crash that may leave a record any version.
+  \item Once metadata updates and withdrawals joined the model, the
+    exploration of an instance with three files rather than two did not end
+    within an hour, so the instance explored has two.
+\end{itemize}
+The rest of the phase follows: the invariants of unsynchronised stores,
+the restart scan, recovery beside live traffic and the hot upgrade; the
+model checked against the storage contract; and the logs of the tests
+replayed through the model.
 
 \subsection*{Phase 3: the file system and its crashes}
 \begin{itemize}

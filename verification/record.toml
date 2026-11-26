@@ -11,9 +11,10 @@
 #   requirements  the requirements the property is of
 #   checker       kani, loom, exhaustive (an ordinary test that goes
 #                 through every case within its bounds), log-writes, lean
-#                 (a theorem of verification/protocol) or trace (a test
-#                 whose traces the storage-contract library checks)
-#   harness       the check's function or theorem, named
+#                 (a theorem of verification/protocol), trace (a test
+#                 whose traces the storage-contract library checks) or
+#                 veil (a clause of a Veil model of verification/protocol)
+#   harness       the check's function, theorem or clause, named
 #                 tc_<test case>_<what>
 #   bounds        what the check covers: its inputs, threads or states
 #   runs          change (each proposed change) or daily
@@ -260,29 +261,49 @@ runs = "daily"
 assumes = ["the kernel's log-writes target logs each write with its flush and FUA flags, in the order the device completes them", "a crash leaves the writes the device completed, in the order it completed them, the last perhaps torn at a block; the reorderings a volatile write cache may make between two flushes are the file-system library's to explore (phase 3)"]
 duration = "5 min 37 s daily (GitHub runner, 2026-11-26)"
 
-[[planned]]
-property = "Synchronised stores: a published name never refers to data that is not on stable storage."
+[[check]]
+test_case = "TC-STORAGE.PROTOCOL-01"
+property = "Synchronised stores: in the protocol model, no name refers, or may refer after a crash, to a file whose data never reached stable storage."
 requirements = ["ADR-PERSISTENCE.DURABILITY-02", "FDS-STORAGE.PUBLISH-03", "ADR-STORAGE.ATOMICPUBLISH-01"]
 checker = "veil"
-phase = 2
+harness = "tc_storage_protocol_01_synchronised_names"
+bounds = "any number of keys, files and versions, a proof; and every reachable state of one key, two files and two versions, model-checked (68,251 states)"
+runs = "change"
+assumes = ["Lean's own axioms: propext, Classical.choice, Quot.sound", "Veil's construction: that the clauses hold initially and every action keeps them gives every reachable state; the project states no theorem over reachable states", "the model: each change of the running system atomic, its concurrency the loom checks'; a crash keeps any of a name's pending renames; a record a crash tore fails its read-time checks"]
+duration = "3 min 6 s on a change, the model's four clauses together (local, 2026-11-26)"
 
-[[planned]]
-property = "No mixtures: in every state a crash can leave, the restarted backend serves each object as one version it stored, or misses it, after stores, in-place metadata updates and withdrawals alike."
+[[check]]
+test_case = "TC-STORAGE.PROTOCOL-01"
+property = "No mixtures: in the protocol model, a lookup serves only a version a store or an update of the key wrote, whole, before or after any update or withdrawal, across any crash."
 requirements = ["HLR-PERSISTENCE.CRASHSAFE-02", "FDS-STORAGE.METAUPDATE-01"]
 checker = "veil"
-phase = 2
+harness = "tc_storage_protocol_01_no_mixtures"
+bounds = "any number of keys, files and versions, a proof; and every reachable state of one key, two files and two versions, model-checked (68,251 states)"
+runs = "change"
+assumes = ["Lean's own axioms: propext, Classical.choice, Quot.sound", "Veil's construction: that the clauses hold initially and every action keeps them gives every reachable state; the project states no theorem over reachable states", "the model: each change of the running system atomic, its concurrency the loom checks'; a crash keeps any of a name's pending renames; a record a crash tore fails its read-time checks"]
+duration = "3 min 6 s on a change, the model's four clauses together (local, 2026-11-26)"
 
-[[planned]]
-property = "Purges hold: no crash undoes a purge the backend acknowledged."
+[[check]]
+test_case = "TC-STORAGE.PROTOCOL-01"
+property = "Purges hold: in the protocol model, no name refers, or may refer after a crash, to a record an invalidation that answered removed."
 requirements = ["FRE-COMPLIANCE.PURGEDURABLE-01"]
 checker = "veil"
-phase = 2
+harness = "tc_storage_protocol_01_purges_hold"
+bounds = "any number of keys, files and versions, a proof; and every reachable state of one key, two files and two versions, model-checked (68,251 states)"
+runs = "change"
+assumes = ["Lean's own axioms: propext, Classical.choice, Quot.sound", "Veil's construction: that the clauses hold initially and every action keeps them gives every reachable state; the project states no theorem over reachable states", "the model: each change of the running system atomic, its concurrency the loom checks'; a crash keeps any of a name's pending renames; a record a crash tore fails its read-time checks"]
+duration = "3 min 6 s on a change, the model's four clauses together (local, 2026-11-26)"
 
-[[planned]]
-property = "Purges end in-flight stores: no store in flight when a purge invalidates its key lands after the purge."
+[[check]]
+test_case = "TC-STORAGE.PROTOCOL-01"
+property = "Purges end stores in flight: in the protocol model, no store an invalidation ended is ever published."
 requirements = ["FRE-COMPLIANCE.PURGE-01", "FDS-STORAGE.PURGE-01"]
 checker = "veil"
-phase = 2
+harness = "tc_storage_protocol_01_purges_end_stores"
+bounds = "any number of keys, files and versions, a proof; and every reachable state of one key, two files and two versions, model-checked (68,251 states)"
+runs = "change"
+assumes = ["Lean's own axioms: propext, Classical.choice, Quot.sound", "Veil's construction: that the clauses hold initially and every action keeps them gives every reachable state; the project states no theorem over reachable states", "the model: each change of the running system atomic, its concurrency the loom checks'; a crash keeps any of a name's pending renames; a record a crash tore fails its read-time checks"]
+duration = "3 min 6 s on a change, the model's four clauses together (local, 2026-11-26)"
 
 [[planned]]
 property = "Unsynchronised stores: with the discard on, no record or temporary written before a host restart is reachable after it; with it off, on a file system that records a file's length only once its data is written, a record whose body did not reach the device reads short, and is a miss."
