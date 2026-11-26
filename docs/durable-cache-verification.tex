@@ -56,6 +56,10 @@ Aeneas and Charon & Any theorem about the Rust code, as translated into Lean & A
 \hline
 Exhaustive test & That a property holds in every case of a domain small enough to go through, one case at a time & Yes & Only where the cases are few: the orders of a few events, the indices of a small table \\
 \hline
+Lean 4 & That a theorem holds, checked by Lean's kernel, on the axioms it lists & No: a model, or a library's own code & Only what the theorem states \\
+\hline
+Trace check & That every call a storage answered, in the runs a driver made, had a result the storage contract allows & Yes, the storage itself & The calls of the runs made, one at a time \\
+\hline
 \end{tabularx}
 \end{table}
 
@@ -141,6 +145,27 @@ result exactly once, whatever order the completions arrive in, needs no
 checker of threads: the ring's table is used under its mutex, so its events
 come one at a time, and the exhaustive check of the ring's table goes
 through every order of them.
+
+\subsection{The storage contract}
+
+With the storage-contract library: a proof about its reference
+implementation, and the traces of \texttt{MemCache} and of the backend,
+checked against the contract (\reqref{TC-VERIFICATION.CONTRACT-01}).
+\begin{itemize}
+  \item \emph{A storage can keep it}: the contract allows every trace of
+    the reference implementation, for any calls in any order
+    (\reqref{ADR-VERIFICATION.MODELS-01}).
+  \item \emph{It is no stricter than \texttt{MemCache}}: every result
+    \texttt{MemCache} gives, in the workloads it can take, is one the
+    contract allows (\reqref{ADR-VERIFICATION.MODELS-01}).
+  \item \emph{The backend keeps it}: every result the backend gives, in
+    workloads of every call the contract allows, is one the contract
+    allows --- hits only of the stored entry or of a write in flight,
+    bodies that end only at their end, and purges, expiries and metadata
+    updates that hold (\reqref{HLR-COMPAT.PINGORA-01},
+    \reqref{FRE-COMPAT.STREAMING-01}, \reqref{FRE-COMPAT.STREAMEND-01},
+    \reqref{FRE-COMPAT.EXPIRE-01}).
+\end{itemize}
 
 \subsection{The protocol across crashes}
 
@@ -391,6 +416,50 @@ checked properties gives the duration of each.
   \item Exit: the invariants proved, and the logs of the crate's tests and
     of the compatibility tests replayed without a forbidden step.
 \end{itemize}
+Phase~2 is carried out in parts too, the first of which brings the
+storage-contract library, \texttt{HttpCacheStorage}, with its checks against
+\texttt{MemCache} and the same checks of the backend
+(\reqref{TC-VERIFICATION.CONTRACT-01}), and two kinds of check: the Lean
+check, a theorem of the project's Lake project under the version Veil pins,
+and the trace check, a test that drives a storage through the library's
+workloads and writes their traces, which the library's checker reads. What
+it found:
+\begin{itemize}
+  \item The contract is a checker of traces: a driver makes the calls on a
+    storage, one at a time, and records each with its result, and the
+    checker accepts each result the contract allows in the state the
+    earlier calls left. The library's reference implementation, an
+    in-memory storage, keeps it for any calls in any order: a proof, on
+    Lean's three axioms alone.
+  \item \texttt{MemCache} cannot take every call the contract allows. Its
+    miss handler's \texttt{finish} panics once a purge has removed the
+    write, and its \texttt{update\_meta} when nothing is stored; a seek
+    with no end keeps the end of an earlier one; and a hit of a write
+    dropped before its end ends the body early, as if whole, which the
+    contract forbids, since the cache would serve the shortened body as
+    complete. Its workloads leave those calls out. In the others, it showed
+    one rule of the contract too strict: it reports a purge as having
+    removed an entry for a key whose writes were all dropped. The cache
+    then has nothing to remove from its eviction manager, and the contract
+    no longer checks that report.
+  \item The backend keeps the contract in every workload, with every call
+    it allows. Two of its features shaped the driver. A store's last chunk
+    is written only in \texttt{finish}'s handoff, so a hit of a write in
+    flight may wait for \texttt{finish} to read it, and the driver reads it
+    then. A metadata update applies only to the response it revalidates,
+    which it names by its creation time, so the driver revalidates as the
+    cache does: a lookup, then metadata that keeps the hit's creation time.
+  \item The backend's traces were seen to fail on two deliberate bugs: a
+    purge that reports the entry removed but keeps it, and a hit of an
+    aborted store that ends cleanly.
+  \item The library builds on its own, so its driver, in Rust, is a Cargo
+    workspace of its own inside the library's directory, which the
+    repository's workspace excludes. The header check now also fails when
+    a library names this project or an ID of this specification.
+\end{itemize}
+The rest of the phase follows: the protocol model in Veil, its
+invariants, the model checked against the contract, and the logs of the
+tests replayed through the model.
 
 \subsection*{Phase 3: the file system and its crashes}
 \begin{itemize}
@@ -509,7 +578,9 @@ Kani, small bounds & Each pull request \\
 \hline
 loom and shuttle, small bounds & Each pull request \\
 \hline
-The Lean libraries and the protocol model & Each pull request that changes them \\
+The project's Lean checks, and the protocol model & Each pull request \\
+\hline
+The traces of the storage contract, eight workloads of each storage & Each pull request; daily, 32 \\
 \hline
 Aeneas: the translation up to date, and the proofs about the code & Each pull request that touches a checked module \\
 \hline

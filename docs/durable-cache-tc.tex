@@ -2353,6 +2353,58 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \verify{FDS-VERIFICATION.RUNS-01}
 \end{requirement}
 
+\begin{requirement}{TC-VERIFICATION.CONTRACT-01}[draft][verify]{Backends keep the storage contract}
+
+  \localreqdiagram*{tcverifycontract01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The model of what \texttt{pingora-cache} expects of a
+  storage is one a storage can keep and no stricter than the storage that
+  crate ships, and the backend keeps it in every workload of the calls it
+  allows: a hit only of the stored entry or of a write in flight for its
+  key, a body that ends only at its end, and purges, expiries and metadata
+  updates that hold.
+
+  \textbf{Setup:} The storage-contract library of
+  \reqref{ADR-VERIFICATION.MODELS-01}: the contract of the
+  \texttt{Storage}, \texttt{HandleHit} and \texttt{HandleMiss} interfaces of
+  \texttt{pingora-cache} 0.9.0, as a checker of traces, each the calls a
+  driver made on one storage, one at a time, with their results; the
+  library's reference implementation, an in-memory storage that runs; and
+  its driver, which drives a storage through a workload drawn from a seed
+  --- lookups, by key and by a write's tag; reads, seeks and ends of hits;
+  writes opened, written, finished and dropped; purges and expiries of
+  every target; and revalidations --- and writes the trace.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Prove, in Lean, that the contract allows every trace of the
+      reference implementation, for any calls in any order.
+    \item Drive \texttt{MemCache}, the in-memory storage of
+      \texttt{pingora-cache}, through the workloads of several seeds,
+      without the calls it cannot take, and check each trace against the
+      contract.
+    \item Drive the backend through the workloads of several seeds, with
+      every call the contract allows, and check each trace against the
+      contract.
+  \end{enumerate}
+
+  \textbf{Expected result:} The proof holds, on no axiom outside the
+  reviewed list; and the contract allows the result of every call in every
+  trace.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.VERIFICATION.CONTRACT-01}{Implement the TC's
+  steps: the proof about the reference implementation, and the runs that
+  drive MemCache and the backend through the workloads and check their
+  traces.}
+
+  \verify{HLR-COMPAT.PINGORA-01}
+  \verify{FRE-COMPAT.STREAMING-01}
+  \verify{FRE-COMPAT.STREAMEND-01}
+  \verify{FRE-COMPAT.EXPIRE-01}
+\end{requirement}
+
 \begin{requirement}{TC-STORAGE.CHANGELOCKS-01}[draft][verify]{Change locks in every interleaving}
 
   \localreqdiagram*{tcstoragechangelocks01}{\reqid}{\reqdesc}
