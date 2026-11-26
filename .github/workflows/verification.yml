@@ -110,8 +110,8 @@ jobs:
 
       - name: The log-writes replays (TC-PERSISTENCE.CRASHSAFE-02)
         # ext4, ext4 with data=writeback and XFS with stores synchronised,
-        # ext4 unsynchronised with the discard on and off; each flush and
-        # FUA point checked.
+        # ext4 unsynchronised with the discard on and off; the state after
+        # each write, and after each block of a longer one, checked.
         run: |
           sudo modprobe dm-log-writes
           nix develop -c cargo xtask verify --checker log-writes --daily
