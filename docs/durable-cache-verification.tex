@@ -54,6 +54,8 @@ Aeneas and Charon & Any theorem about the Rust code, as translated into Lean & A
 \hline
 \texttt{log-writes} replay & The disk state at each flush and FUA point of a real run & Yes, on the real kernel & Root and a scratch device; one kernel and one file system per run \\
 \hline
+Exhaustive test & That a property holds in every case of a domain small enough to go through, one case at a time & Yes & Only where the cases are few: the orders of a few events, the indices of a small table \\
+\hline
 \end{tabularx}
 \end{table}
 
@@ -99,7 +101,9 @@ for inputs of every size.
 
 \subsection{Unsafe code}
 
-With Kani, the system calls stubbed by every result they may return.
+The reads with Kani, their system calls stood in for by every result they
+may return; the ring's table of operations in flight with an exhaustive
+check of every order of its events, as Kani runs out of memory on it.
 \begin{itemize}
   \item \emph{Reads that must not wait}: for every result \texttt{preadv2}
     or \texttt{pread} may return, the buffer's new length covers only bytes
@@ -131,10 +135,12 @@ Tokio is involved.
     ends the key's in-flight stores, the readers waiting on them wake, and a
     store's entry leaves the registry when the store completes or aborts
     (\reqref{FDS-STORAGE.PARTIAL-02}, \reqref{FRE-COMPLIANCE.PURGE-01}).
-  \item \emph{Ring completions} (shuttle): the store waiting on each write
-    the ring takes learns that write's result exactly once, whatever order
-    the completions arrive in (\reqref{FDS-STORAGE.IOURING-01}).
 \end{itemize}
+That the store waiting on each write the ring takes learns that write's
+result exactly once, whatever order the completions arrive in, needs no
+checker of threads: the ring's table is used under its mutex, so its events
+come one at a time, and the exhaustive check of the ring's table goes
+through every order of them.
 
 \subsection{The protocol across crashes}
 
@@ -287,9 +293,38 @@ and the Kani checks of the key segment and the record header
     which Kani cannot follow either; the header's checks replace it with
     another function of the same bytes, as their properties hold for any.
 \end{itemize}
-The rest of the phase follows: the other data formats, the expiry's
-length, the \texttt{unsafe} code, the shuttle checks, and the
-\texttt{log-writes} harness.
+The second part brings the \texttt{unsafe} code
+(\reqref{TC-STORAGE.UNSAFE-01}) and the shards of names
+(\reqref{TC-LAYOUT.NAMES-01}), and a third kind of check: the exhaustive
+check, an ordinary test that goes through every case where the cases are
+few enough and Kani cannot finish. What it found:
+\begin{itemize}
+  \item Kani cannot stand in for a function of another language, such as
+    \texttt{libc::pread64}, nor for a method of a type of the standard
+    library, such as \texttt{io::Error::last\_os\_error}. The read that waits
+    for the device is therefore a function of the crate's own,
+    \texttt{pread\_blocking}, beside \texttt{pread\_nowait}, and the stand-in
+    for both sets \texttt{errno}, as \texttt{libc} does.
+  \item Kani walks every branch it cannot rule out, a formatted error
+    message included, and runs out of memory there; the check of the reads
+    stands in for the function that formats one.
+  \item Kani runs out of memory on the ring's table, a vector of slots
+    whose states it follows through every event, even for one operation. The
+    table's three transitions are now methods of the table --- a completion,
+    a poll, a drop --- which an exhaustive check drives through each of
+    10,735 orders of two operations' events.
+  \item Kani runs out of memory, too, on the shard-directory bitset's 1024
+    words, which an exhaustive check goes through shard by shard, and on
+    four properties that therefore stay with the tests, as the record of
+    checked properties says: the read-time validation of a record, whose
+    buffers have lengths read from the header; the shape of an object's
+    name, built a character at a time; the names of writer leases,
+    formatted through \texttt{std::fmt}; and the expiry's length, as the
+    encoder of \texttt{pingora-cache} compresses the header segment with
+    zstd, C code beyond Kani.
+\end{itemize}
+The rest of the phase follows: the shuttle check of the in-flight registry,
+and the \texttt{log-writes} harness.
 
 \subsection*{Phase 2: the protocol in Lean}
 \begin{itemize}
