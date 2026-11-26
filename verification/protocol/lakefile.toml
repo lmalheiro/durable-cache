@@ -16,5 +16,10 @@ warningAsError = true
 name = "HttpCacheStorage"
 path = "../libs/HttpCacheStorage"
 
+[[require]]
+name = "veil"
+git = "https://github.com/verse-lab/veil.git"
+rev = "v4.35.0"
+
 [[lean_lib]]
 name = "Protocol"

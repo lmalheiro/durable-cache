@@ -19,7 +19,7 @@ which fails on an entry whose test case, requirements or harness the
 repository does not have (TC-VERIFICATION.RECORD-01), and run one checker's
 checks with
 
-    cargo xtask verify --checker kani|loom|exhaustive|log-writes|lean|trace [--daily]
+    cargo xtask verify --checker kani|loom|exhaustive|log-writes|lean|trace|veil [--daily]
 
 which also reports how long each took (TC-VERIFICATION.RUNS-01).
 
@@ -49,6 +49,14 @@ which also reports how long each took (TC-VERIFICATION.RUNS-01).
   which lists the axioms the theorem rests on and fails on one outside the
   reviewed list; `--checker lean` also fails on one the record does not
   name for the check.
+- **Veil checks** are `safety` and `invariant` clauses, named
+  `tc_<test case>_<what>`, of a Veil model in `protocol/` (the protocol
+  model, `Protocol/Files.lean`). The model's file proves every clause
+  inductive with `#check_invariants`, Lean checking each of the SMT solver's
+  proofs (`veil.smt.trust` off), finds the executions it must allow, explores
+  a finite instance, and ends with `#gen_theorems` and `#assert_axioms_in`;
+  `--checker veil` builds it and fails on any of these, or on an axiom the
+  record does not name.
 - **Trace checks** are ignored tests of the crate, in
   `durable-cache/tests/verification_contract.rs`, that drive a storage
   through the workloads of the storage-contract library and write their
