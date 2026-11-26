@@ -2547,3 +2547,45 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \verify{FDS-STORAGE.PAGECACHE-01}
   \verify{FDS-STORAGE.IOURING-01}
 \end{requirement}
+
+\begin{requirement}{TC-STORAGE.INFLIGHT-01}[draft][verify]{In-flight registry in every interleaving}
+
+  \localreqdiagram*{tcstorageinflight01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Under every interleaving of the stores and purges that
+  use it, up to loom's preemption bound, the registry of stores in flight
+  finds the most recent store of a key, whatever order stores opening at
+  once reach it in; a purge ends every store of the key in flight and
+  reports it, and untagged lookups pass over the stores it ended, which
+  their tags still find; and a store that ends leaves no entry behind.
+
+  \textbf{Setup:} The registry built with loom's lock and atomics, in the
+  crate's tests built with \texttt{-{}-cfg durable\_cache\_loom}, with at most
+  two preemptions on each change and three in the daily run.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Two threads each open a store of one key; then look up the most
+      recent store, and each store by its tag, and end both.
+    \item With one store of a key in flight and another about to end, one
+      thread opens a third store of the key while another ends the second,
+      and the main thread purges the key; then look up the most recent
+      store and each store by its tag, and end the rest.
+  \end{enumerate}
+
+  \textbf{Expected result:} In every interleaving: the most recent store is
+  the one of the higher id, and each tag finds its own store; the purge
+  ends the store in flight throughout and reports doing so, the untagged
+  lookup finds only a store the purge did not end, a tag finds its store
+  while in flight, purged or not, and not once it has ended; the key has no
+  entry once its stores have ended.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.STORAGE.INFLIGHT-01}{Implement the loom tests of
+  two stores opening at once, and of a purge beside stores opening, ending
+  and in flight.}
+
+  \verify{FDS-STORAGE.PARTIAL-02}
+  \verify{FRE-COMPLIANCE.PURGE-01}
+\end{requirement}
