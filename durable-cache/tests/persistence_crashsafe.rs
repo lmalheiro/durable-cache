@@ -9,10 +9,12 @@
 //! not survive are misses (HLR-PERSISTENCE.CRASHSAFE-02).
 //!
 //! The test case's setup replays a device-mapper `log-writes` device to
-//! every flush and FUA point. That needs root, a scratch block device, and
-//! the kernel's replay tool, and this repository has no harness for it yet.
-//! This file covers the same contract by constructing the on-disk states
-//! such a replay produces — which is what the design's argument turns on:
+//! every flush and FUA point. That needs root and scratch block devices:
+//! `cargo xtask crash-replay` does it, running the two ignored tests at the
+//! end of this file, the scenario on the logged device and the check on
+//! each replayed state. The other tests here cover the same contract
+//! without root, by constructing the on-disk states such a replay produces
+//! — which is what the design's argument turns on:
 //!
 //! - a store's bytes not yet on stable storage when the name appeared
 //!   (`fdatasync` precedes the rename, so on storage that honours flushes,
@@ -337,4 +339,218 @@ async fn tc_persistence_crashsafe_02_unsynchronised_stores_serve_no_lost_body() 
         .await
         .expect("an intact record is a hit");
     assert_eq!(got, body, "served as stored");
+}
+
+// --- The log-writes replay ------------------------------------------------
+//
+// The test case's own setup. `cargo xtask crash-replay` mounts a file system
+// on a device-mapper `log-writes` device and runs the scenario there, which
+// marks the log after each operation the backend acknowledges; it then
+// replays the log to each flush and FUA point in turn and runs the check on
+// each state. Both read their setting from the environment it sets, and
+// fail without it.
+
+/// The directory of the replay's cache.
+const REPLAY_DIR: &str = "DURABLE_CACHE_REPLAY_DIR";
+/// The `log-writes` device the scenario marks, by its device-mapper name.
+const REPLAY_DEVICE: &str = "DURABLE_CACHE_REPLAY_DEVICE";
+/// How stores are made: `strict`, `unsynced-discard` or `unsynced-keep`.
+const REPLAY_MODE: &str = "DURABLE_CACHE_REPLAY_MODE";
+/// The file holding the identity of the boot the backend runs under.
+const REPLAY_BOOT: &str = "DURABLE_CACHE_REPLAY_BOOT";
+/// The marks the replay has passed, separated by commas.
+const REPLAY_MARKS: &str = "DURABLE_CACHE_REPLAY_MARKS";
+
+/// The objects the scenario stores: a key and a body length each, from one
+/// byte to bodies spanning many file-system blocks.
+const OBJECTS: [(&str, usize); 8] = [
+    ("/replay-0", 1),
+    ("/replay-1", 4096),
+    ("/replay-2", 65_537),
+    ("/replay-3", 300_000),
+    ("/replay-4", 5_000),
+    ("/replay-5", 5_000),
+    ("/replay-6", 70_000),
+    ("/replay-7", 10),
+];
+
+/// The objects the scenario purges once all are stored.
+const PURGED: [usize; 2] = [0, 1];
+
+/// The object whose metadata the scenario updates in place.
+const UPDATED: usize = 4;
+
+/// The object whose metadata update outgrows its region, which withdraws
+/// the record.
+const WITHDRAWN: usize = 5;
+
+/// The key of the store the scenario leaves unfinished.
+const UNFINISHED: &str = "/replay-unfinished";
+
+/// The header filler of each object's metadata as stored, as updated in
+/// place, and as the update that outgrows the region would have it.
+const STORED_FILLER: usize = 16;
+const UPDATED_FILLER: usize = 64;
+const OUTGROWN_FILLER: usize = 4000;
+
+fn replay_env(name: &str) -> String {
+    std::env::var(name)
+        .unwrap_or_else(|_| panic!("{name} is unset: cargo xtask crash-replay runs this test"))
+}
+
+fn replay_body(i: usize) -> Vec<u8> {
+    support::incompressible(OBJECTS[i].1, 100 + i as u64).into_bytes()
+}
+
+/// The backend over the replay's directory, made as `REPLAY_MODE` says,
+/// under the boot `REPLAY_BOOT` names.
+#[cfg(target_os = "linux")]
+fn replay_cache() -> &'static durable_cache::FsCache {
+    use durable_cache::hooks::HookConfig;
+    use durable_cache::{Durability, FsCacheConfig};
+
+    let config = FsCacheConfig::new(replay_env(REPLAY_DIR), None);
+    let config = match replay_env(REPLAY_MODE).as_str() {
+        "strict" => config,
+        "unsynced-discard" => config
+            .with_durability(Durability::NoStoreSync)
+            .with_discard_after_host_restart(true),
+        "unsynced-keep" => config.with_durability(Durability::NoStoreSync),
+        mode => panic!("{REPLAY_MODE} is {mode}, not strict, unsynced-discard or unsynced-keep"),
+    };
+    support::leaked_cache_configured(
+        config,
+        HookConfig {
+            boot_id_path: Some(replay_env(REPLAY_BOOT).into()),
+            ..HookConfig::default()
+        },
+    )
+}
+
+/// The scenario, step 1 and 2 of the test case: store every object, purge
+/// some, update one's metadata in place and outgrow another's, and leave a
+/// store unfinished, marking the log after each operation the backend
+/// acknowledges.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "cargo xtask crash-replay runs it, on a log-writes device"]
+async fn tc_persistence_crashsafe_02_replay_scenario() {
+    let cache = replay_cache();
+    let device = replay_env(REPLAY_DEVICE);
+    let mark = |name: String| {
+        let status = std::process::Command::new("sudo")
+            .args(["-n", "dmsetup", "message", &device, "0", "mark", &name])
+            .status()
+            .expect("dmsetup runs");
+        assert!(status.success(), "the log is not marked {name}");
+    };
+
+    let stored: Vec<_> = (0..OBJECTS.len())
+        .map(|_| support::meta_with_header_filler(STORED_FILLER))
+        .collect();
+    for (i, meta) in stored.iter().enumerate() {
+        support::store(cache, &support::key(OBJECTS[i].0), meta, &replay_body(i)).await;
+        mark(format!("stored-{i}"));
+    }
+    for i in PURGED {
+        let outcome = support::purge_active(cache, &support::key(OBJECTS[i].0)).await;
+        assert_eq!(outcome, PurgeOutcome::Purged(None), "object {i} is purged");
+        mark(format!("purged-{i}"));
+    }
+    let trace = support::inactive_trace();
+    let updated = support::revalidation(
+        &stored[UPDATED],
+        &support::meta_with_header_filler(UPDATED_FILLER),
+    );
+    assert!(
+        cache
+            .update_meta(&support::key(OBJECTS[UPDATED].0), &updated, &trace)
+            .await
+            .expect("the update returns"),
+        "the update is written in place"
+    );
+    mark(format!("updated-{UPDATED}"));
+    let outgrown = support::revalidation(
+        &stored[WITHDRAWN],
+        &support::meta_with_header_filler(OUTGROWN_FILLER),
+    );
+    assert!(
+        !cache
+            .update_meta(&support::key(OBJECTS[WITHDRAWN].0), &outgrown, &trace)
+            .await
+            .expect("the update returns"),
+        "the update outgrows the region, and withdraws the record"
+    );
+    mark(format!("withdrawn-{WITHDRAWN}"));
+
+    let mut unfinished = cache
+        .get_miss_handler(&support::key(UNFINISHED), &support::meta(), &trace)
+        .await
+        .expect("the unfinished store opens");
+    unfinished
+        .write_body(
+            bytes::Bytes::from(support::incompressible(50_000, 99)),
+            false,
+        )
+        .await
+        .expect("half the body is written");
+    mark("unfinished".to_owned());
+    // A crash drops no handler: the temporary stays.
+    std::mem::forget(unfinished);
+}
+
+/// The check of one replayed state, step 3 of the test case: construct the
+/// backend, let its restart procedure complete, look up every key and read
+/// every hit's body in full, against the expected result for the marks the
+/// replay has passed.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "cargo xtask crash-replay runs it, on each replayed state"]
+async fn tc_persistence_crashsafe_02_replay_check() {
+    let marks: std::collections::HashSet<String> = replay_env(REPLAY_MARKS)
+        .split(',')
+        .filter(|mark| !mark.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let cache = replay_cache();
+    let manager = Manager::new(usize::MAX);
+    recover(cache, &manager)
+        .await
+        .expect("the restart procedure completes");
+
+    let filler = |n: usize| support::incompressible(n, 1);
+    for (i, (path, _)) in OBJECTS.iter().enumerate() {
+        // A miss is always allowed: a host crash may lose any object.
+        let Some((meta, body)) = support::lookup_body(cache, &support::key(path)).await else {
+            continue;
+        };
+        assert!(
+            !(PURGED.contains(&i) && marks.contains(&format!("purged-{i}"))),
+            "object {i}, whose purge was acknowledged, is served"
+        );
+        assert!(
+            body == replay_body(i),
+            "object {i} is served with a body it was never stored with"
+        );
+        let header = meta
+            .headers()
+            .get("x-filler")
+            .map(|value| value.as_bytes().to_vec())
+            .unwrap_or_default();
+        let versions: &[usize] = if i == UPDATED {
+            &[STORED_FILLER, UPDATED_FILLER]
+        } else {
+            &[STORED_FILLER]
+        };
+        assert!(
+            versions.iter().any(|&n| header == filler(n).as_bytes()),
+            "object {i} is served with metadata it was never stored with"
+        );
+    }
+    assert!(
+        support::lookup_body(cache, &support::key(UNFINISHED))
+            .await
+            .is_none(),
+        "the unfinished store is served"
+    );
 }

@@ -16,6 +16,7 @@ use clap::{Parser, Subcommand};
 
 mod bench;
 mod cfg_matrix;
+mod crash_replay;
 mod verification;
 
 #[derive(Parser)]
@@ -93,6 +94,19 @@ enum Cmd {
         /// does.
         #[arg(long)]
         check: bool,
+    },
+    /// The log-writes replay of TC-PERSISTENCE.CRASHSAFE-02, on Linux, with
+    /// `sudo` that asks for no password: run the crate's replay scenario on
+    /// a file system over a device-mapper `log-writes` device, then replay
+    /// the log to each flush and FUA point and run the crate's replay check
+    /// on each state.
+    CrashReplay {
+        /// The file system.
+        #[arg(long, value_enum)]
+        fs: crash_replay::Fs,
+        /// How the scenario's stores are made.
+        #[arg(long, value_enum)]
+        mode: crash_replay::Mode,
     },
     /// Check `verification/record.toml`, the record of the properties the
     /// formal checks establish (ADR-VERIFICATION.FORMAL-01), against the
@@ -219,6 +233,10 @@ fn main() -> Result<()> {
         Cmd::Fmt { check } => fmt(check),
         Cmd::ReadmeLinks { check } => readme_links(check),
         Cmd::CfgMatrix { no_tests } => cfg_matrix::cfg_matrix(&workspace_root()?, !no_tests),
+        Cmd::CrashReplay { fs, mode } => {
+            let root = workspace_root()?;
+            crash_replay::crash_replay(&root, &target_dir(&root)?, fs, mode).map(drop)
+        }
         Cmd::Verify { checker, daily } => {
             let root = workspace_root()?;
             match checker {
