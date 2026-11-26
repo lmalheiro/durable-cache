@@ -347,3 +347,42 @@ mod tests {
         assert!(is_canonical_name(&a), "is shaped like any other name");
     }
 }
+
+/// The shard of a name for every name up to a bound, with Kani
+/// (TC-LAYOUT.NAMES-01). Built only by Kani, which sets `cfg(kani)`.
+#[cfg(kani)]
+mod kani_checks {
+    use super::*;
+
+    // IMP-TC.LAYOUT.NAMES-01: satisfy TC-LAYOUT.NAMES-01
+
+    /// `bytes`, which are ASCII, as a string, without the standard
+    /// library's validation of UTF-8, which Kani cannot follow over bytes
+    /// it does not know.
+    fn ascii(bytes: &[u8]) -> &str {
+        kani::assume(bytes.iter().all(u8::is_ascii));
+        // SAFETY: ASCII bytes are UTF-8.
+        unsafe { std::str::from_utf8_unchecked(bytes) }
+    }
+
+    /// Any name of up to six ASCII characters has a shard in range or none,
+    /// without a panic, and any two characters name a level in range or
+    /// none; a shard's index from its levels is in range. Only a name's
+    /// first four characters choose its shard, so these cover every name.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn tc_layout_names_01_any_name_has_a_shard_in_range_or_none() {
+        let bytes: [u8; 6] = kani::any();
+        let len: usize = kani::any_where(|len| *len <= 6);
+        if let Ok(shard) = shard_index(ascii(&bytes[..len])) {
+            assert!(shard < SHARD_COUNT);
+        }
+        let level: [u8; 2] = kani::any();
+        if let Some(index) = level_index(ascii(&level)) {
+            assert!(index < FIRST_LEVEL_COUNT && index < SECOND_LEVEL_COUNT);
+        }
+        let (first, second): (usize, usize) = kani::any();
+        kani::assume(first < FIRST_LEVEL_COUNT && second < SECOND_LEVEL_COUNT);
+        assert!(shard_index_of(first, second) < SHARD_COUNT);
+    }
+}

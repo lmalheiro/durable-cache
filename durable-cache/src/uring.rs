@@ -93,6 +93,60 @@ impl Slots {
         slot
     }
 
+    /// The kernel has completed the operation in slot `key` with `result`.
+    /// The future that waits for it, if one does, is to be woken. If its
+    /// future was dropped, the slot is freed now: the kernel is done with
+    /// what it kept.
+    fn complete(&mut self, key: usize, result: i32) -> Completed {
+        let Some(slot) = self.get_mut(key) else {
+            return Completed::NotInFlight;
+        };
+        match std::mem::replace(&mut slot.state, State::Done(result)) {
+            State::Waiting(waker) => Completed::Wake(waker),
+            State::Abandoned => {
+                self.remove(key);
+                Completed::Wake(None)
+            }
+            State::Done(_) => Completed::Twice,
+        }
+    }
+
+    /// The future of the operation in slot `key` is polled: the kernel's
+    /// result once it has completed the operation, the slot freed, as the
+    /// kernel is done with what it kept. Until then, `waker` waits in the
+    /// slot.
+    fn poll(&mut self, key: usize, waker: &Waker) -> Option<i32> {
+        let slot = self
+            .get_mut(key)
+            .expect("an operation's slot lives until its future collects it");
+        let result = match &mut slot.state {
+            State::Done(result) => Some(*result),
+            State::Waiting(waiting) => {
+                *waiting = Some(waker.clone());
+                None
+            }
+            State::Abandoned => unreachable!("only a dropped future abandons its operation"),
+        };
+        if result.is_some() {
+            self.remove(key);
+        }
+        result
+    }
+
+    /// The future of the operation in slot `key` is dropped before it took
+    /// the result. The slot is freed if the kernel has completed the
+    /// operation, and otherwise left for its completion to free.
+    fn abandon(&mut self, key: usize) {
+        let Some(slot) = self.get_mut(key) else {
+            return;
+        };
+        if matches!(slot.state, State::Done(_)) {
+            self.remove(key);
+        } else {
+            slot.state = State::Abandoned;
+        }
+    }
+
     /// Whether an operation the kernel has not completed is in a slot.
     fn any_in_flight(&self) -> bool {
         self.slots
@@ -100,6 +154,16 @@ impl Slots {
             .flatten()
             .any(|slot| !matches!(slot.state, State::Done(_)))
     }
+}
+
+/// What a completion the kernel posted made of its operation.
+enum Completed {
+    /// Completed: the waker of the future that waits for it, if one does.
+    Wake(Option<Waker>),
+    /// No operation is in the slot the completion names.
+    NotInFlight,
+    /// The operation had been completed already.
+    Twice,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -170,16 +234,12 @@ impl Shared {
             for cqe in cq {
                 // The user data is the slot's index, as `Ring::submit` sets it.
                 let key = cqe.user_data() as usize;
-                let Some(slot) = slots.get_mut(key) else {
-                    log::error!("io_uring completed operation {key}, which is not in flight");
-                    continue;
-                };
-                match std::mem::replace(&mut slot.state, State::Done(cqe.result())) {
-                    State::Waiting(waker) => wake.extend(waker),
-                    State::Abandoned => {
-                        slots.remove(key);
+                match slots.complete(key, cqe.result()) {
+                    Completed::Wake(waker) => wake.extend(waker),
+                    Completed::NotInFlight => {
+                        log::error!("io_uring completed operation {key}, which is not in flight")
                     }
-                    State::Done(_) => log::error!("io_uring completed operation {key} twice"),
+                    Completed::Twice => log::error!("io_uring completed operation {key} twice"),
                 }
             }
         }
@@ -428,50 +488,186 @@ impl Future for Op {
         let key = self
             .key
             .expect("an operation is not polled after it has completed");
-        let mut slots = lock(&self.shared.slots);
-        let slot = slots
-            .get_mut(key)
-            .expect("an operation's slot lives until its future collects it");
-        match &mut slot.state {
-            State::Done(result) => {
-                let result = *result;
-                // The kernel is done with what the slot kept: free it.
-                slots.remove(key);
-                drop(slots);
-                self.key = None;
-                Poll::Ready(result)
-            }
-            State::Waiting(waker) => {
-                *waker = Some(cx.waker().clone());
-                drop(slots);
-                // Only the completion task calls the waker: if the runtime
-                // that ran it has shut down, start it again on this one.
-                match self.shared.ensure_collecting() {
-                    Ok(()) => Poll::Pending,
-                    // Not on a Tokio runtime: nothing would ever wake this
-                    // future. The operation is abandoned as the future is
-                    // dropped.
-                    Err(e) => Poll::Ready(-e.raw_os_error().unwrap_or(libc::EIO)),
-                }
-            }
-            State::Abandoned => unreachable!("only a dropped future abandons its operation"),
+        let completed = lock(&self.shared.slots).poll(key, cx.waker());
+        if let Some(result) = completed {
+            self.key = None;
+            return Poll::Ready(result);
+        }
+        // Only the completion task calls the waker: if the runtime that ran
+        // it has shut down, start it again on this one.
+        match self.shared.ensure_collecting() {
+            Ok(()) => Poll::Pending,
+            // Not on a Tokio runtime: nothing would ever wake this future.
+            // The operation is abandoned as the future is dropped.
+            Err(e) => Poll::Ready(-e.raw_os_error().unwrap_or(libc::EIO)),
         }
     }
 }
 
 impl Drop for Op {
     fn drop(&mut self) {
-        let Some(key) = self.key else {
-            return;
-        };
-        let mut slots = lock(&self.shared.slots);
-        let Some(slot) = slots.get_mut(key) else {
-            return;
-        };
-        if matches!(slot.state, State::Done(_)) {
-            slots.remove(key);
-        } else {
-            slot.state = State::Abandoned;
+        if let Some(key) = self.key {
+            lock(&self.shared.slots).abandon(key);
         }
+    }
+}
+
+/// The table of operations in flight, for every order in which two
+/// operations are submitted, completed by the kernel, polled and dropped
+/// (TC-STORAGE.UNSAFE-01). An ordinary test that goes through every such
+/// order, as Kani runs out of memory on the table.
+#[cfg(test)]
+mod exhaustive_checks {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::Waker;
+
+    use super::*;
+
+    // IMP-TC.STORAGE.UNSAFE-02: satisfy TC-STORAGE.UNSAFE-01
+
+    /// The operations each order involves.
+    const OPS: usize = 2;
+
+    /// How many times a future is polled at most.
+    const POLLS: usize = 2;
+
+    /// What happens to an operation.
+    #[derive(Clone, Copy, Debug)]
+    enum Event {
+        Submit,
+        /// The kernel completes it: once, as the kernel does.
+        Complete,
+        Poll,
+        /// Its future is dropped before it took the result.
+        Abandon,
+    }
+
+    /// One operation, as the check follows it.
+    #[derive(Clone, Copy, Default)]
+    struct Operation {
+        submitted: bool,
+        completed: bool,
+        polls: usize,
+        future_gone: bool,
+    }
+
+    impl Operation {
+        fn enabled(&self, event: Event) -> bool {
+            match event {
+                Event::Submit => !self.submitted,
+                Event::Complete => self.submitted && !self.completed,
+                Event::Poll => self.submitted && !self.future_gone && self.polls < POLLS,
+                Event::Abandon => self.submitted && !self.future_gone,
+            }
+        }
+    }
+
+    /// What a slot keeps for the kernel, in place of a buffer and a file:
+    /// it records when it is dropped.
+    struct Kept(Arc<AtomicBool>);
+
+    impl Drop for Kept {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// The kernel's result for operation `i`, one of its own.
+    fn result_of(i: usize) -> i32 {
+        100 + i as i32
+    }
+
+    /// Replay `order` on a new table, checking after each event that a
+    /// slot drops what it keeps only once the kernel has completed its
+    /// operation, and then as soon as its future is gone too, and that a
+    /// future takes its own operation's result, once.
+    fn replay(order: &[(usize, Event)]) {
+        let mut slots = Slots::default();
+        let freed: [Arc<AtomicBool>; OPS] =
+            std::array::from_fn(|_| Arc::new(AtomicBool::new(false)));
+        let mut keys = [None; OPS];
+        let mut ops = [Operation::default(); OPS];
+        for &(i, event) in order {
+            let op = &mut ops[i];
+            match event {
+                Event::Submit => {
+                    keys[i] = Some(slots.insert(Slot {
+                        state: State::Waiting(None),
+                        _kept: Box::new(Kept(Arc::clone(&freed[i]))),
+                    }));
+                    op.submitted = true;
+                }
+                Event::Complete => {
+                    let key = keys[i].expect("a completed operation was submitted");
+                    let completed = slots.complete(key, result_of(i));
+                    assert!(matches!(completed, Completed::Wake(_)), "{order:?}");
+                    op.completed = true;
+                }
+                Event::Poll => {
+                    let key = keys[i].expect("a polled operation was submitted");
+                    match slots.poll(key, Waker::noop()) {
+                        Some(result) => {
+                            assert!(op.completed, "a result before the kernel's: {order:?}");
+                            assert_eq!(result, result_of(i), "another's result: {order:?}");
+                            op.future_gone = true;
+                        }
+                        None => assert!(!op.completed, "a result not taken: {order:?}"),
+                    }
+                    op.polls += 1;
+                }
+                Event::Abandon => {
+                    slots.abandon(keys[i].expect("an abandoned operation was submitted"));
+                    op.future_gone = true;
+                }
+            }
+            for (i, op) in ops.iter().enumerate() {
+                let freed = freed[i].load(Ordering::SeqCst);
+                if op.submitted && !op.completed {
+                    assert!(!freed, "a slot dropped what the kernel may use: {order:?}");
+                }
+                if op.completed && op.future_gone {
+                    assert!(freed, "a slot kept what nothing needs: {order:?}");
+                }
+            }
+        }
+    }
+
+    /// Replay every order that extends `order`, and `order` itself.
+    fn every_order(order: &mut Vec<(usize, Event)>, ops: [Operation; OPS], count: &mut usize) {
+        replay(order);
+        *count += 1;
+        for i in 0..OPS {
+            for event in [Event::Submit, Event::Complete, Event::Poll, Event::Abandon] {
+                if !ops[i].enabled(event) {
+                    continue;
+                }
+                let mut next = ops;
+                match event {
+                    Event::Submit => next[i].submitted = true,
+                    Event::Complete => next[i].completed = true,
+                    Event::Poll => {
+                        next[i].polls += 1;
+                        next[i].future_gone |= ops[i].completed;
+                    }
+                    Event::Abandon => next[i].future_gone = true,
+                }
+                order.push((i, event));
+                every_order(order, next, count);
+                order.pop();
+            }
+        }
+    }
+
+    /// For every order in which two operations are submitted, completed by
+    /// the kernel, polled up to twice and dropped, a slot drops what it
+    /// keeps only once the kernel has completed its operation, and then as
+    /// soon as its future is gone too; and each future takes its own
+    /// operation's result, once. A slot freed is reused by the next
+    /// submission, so the orders cover reuse too.
+    #[test]
+    fn tc_storage_unsafe_01_every_order_keeps_buffers_until_completed() {
+        let mut count = 0;
+        every_order(&mut Vec::new(), [Operation::default(); OPS], &mut count);
+        assert!(count > 1_000, "only {count} orders");
     }
 }

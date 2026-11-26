@@ -2307,7 +2307,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   check the repository's record, a matching record, and records that each
   differ from it in one way.}
 
-  \verify{SDS-VERIFICATION.LAYOUT-01}
+  \verify{SDS-VERIFICATION.LAYOUT-02}
 \end{requirement}
 
 \begin{requirement}{TC-VERIFICATION.RUNS-01}[draft][verify]{Checks run as recorded}
@@ -2467,4 +2467,83 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \verify{SDS-LAYOUT.KEYSEGMENT-01}
   \verify{SDS-LAYOUT.OBJECTFILE-03}
+\end{requirement}
+
+\begin{requirement}{TC-LAYOUT.NAMES-01}[draft][verify]{Shards for every name}
+
+  \localreqdiagram*{tclayoutnames01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} Every name has a shard in range or none, and marking
+  any shard in the shard-directory bitset marks that shard and no other:
+  for every input, not for the samples a test picks.
+
+  \textbf{Setup:} A Kani harness on the crate's code for the shard of a
+  name, and an exhaustive check, an ordinary test that goes through every
+  shard, for the bitset, as Kani runs out of memory on its 1024 words.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Derive the shard of every name of up to six ASCII characters, the
+      level of every two characters, and the shard of every pair of levels.
+    \item For each of the 65,536 shards, mark it present in a bitset where
+      none is, and count the bits set.
+  \end{enumerate}
+
+  \textbf{Expected result:} Every name and level gives a shard or level in
+  range, or none, without a panic; every pair of levels gives a shard in
+  range; each shard marked reads present, with one bit set in all.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.LAYOUT.NAMES-01}{Implement the Kani harness that
+  derives the shard of every short name, and the exhaustive check that marks
+  each shard in a bitset where none is.}
+
+  \verify{SDS-LAYOUT.SHARDING-01}
+  \verify{FDS-LAYOUT.STARTUP-01}
+\end{requirement}
+
+\begin{requirement}{TC-STORAGE.UNSAFE-01}[draft][verify]{Unsafe code for every result}
+
+  \localreqdiagram*{tcstorageunsafe01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} The \texttt{unsafe} code is sound for every result
+  the kernel may give: a read into a buffer's spare capacity claims exactly
+  the bytes the kernel wrote, and a slot of the \texttt{io\_uring} ring keeps
+  its buffer and file until the kernel has completed its operation, frees
+  them once its future is gone too, and gives each future its own result,
+  once.
+
+  \textbf{Setup:} A Kani harness on the reads of \texttt{crate::nowait},
+  whose system calls are stood in for by the kernel's contract: each writes
+  any number of the bytes asked for and returns it, or fails and sets
+  \texttt{errno}. An exhaustive check, an ordinary test, on the ring's table
+  of operations in flight, as Kani runs out of memory on it: the table is
+  used under its mutex, so its events come one at a time.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Fill a buffer that holds up to two bytes to up to four, waiting for
+      the device and from the page cache only, through every result of the
+      reads, one of them an interruption.
+    \item Go through every order of two operations being submitted,
+      completed by the kernel once, polled up to twice and dropped, on one
+      table, and check the table after each event.
+  \end{enumerate}
+
+  \textbf{Expected result:} The buffer claims exactly the bytes written,
+  never past the end of the fill, and holds them all when the fill
+  succeeds; in every order, no slot drops what it keeps before the kernel
+  has completed its operation, each slot drops it once the future is gone
+  too, and each future takes the result the kernel gave its own operation,
+  once.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.STORAGE.UNSAFE-01}{Implement the Kani harness
+  that fills a buffer through every result of the reads, and the exhaustive
+  check of every order of two ring operations.}
+
+  \verify{FDS-STORAGE.PAGECACHE-01}
+  \verify{FDS-STORAGE.IOURING-01}
 \end{requirement}

@@ -1,6 +1,6 @@
 # The record of the properties the formal checks establish
 # (HLR-VERIFICATION.FORMAL-01, ADR-VERIFICATION.FORMAL-01), in the layout
-# SDS-VERIFICATION.LAYOUT-01 specifies. `cargo xtask verify` checks it
+# SDS-VERIFICATION.LAYOUT-02 specifies. `cargo xtask verify` checks it
 # against the repository (TC-VERIFICATION.RECORD-01).
 #
 # Three kinds of entry:
@@ -9,7 +9,8 @@
 #   test_case     the test case the check implements, which names it
 #   property      what it establishes, in one sentence
 #   requirements  the requirements the property is of
-#   checker       kani or loom
+#   checker       kani, loom, or exhaustive: an ordinary test that goes
+#                 through every case within its bounds
 #   harness       the check's function, named tc_<test case>_<what>
 #   bounds        what the check covers: its inputs, threads or states
 #   runs          change (each proposed change) or daily
@@ -82,49 +83,50 @@ runs = "change"
 assumes = ["crc32c::crc32c and crc32c::crc32c_append are stubbed by another function of the same bytes; the property holds for any"]
 duration = "20.4 s on a change (local, 2026-11-24)"
 
-[[planned]]
-property = "A record is accepted only when every read-time check passes, and malformed bytes never make the reader panic."
-requirements = ["SDS-LAYOUT.OBJECTFILE-03"]
-checker = "kani"
-phase = 1
-
-[[planned]]
-property = "An object's path depends only on its key's combined hash and tag, stays inside the cache directory, and ends in the 32 hexadecimal characters of its name."
+[[check]]
+test_case = "TC-LAYOUT.NAMES-01"
+property = "Any name has a shard in range or none, without a panic, as do the two characters of a level; a shard's index from its levels is in range."
 requirements = ["SDS-LAYOUT.SHARDING-01"]
 checker = "kani"
-phase = 1
+harness = "tc_layout_names_01_any_name_has_a_shard_in_range_or_none"
+bounds = "every name of up to six ASCII characters, of which the first four choose the shard; every two characters; every pair of levels"
+runs = "change"
+duration = "13.8 s on a change (local, 2026-11-26)"
 
-[[planned]]
-property = "Every index the shard-directory bitset computes is in range."
+[[check]]
+test_case = "TC-LAYOUT.NAMES-01"
+property = "Marking any shard present marks that shard and no other, its bit within the bitset."
 requirements = ["FDS-LAYOUT.STARTUP-01"]
-checker = "kani"
-phase = 1
+checker = "exhaustive"
+harness = "tc_layout_names_01_every_shard_marks_its_own_bit"
+bounds = "each of the 65,536 shards, in a bitset where none is marked"
+runs = "change"
+duration = "0.3 s on a change (local, 2026-11-26)"
 
-[[planned]]
-property = "For every stored deadline and every instant, the internal-metadata segment an expiry writes is no longer than the one it replaces, through the MessagePack encoder of pingora-cache itself."
-requirements = ["FDS-STORAGE.EXPIRE-01"]
-checker = "kani"
-phase = 1
+# --- Unsafe code: Kani with the system calls stubbed, and an exhaustive ---
+# --- check of the ring's table (phase 1) --------------------------------
 
-[[planned]]
-property = "Parsing a writer lease's name gives back the identity it was formatted from."
-requirements = ["ADR-STORAGE.WRITERID-01"]
-checker = "kani"
-phase = 1
-
-# --- Unsafe code: Kani, the system calls stubbed (phase 1) ---------------
-
-[[planned]]
-property = "For every result preadv2 or pread may return, the buffer's new length covers only bytes the call wrote."
+[[check]]
+test_case = "TC-STORAGE.UNSAFE-01"
+property = "Whatever the reads into a buffer's spare capacity return, the buffer claims exactly the bytes the kernel wrote, never past where the fill stops, and holds them all when the fill succeeds."
 requirements = ["FDS-STORAGE.PAGECACHE-01"]
 checker = "kani"
-phase = 1
+harness = "tc_storage_unsafe_01_a_fill_claims_only_what_the_kernel_wrote"
+bounds = "a buffer holding up to 2 bytes, filled up to 4; every result of the reads, interrupted once; loops unwound 8 times"
+runs = "change"
+assumes = ["pread_blocking and pread_nowait are stubbed by the kernel's contract: they write any number of the bytes asked for and return it, or fail with -1 and set errno", "not_supported is stubbed without the message it formats"]
+duration = "2 min 14 s on a change (local, 2026-11-26)"
 
-[[planned]]
-property = "A buffer submitted to the io_uring ring, and the file it writes to, stay alive until the kernel's completion for it is collected, for any sequence of submissions, completions and drops."
+[[check]]
+test_case = "TC-STORAGE.UNSAFE-01"
+property = "A slot of the io_uring ring keeps its buffer and file until the kernel has completed its operation, frees them once the future is gone too, and each future takes its own operation's result, once, whatever order the completions arrive in."
 requirements = ["FDS-STORAGE.IOURING-01"]
-checker = "kani"
-phase = 1
+checker = "exhaustive"
+harness = "tc_storage_unsafe_01_every_order_keeps_buffers_until_completed"
+bounds = "every order of two operations' submission, completion by the kernel, up to two polls, and drop: 10,735 orders"
+runs = "change"
+assumes = ["the kernel completes each operation once, as io_uring does", "the table is used under its mutex, so its events are serial"]
+duration = "0.2 s on a change (local, 2026-11-26)"
 
 # --- Concurrency: loom and shuttle (phase 1) -----------------------------
 
@@ -183,12 +185,6 @@ duration = "0.3 s on a change, 0.5 s daily (local, 2026-11-24)"
 [[planned]]
 property = "A purge that invalidates a key ends the key's in-flight stores, the readers waiting on them wake, and a store's entry leaves the registry when the store completes or aborts."
 requirements = ["FDS-STORAGE.PARTIAL-02", "FRE-COMPLIANCE.PURGE-01"]
-checker = "shuttle"
-phase = 1
-
-[[planned]]
-property = "The store waiting on each write the ring takes learns that write's result exactly once, whatever order the completions arrive in."
-requirements = ["FDS-STORAGE.IOURING-01"]
 checker = "shuttle"
 phase = 1
 
@@ -286,3 +282,19 @@ reason = "HLR-PERSISTENCE.CRASHSAFE-02 assumes it, as the storage layer's respon
 [[unchecked]]
 property = "The kernel's side of io_uring."
 reason = "The kernel completes the ring's writes; the checks stub it with every completion it may give."
+
+[[unchecked]]
+property = "A record is accepted only when every read-time check passes, and malformed bytes never make the reader panic."
+reason = "Kani runs out of memory on the reader's buffers, whose lengths it reads from the header it checks; the tests check each rejection of SDS-LAYOUT.OBJECTFILE-03 one by one."
+
+[[unchecked]]
+property = "An object's name is 32 lowercase hexadecimal digits, and its path stays inside the cache directory."
+reason = "hex::encode builds the name a character at a time, beyond what Kani finishes; the tests check the names' shape, and TC-LAYOUT.NAMES-01 checks every name's shard."
+
+[[unchecked]]
+property = "Parsing a writer lease's name gives back the identity it was formatted from."
+reason = "The name is formatted through std::fmt, which Kani cannot follow within the memory a run has; parsing refuses any name that does not format back to itself, and the tests check the round trip."
+
+[[unchecked]]
+property = "For every stored deadline and every instant, the internal-metadata segment an expiry writes is no longer than the one it replaces."
+reason = "CacheMeta::serialize also compresses the header segment with zstd, C code Kani cannot follow, and the internal segment's own encoder is private to pingora-cache; the tests cover every width the encoding gives a deadline (FDS-STORAGE.EXPIRE-01)."

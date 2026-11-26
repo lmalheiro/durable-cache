@@ -34,6 +34,21 @@ jobs:
         # check's harness exists once, named after its test case.
         run: nix develop -c cargo xtask verify
 
+  exhaustive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+
+      - name: The exhaustive checks (TC-VERIFICATION.RUNS-01)
+        # Ordinary tests that go through every case within their bounds,
+        # where Kani cannot finish; each result and duration goes to the
+        # job's summary.
+        run: nix develop -c cargo xtask verify --checker exhaustive
+
   loom:
     runs-on: ubuntu-latest
     steps:

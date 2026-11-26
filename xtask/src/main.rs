@@ -903,7 +903,7 @@ fn header_comment(path: &str) -> Option<&'static str> {
 /// Whom a file's copyright line names: the durable-cache authors, but in a
 /// Lean library under `verification/libs/<name>/`, that library's own
 /// authors, as the library is to be published on its own
-/// (ADR-VERIFICATION.MODELS-01, SDS-VERIFICATION.LAYOUT-01).
+/// (ADR-VERIFICATION.MODELS-01, SDS-VERIFICATION.LAYOUT-02).
 fn copyright_holder(path: &str) -> String {
     match path
         .strip_prefix("verification/libs/")

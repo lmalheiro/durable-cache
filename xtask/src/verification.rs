@@ -24,7 +24,7 @@ const RECORD: &str = "verification/record.toml";
 /// Where the checks' harnesses are, from the workspace root.
 const HARNESS_ROOT: &str = "durable-cache/src";
 
-// IMP-VERIFICATION.LAYOUT-01: satisfy SDS-VERIFICATION.LAYOUT-01
+// IMP-VERIFICATION.LAYOUT-02: satisfy SDS-VERIFICATION.LAYOUT-02
 
 /// The record, `verification/record.toml`, whose comments describe each
 /// field.
@@ -61,6 +61,9 @@ struct Check {
 pub(crate) enum Checker {
     Kani,
     Loom,
+    /// An ordinary test that goes through every case within its bounds, in
+    /// an `exhaustive_checks` module, for what Kani cannot follow.
+    Exhaustive,
 }
 
 impl fmt::Display for Checker {
@@ -68,6 +71,7 @@ impl fmt::Display for Checker {
         f.write_str(match self {
             Self::Kani => "Kani",
             Self::Loom => "loom",
+            Self::Exhaustive => "exhaustive",
         })
     }
 }
@@ -117,19 +121,20 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
             problems.join("\n  ")
         );
     }
-    let (mut kani, mut loom, mut daily) = (0, 0, 0);
+    let (mut kani, mut loom, mut exhaustive, mut daily) = (0, 0, 0, 0);
     for check in &record.check {
         match check.checker {
             Checker::Kani => kani += 1,
             Checker::Loom => loom += 1,
+            Checker::Exhaustive => exhaustive += 1,
         }
         if matches!(check.runs, Runs::Daily) {
             daily += 1;
         }
     }
     println!(
-        "verify: {RECORD} holds: {} checked ({kani} by Kani, {loom} by loom; {daily} of them \
-         daily), {} planned, {} unchecked",
+        "verify: {RECORD} holds: {} checked ({kani} by Kani, {loom} by loom, {exhaustive} \
+         exhaustively; {daily} of them daily), {} planned, {} unchecked",
         record.check.len(),
         record.planned.len(),
         record.unchecked.len()
@@ -155,7 +160,8 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
     let record = verify(root)?;
     let found = match checker {
         Checker::Kani => kani_harnesses(root)?,
-        Checker::Loom => loom_tests(root)?,
+        Checker::Loom => module_tests(root, true, "loom_checks")?,
+        Checker::Exhaustive => module_tests(root, false, "exhaustive_checks")?,
     };
     let recorded: Vec<&Check> = record
         .check
@@ -177,6 +183,7 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
         let mut command = match checker {
             Checker::Kani => kani_command(root, path),
             Checker::Loom => loom_command(root, path, daily),
+            Checker::Exhaustive => crate_tests(root, false, &["--exact", path]),
         };
         let start = Instant::now();
         let status = command
@@ -314,38 +321,42 @@ fn kani_command(root: &Path, path: &str) -> Command {
     command
 }
 
-/// `cargo test` of the crate's library, built with loom's cfg, and the
-/// arguments that follow its `--`.
-fn loom_cargo(root: &Path, test_args: &[&str]) -> Command {
-    let rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+/// `cargo test` of the crate's library, in a release build, with loom's cfg
+/// if `loom`, and the arguments that follow its `--`.
+fn crate_tests(root: &Path, loom: bool, test_args: &[&str]) -> Command {
     let mut command = Command::new("cargo");
     command
         .args(["test", "-p", "durable-cache", "--lib", "--release", "--"])
         .args(test_args)
-        .env(
+        .current_dir(root);
+    if loom {
+        let rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+        command.env(
             "RUSTFLAGS",
             format!("{rustflags} --cfg durable_cache_loom").trim_start(),
-        )
-        .current_dir(root);
+        );
+    }
     command
 }
 
-/// The loom checks of the crate, each name mapped to its path, as the test
-/// binary lists them: the tests of its `loom_checks` modules.
-fn loom_tests(root: &Path) -> Result<BTreeMap<String, String>> {
-    let output = loom_cargo(root, &["--list"])
+/// The checks of the crate's tests in the modules named `module`, each name
+/// mapped to its path, as the test binary lists them, built with loom's cfg
+/// if `loom`.
+fn module_tests(root: &Path, loom: bool, module: &str) -> Result<BTreeMap<String, String>> {
+    let output = crate_tests(root, loom, &["--list"])
         .output()
-        .context("failed to list the loom checks")?;
+        .with_context(|| format!("failed to list the tests of the {module} modules"))?;
     if !output.status.success() {
         bail!(
-            "listing the loom checks failed:\n{}",
+            "listing the tests of the {module} modules failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    let segment = format!("::{module}::");
     Ok(String::from_utf8(output.stdout)?
         .lines()
         .filter_map(|line| line.strip_suffix(": test"))
-        .filter(|path| path.contains("::loom_checks::"))
+        .filter(|path| path.contains(&segment))
         .map(|path| {
             let name = path.rsplit("::").next().unwrap_or(path);
             (name.to_owned(), path.to_owned())
@@ -360,7 +371,7 @@ fn loom_command(root: &Path, path: &str, daily: bool) -> Command {
     } else {
         LOOM_PREEMPTIONS.0
     };
-    let mut command = loom_cargo(root, &["--exact", path]);
+    let mut command = crate_tests(root, true, &["--exact", path]);
     command.env("LOOM_MAX_PREEMPTIONS", bound.to_string());
     command
 }

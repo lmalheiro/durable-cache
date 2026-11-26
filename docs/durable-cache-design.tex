@@ -991,7 +991,7 @@
 % ADR-VERIFICATION.MODELS-01).
 % ---------------------------------------------------------------------
 
-\begin{requirement}{SDS-VERIFICATION.LAYOUT-01}[draft][structuralRequirement]{Where the checks live}
+\begin{requirement}{SDS-VERIFICATION.LAYOUT-02}[draft][structuralRequirement]{Where the checks live}
 
   \localreqdiagram*{sdsverifylayout01}{\reqid}{\reqdesc}
 
@@ -1024,7 +1024,11 @@
     \item a loom test is in a \texttt{loom\_checks} module under
       \texttt{cfg(all(test, durable\_cache\_loom))}, built with
       \texttt{-{}-cfg durable\_cache\_loom}, which also gives the checked
-      module loom's synchronisation types, through \texttt{crate::sync}.
+      module loom's synchronisation types, through \texttt{crate::sync};
+    \item an exhaustive check, an ordinary test that goes through every case
+      within its bounds, where the cases are few enough to enumerate and Kani
+      cannot finish, is in an \texttt{exhaustive\_checks} module under
+      \texttt{cfg(test)}.
   \end{itemize}
   The name \texttt{durable\_cache\_loom} is the crate's own rather than the
   customary \texttt{loom}: a \texttt{-{}-cfg} reaches every crate a build
@@ -1051,7 +1055,7 @@
   only what the repository holds: test cases and requirements the
   specification declares, and for each check one function, named after its
   test case.}
-  \reqexpect{satisfy}{IMP-VERIFICATION.LAYOUT-01}{Implement the record, and
+  \reqexpect{satisfy}{IMP-VERIFICATION.LAYOUT-02}{Implement the record, and
   its check against the specification and the crate's sources.}
 
   \refine{ADR-VERIFICATION.FORMAL-01}
@@ -1064,7 +1068,7 @@
 
   WHEN a change is proposed, and once a day, the project's continuous
   integration shall run each check the record
-  (\reqref{SDS-VERIFICATION.LAYOUT-01}) has due then, and report each one's
+  (\reqref{SDS-VERIFICATION.LAYOUT-02}) has due then, and report each one's
   result and the duration of its run.
 
   \textbf{When.} A check the record marks \emph{change} runs on each pull
