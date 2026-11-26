@@ -2648,3 +2648,57 @@ stock run is the reference: a test that fails on both runs is a limitation of
   \verify{FDS-STORAGE.PARTIAL-02}
   \verify{FRE-COMPLIANCE.PURGE-01}
 \end{requirement}
+
+\begin{requirement}{TC-STORAGE.PROTOCOL-01}[draft][verify]{Protocol model keeps its invariants}
+
+  \localreqdiagram*{tcstorageprotocol01}{\reqid}{\reqdesc}
+
+  \textbf{Objective:} In a model of what the backend does to its files with
+  stores synchronised, and of what a host crash may leave of it, every
+  reachable state keeps four invariants: no name refers to data that never
+  reached stable storage; a lookup serves only a version stored, whole; no
+  crash undoes an acknowledged invalidation; and no store an invalidation
+  ended is ever published.
+
+  \textbf{Setup:} The protocol model, in Veil, of the project's Lean checks.
+  Its state: each key's canonical name, and the files it may refer to after
+  a crash; the stores' temporaries, in flight or ended; which data reached
+  stable storage; and each record's version, its pending update or
+  withdrawal, and whether a crash tore it. Its actions: a store opened, its
+  data synchronised, published under the key's lock, or ended; an
+  invalidation's unlink under the lock, and its answer after synchronising
+  the directory; an eviction; a metadata update and a withdrawal in place;
+  the file system writing a directory or a record back; and a host crash,
+  which keeps, for each name, one of the files it may refer to, loses the
+  data never synchronised, and leaves each record with a pending change as
+  it was, as changed, or torn. Lean checks each of the SMT solver's proofs.
+
+  \textbf{Steps:}
+  \begin{enumerate}
+    \item Prove the four invariants, with the clauses that strengthen them,
+      inductive for any number of keys, files and versions.
+    \item Find executions in which a store is served, an unsynchronised
+      eviction a crash undoes brings its record back, a crash tears an
+      update, and a crash loses a temporary.
+    \item Explore every reachable state of an instance with one key, two
+      files and two versions.
+    \item List the axioms the proofs rest on.
+  \end{enumerate}
+
+  \textbf{Expected result:} Every clause is proved inductive; each
+  execution is found; no explored state violates a clause; and the proofs
+  rest on no axiom outside the reviewed list.
+
+  \reqdiaglink{overview}{\textit{View the domain overview.}}
+
+  \reqexpect{satisfy}{IMP-TC.STORAGE.PROTOCOL-01}{Implement the TC's model,
+  its invariants and their proofs, the executions it must allow, and its
+  exploration.}
+
+  \verify{FDS-STORAGE.PUBLISH-03}
+  \verify{HLR-PERSISTENCE.CRASHSAFE-02}
+  \verify{FDS-STORAGE.METAUPDATE-01}
+  \verify{FRE-COMPLIANCE.PURGEDURABLE-01}
+  \verify{FRE-COMPLIANCE.PURGE-01}
+  \verify{FDS-STORAGE.PURGE-01}
+\end{requirement}
