@@ -19,7 +19,7 @@ which fails on an entry whose test case, requirements or harness the
 repository does not have (TC-VERIFICATION.RECORD-01), and run one checker's
 checks with
 
-    cargo xtask verify --checker kani|loom|exhaustive [--daily]
+    cargo xtask verify --checker kani|loom|exhaustive|log-writes [--daily]
 
 which also reports how long each took (TC-VERIFICATION.RUNS-01).
 
@@ -35,6 +35,14 @@ which also reports how long each took (TC-VERIFICATION.RUNS-01).
 - **Exhaustive checks**, ordinary tests that go through every case within
   their bounds where the cases are few enough and Kani cannot finish, sit
   in an `exhaustive_checks` module of the module they check.
+- **The `log-writes` replay** of TC-PERSISTENCE.CRASHSAFE-03 is
+  `cargo xtask crash-replay --fs <fs> --mode <mode>`
+  (`xtask/src/crash_replay.rs`). It runs the two ignored tests at the end of
+  `durable-cache/tests/persistence_crashsafe.rs`: the scenario on a file
+  system over a logged device, then the check on each state the replay of
+  the log reaches. It needs Linux, the kernel's `dm-log-writes` target and
+  `sudo` without a password; `--checker log-writes` makes the five runs the
+  test case asks for.
 - **Lean code** sits here, in a Lake project of its own for each Lean
   version the checks need. Each Lean library a check uses is a package of its
   own under `libs/<name>/`, named when it is created, and written to be
