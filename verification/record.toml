@@ -218,7 +218,7 @@ harness = "tc_persistence_crashsafe_02_replay_check"
 bounds = "the scenario of the test case's steps 1 and 2: eight objects of 1 byte to 300,000, two purges, an in-place update, a withdrawal, an unfinished store; ext4, ext4 with data=writeback and no delayed allocation, and XFS with stores synchronised, ext4 unsynchronised with the discard on and off; every state after mkfs, after each write and after each 4 KiB block of a longer one, the flush and FUA points among them"
 runs = "daily"
 assumes = ["the kernel's log-writes target logs each write with its flush and FUA flags, in the order the device completes them", "a crash leaves the writes the device completed, in the order it completed them, the last perhaps torn at a block; the reorderings a volatile write cache may make between two flushes are the file-system library's to explore (phase 3)"]
-duration = "6 min 54 s daily (GitHub runner, 2026-11-26)"
+duration = "5 min 37 s daily (GitHub runner, 2026-11-26)"
 
 [[planned]]
 property = "Synchronised stores: a published name never refers to data that is not on stable storage."

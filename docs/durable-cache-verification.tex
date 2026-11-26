@@ -359,8 +359,9 @@ reaches. What it found:
     torn after a record's header serves the header over a body never
     written, and the check fails; with the directory's \texttt{fsync} after
     a purge taken out, a purged object is served on each file system. With
-    the code as it is, the five runs pass: 4,082 states, about 800 each, in
-    7~minutes.
+    the code as it is, the five runs pass: some 800 states each, 4,100 in
+    all, in 6 to 7~minutes, the counts varying a little from run to run with
+    the kernel's timing.
   \item The states are those of the writes the device completed, in the
     order it completed them. A device with a volatile write cache may also
     lose some writes made before a flush and keep later ones; listing those
