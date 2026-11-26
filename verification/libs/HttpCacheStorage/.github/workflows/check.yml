@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 The HttpCacheStorage authors
+# SPDX-License-Identifier: Apache-2.0
+
+# The library's own check, for its own repository: the proofs, the tests,
+# and MemCache's traces against the contract.
+
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lean, through elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: scripts/check.sh

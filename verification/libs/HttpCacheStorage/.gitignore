@@ -1,0 +1,3 @@
+# Lake's build directory, and the driver's.
+.lake/
+driver/target/
