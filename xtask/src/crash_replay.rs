@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `cargo xtask crash-replay`: the setup of TC-PERSISTENCE.CRASHSAFE-02. A
+//! `cargo xtask crash-replay`: the setup of TC-PERSISTENCE.CRASHSAFE-03. A
 //! file system on a device-mapper `log-writes` device, which logs every
 //! write the file system sends the device, with its flush and FUA flags; the
 //! crate's replay scenario on it, which marks the log after each operation
@@ -96,9 +96,9 @@ pub(crate) const MATRIX: [(Fs, Mode); 5] = [
 
 /// The scenario and the check, in the crate's test binary.
 const SCENARIO: &str =
-    "integration_tests::persistence_crashsafe::tc_persistence_crashsafe_02_replay_scenario";
+    "integration_tests::persistence_crashsafe::tc_persistence_crashsafe_03_replay_scenario";
 const CHECK: &str =
-    "integration_tests::persistence_crashsafe::tc_persistence_crashsafe_02_replay_check";
+    "integration_tests::persistence_crashsafe::tc_persistence_crashsafe_03_replay_check";
 
 /// The log's format: its magic number and version, and the flags of an
 /// entry.
@@ -233,7 +233,7 @@ pub(crate) fn crash_replay(root: &Path, target: &Path, fs: Fs, mode: Mode) -> Re
     })?;
     println!(
         "crash-replay {} {}: {replayed} log entries, {states} states checked \
-         ({points} at flush and FUA points), all as TC-PERSISTENCE.CRASHSAFE-02 expects",
+         ({points} at flush and FUA points), all as TC-PERSISTENCE.CRASHSAFE-03 expects",
         fs.name(),
         mode.name()
     );
@@ -574,7 +574,7 @@ mod tests {
     /// time, handing on the torn state after the first; reads each mark's
     /// name; and hands on each entry's flags, in order.
     #[test]
-    fn tc_persistence_crashsafe_02_the_replay_reads_the_log_format() {
+    fn tc_persistence_crashsafe_03_the_replay_reads_the_log_format() {
         for sector_size in [512u64, 4096] {
             let dir = tempfile::tempdir().expect("a directory");
             let log_path = dir.path().join("log");

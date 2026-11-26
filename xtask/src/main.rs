@@ -95,7 +95,7 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
-    /// The log-writes replay of TC-PERSISTENCE.CRASHSAFE-02, on Linux, with
+    /// The log-writes replay of TC-PERSISTENCE.CRASHSAFE-03, on Linux, with
     /// `sudo` that asks for no password: run the crate's replay scenario on
     /// a file system over a device-mapper `log-writes` device, then replay
     /// the log to each flush and FUA point and run the crate's replay check

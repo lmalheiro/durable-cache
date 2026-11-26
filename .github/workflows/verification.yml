@@ -96,7 +96,7 @@ jobs:
             ${{ github.event_name == 'schedule' && '--daily' || '' }}
 
   log-writes:
-    # The log-writes replay of TC-PERSISTENCE.CRASHSAFE-02, as root: loop
+    # The log-writes replay of TC-PERSISTENCE.CRASHSAFE-03, as root: loop
     # devices, the device-mapper log-writes target, mkfs and mount. Daily,
     # and by hand.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -108,7 +108,7 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: Swatinem/rust-cache@v2
 
-      - name: The log-writes replays (TC-PERSISTENCE.CRASHSAFE-02)
+      - name: The log-writes replays (TC-PERSISTENCE.CRASHSAFE-03)
         # ext4, ext4 with data=writeback and XFS with stores synchronised,
         # ext4 unsynchronised with the discard on and off; the state after
         # each write, and after each block of a longer one, checked.

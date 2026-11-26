@@ -257,7 +257,7 @@ impl ChangeLocks {
         // except the in-place metadata update: it writes the metadata
         // region, then the header, and a stop between the two leaves a
         // record whose metadata checksum fails, which reads as a miss
-        // (ADR-PERSISTENCE.DURABILITY-02, TC-PERSISTENCE.CRASHSAFE-02). The
+        // (ADR-PERSISTENCE.DURABILITY-02, TC-PERSISTENCE.CRASHSAFE-03). The
         // restart scan's admission checks change no file.
         //
         // The first taker after the panic logs it and clears the poison, so

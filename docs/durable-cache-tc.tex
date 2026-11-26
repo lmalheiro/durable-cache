@@ -446,7 +446,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
       stored.
     \item Restart the process, once cleanly and once after killing it, and
       look the primary and each variant up again. (Purge durability across a
-      host crash is exercised by \reqref{TC-PERSISTENCE.CRASHSAFE-02}.)
+      host crash is exercised by \reqref{TC-PERSISTENCE.CRASHSAFE-03}.)
     \item Repeat the purge while a reader is mid-stream on one variant and
       while a same-key store is in flight; let both run to completion.
     \item Restart the process once more, letting Eviction Recovery's scan run
@@ -511,7 +511,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
   orderly-aborted store's temporary is gone by the time its handler is dropped;
   the crash-orphaned temporary is never served or promoted, and is gone once
   the restarted process's restart-time scan has run. States a real host crash
-  can leave behind are exercised by \reqref{TC-PERSISTENCE.CRASHSAFE-02}.
+  can leave behind are exercised by \reqref{TC-PERSISTENCE.CRASHSAFE-03}.
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
@@ -569,7 +569,7 @@ stock run is the reference: a test that fails on both runs is a limitation of
 % ---------------------------------------------------------------------
 % Persistence.
 % ---------------------------------------------------------------------
-\begin{requirement}{TC-PERSISTENCE.CRASHSAFE-02}[draft][verify]{Host crash serves no bad content}
+\begin{requirement}{TC-PERSISTENCE.CRASHSAFE-03}[draft][verify]{Host crash serves no bad content}
 
   \localreqdiagram*{tc27}{\reqid}{\reqdesc}
 
@@ -578,14 +578,15 @@ stock run is the reference: a test that fails on both runs is a limitation of
   was stored and no object whose purge it had acknowledged; objects that did
   not survive are misses.
 
-  \textbf{Setup:} The cache directory on an ext4 file system whose block device
-  is a device-mapper \texttt{log-writes} target, which logs every write with its
+  \textbf{Setup:} The cache directory on a file system whose block device is a
+  device-mapper \texttt{log-writes} target, which logs every write with its
   flush and FUA ordering so that the device can be replayed to any point a power
   failure could have left it;\footnote{\href{https://docs.kernel.org/admin-guide/device-mapper/log-writes.html}{Linux
   kernel documentation: ``dm-log-writes''}, with its replay tool at
-  \url{https://github.com/josefbacik/log-writes}.} the backend driven directly
-  through the \texttt{Storage} interface, with the log marked after each
-  operation the backend acknowledges.
+  \url{https://github.com/josefbacik/log-writes}.} the file system ext4 in its
+  default \texttt{data=ordered} mode, except where a step names another; the
+  backend driven directly through the \texttt{Storage} interface, with the log
+  marked after each operation the backend acknowledges.
 
   \textbf{Steps:}
   \begin{enumerate}
@@ -594,10 +595,16 @@ stock run is the reference: a test that fails on both runs is a limitation of
       unfinished.
     \item Purge a subset of the stored objects, and apply metadata updates to
       another subset, both in place and withdrawing the record.
-    \item Replay the log to each flush and FUA point in turn. For each replayed
-      state: mount the file system (replaying its journal), construct the
-      backend and let its restart procedure complete, look up every key, and
-      read every hit's body in full.
+    \item Replay the log a write at a time, taking the state after each write
+      and, since a power failure may leave a write torn, after each 4~KiB
+      block of a longer one; the flush and FUA points are among these
+      states. For each replayed state: mount the file system (replaying its
+      journal), construct the backend and let its restart procedure
+      complete, look up every key, and read every hit's body in full.
+    \item Repeat steps 1 to 3 on ext4 mounted with \texttt{data=writeback}
+      and without delayed allocation (\texttt{nodelalloc}), which records a
+      file's length with its journal's next commit whether the file's data
+      is written or not, and on XFS.
     \item Repeat steps 1 to 3 with stores unsynchronised
       (\reqref{ADR-PERSISTENCE.UNSYNCED-01}): with the discard on,
       constructing the backend in each replayed state under a boot identity
@@ -614,11 +621,11 @@ stock run is the reference: a test that fails on both runs is a limitation of
 
   \reqdiaglink{overview}{\textit{View the domain overview.}}
 
-  \reqexpect{satisfy}{IMP-TC.PERSISTENCE.CRASHSAFE-02}{Implement the TC's
+  \reqexpect{satisfy}{IMP-TC.PERSISTENCE.CRASHSAFE-03}{Implement the TC's
   procedure: store, purge and update objects on a device whose writes are
-  logged, replay the log to each flush and FUA point, restart the cache on each
-  replayed state, and check every lookup and body, with stores synchronised and
-  unsynchronised.}
+  logged, replay the log a write and a block at a time, restart the cache on
+  each replayed state, and check every lookup and body, with stores
+  synchronised on each file system the steps name and unsynchronised on ext4.}
 
   \verify{HLR-PERSISTENCE.CRASHSAFE-02}
   \verify{FRE-COMPLIANCE.INCOMPLETE-02}

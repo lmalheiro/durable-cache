@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 The durable-cache authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! TC-PERSISTENCE.CRASHSAFE-02 — Host crash serves no bad content.
+//! TC-PERSISTENCE.CRASHSAFE-03 — Host crash serves no bad content.
 //!
 //! In every state a host crash or power loss could leave on disk, the
 //! restarted cache serves no object whose content differs from what was
 //! stored and no object whose purge it had acknowledged; objects that did
 //! not survive are misses (HLR-PERSISTENCE.CRASHSAFE-02).
 //!
-//! The test case's setup replays a device-mapper `log-writes` device to
-//! every flush and FUA point. That needs root and scratch block devices:
+//! The test case's setup replays a device-mapper `log-writes` device a write
+//! at a time, and a block at a time within a longer write, as a power
+//! failure may leave one torn. That needs root and scratch block devices:
 //! `cargo xtask crash-replay` does it, running the two ignored tests at the
 //! end of this file, the scenario on the logged device and the check on
 //! each replayed state. The other tests here cover the same contract
@@ -38,14 +39,14 @@ use pingora_cache::storage::{PurgeOutcome, Storage};
 
 use super::support;
 
-// IMP-TC.PERSISTENCE.CRASHSAFE-02: satisfy TC-PERSISTENCE.CRASHSAFE-02
+// IMP-TC.PERSISTENCE.CRASHSAFE-03: satisfy TC-PERSISTENCE.CRASHSAFE-03
 
 /// A torn in-place metadata update: the metadata region holds the new bytes
 /// while the header still commits the old ones, or the other way round.
 /// Either way a reader sees one complete version or a miss, never a mixture
 /// of the two.
 #[tokio::test]
-async fn tc_persistence_crashsafe_02_a_torn_metadata_update_is_never_a_mixture() {
+async fn tc_persistence_crashsafe_03_a_torn_metadata_update_is_never_a_mixture() {
     let (cache, tmp) = support::leaked_cache();
     let key = support::key("/crashsafe-torn-meta");
     let first = support::meta_with_header_filler(16);
@@ -107,7 +108,7 @@ async fn tc_persistence_crashsafe_02_a_torn_metadata_update_is_never_a_mixture()
 /// the version without the checksum, or the checksum without the version. A
 /// reader then finds the record as it was, or a miss, never a mixture.
 #[tokio::test]
-async fn tc_persistence_crashsafe_02_a_torn_withdrawal_is_never_a_mixture() {
+async fn tc_persistence_crashsafe_03_a_torn_withdrawal_is_never_a_mixture() {
     use durable_cache::format;
 
     let (cache, tmp) = support::leaked_cache();
@@ -175,7 +176,7 @@ async fn tc_persistence_crashsafe_02_a_torn_withdrawal_is_never_a_mixture() {
 /// An unfinished store's temporary is never served or promoted, and the
 /// restart scan reclaims it once its writer is gone.
 #[tokio::test]
-async fn tc_persistence_crashsafe_02_an_unfinished_store_is_never_served() {
+async fn tc_persistence_crashsafe_03_an_unfinished_store_is_never_served() {
     let (cache, tmp) = support::leaked_cache();
     let key = support::key("/crashsafe-unfinished");
     let meta = support::meta();
@@ -211,7 +212,7 @@ async fn tc_persistence_crashsafe_02_an_unfinished_store_is_never_served() {
 /// the object could return are exactly the ones in which the purge was never
 /// acknowledged.
 #[tokio::test]
-async fn tc_persistence_crashsafe_02_an_acknowledged_purge_never_returns() {
+async fn tc_persistence_crashsafe_03_an_acknowledged_purge_never_returns() {
     let (cache, tmp) = support::leaked_cache();
     let key = support::key("/crashsafe-purged");
     support::store(cache, &key, &support::meta(), b"purged body").await;
@@ -235,7 +236,7 @@ async fn tc_persistence_crashsafe_02_an_acknowledged_purge_never_returns() {
 /// Every object that did survive is served exactly as stored: the states
 /// above never damage a bystander.
 #[tokio::test]
-async fn tc_persistence_crashsafe_02_surviving_objects_are_served_as_stored() {
+async fn tc_persistence_crashsafe_03_surviving_objects_are_served_as_stored() {
     let (cache, tmp) = support::leaked_cache();
     let mut expected = Vec::new();
     for i in 0..8 {
@@ -271,7 +272,7 @@ async fn tc_persistence_crashsafe_02_surviving_objects_are_served_as_stored() {
 /// leaves one, is a miss, and the others are served as stored.
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn tc_persistence_crashsafe_02_unsynchronised_stores_serve_no_lost_body() {
+async fn tc_persistence_crashsafe_03_unsynchronised_stores_serve_no_lost_body() {
     use std::os::unix::fs::FileExt;
 
     use durable_cache::hooks::HookConfig;
@@ -434,7 +435,7 @@ fn replay_cache() -> &'static durable_cache::FsCache {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 #[ignore = "cargo xtask crash-replay runs it, on a log-writes device"]
-async fn tc_persistence_crashsafe_02_replay_scenario() {
+async fn tc_persistence_crashsafe_03_replay_scenario() {
     let cache = replay_cache();
     let device = replay_env(REPLAY_DEVICE);
     let mark = |name: String| {
@@ -506,7 +507,7 @@ async fn tc_persistence_crashsafe_02_replay_scenario() {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 #[ignore = "cargo xtask crash-replay runs it, on each replayed state"]
-async fn tc_persistence_crashsafe_02_replay_check() {
+async fn tc_persistence_crashsafe_03_replay_check() {
     let marks: std::collections::HashSet<String> = replay_env(REPLAY_MARKS)
         .split(',')
         .filter(|mark| !mark.is_empty())

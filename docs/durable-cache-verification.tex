@@ -31,7 +31,7 @@ Veil,\footnote{\url{https://github.com/verse-lab/veil}} and Aeneas with its
 front end Charon,\footnote{\url{https://github.com/AeneasVerif/aeneas} and
 \url{https://github.com/AeneasVerif/charon}.} beside the replay of a
 device-mapper \texttt{log-writes} device that
-\reqref{TC-PERSISTENCE.CRASHSAFE-02} already specifies.
+\reqref{TC-PERSISTENCE.CRASHSAFE-03} already specifies.
 Table~\ref{tab:verification-checkers} gives what each establishes and its
 limits, as of November 2026.
 
@@ -262,10 +262,10 @@ phase~5 commits to them.
   \item loom tests for the publication lock, the read-only gate and the
     inline slots; shuttle tests for the in-flight registry and the ring's
     completions.
-  \item The \texttt{log-writes} harness \reqref{TC-PERSISTENCE.CRASHSAFE-02}
+  \item The \texttt{log-writes} harness \reqref{TC-PERSISTENCE.CRASHSAFE-03}
     specifies, which the repository does not have yet: the test case's test
     builds, by hand, the states such a replay produces. The harness runs
-    daily in a privileged job, on ext4 as the test case says, and on XFS too.
+    daily in a privileged job, on ext4 and XFS.
     Should the kernel of the CI runners lack the device-mapper target, it
     needs a runner of the project's own, or a virtual machine.
   \item Exit: every check passes, with a test case for each property, and
@@ -335,27 +335,27 @@ the record of checked properties says, and phase~1 uses no shuttle check.
 The fourth part brings the \texttt{log-writes} harness,
 \texttt{cargo xtask crash-replay}. The kernel of GitHub's runners has the
 device-mapper target, so the harness runs there, as root, daily and by
-hand. It runs the scenario of \reqref{TC-PERSISTENCE.CRASHSAFE-02} on a file
+hand. It runs the scenario of \reqref{TC-PERSISTENCE.CRASHSAFE-03} on a file
 system over the logged device, marking the log after each operation the
 backend acknowledges; replays the log, with a replay of its own over the
 format the kernel writes; and restarts the backend on each state the replay
 reaches. What it found:
 \begin{itemize}
-  \item At the flush and FUA points the test case names, a store published
-    without its synchronisation is never served wrong: it is a miss, which
-    a host crash is allowed to cause. ext4 in its default
+  \item At the flush and FUA points alone, which the test case named until
+    this part, a store published without its synchronisation is never
+    served wrong: it is a miss, which a host crash is allowed to cause. ext4 in its default
     \texttt{data=ordered} mode and XFS write a file's data before the
     metadata that gives the file its length, and ext4 in
     \texttt{data=writeback} mode, with delayed allocation, allocates a
     file's blocks and records its length only when it writes the data back.
     With the backend's \texttt{fdatasync} taken out, every one of those
     replays passed.
-  \item The harness therefore checks every state, not only those points:
+  \item The test case therefore takes every state, not only those points:
     after each write, and after each 4~KiB block of a longer one, as a power
     failure may leave a write torn. It also mounts ext4 with
     \texttt{data=writeback} and without delayed allocation, which records a
     file's length with the next commit of its journal, whether the data is
-    written or not. There, with the \texttt{fdatasync} taken out, a write
+    written or not, and names XFS beside it. There, with the \texttt{fdatasync} taken out, a write
     torn after a record's header serves the header over a body never
     written, and the check fails; with the directory's \texttt{fsync} after
     a purge taken out, a purged object is served on each file system. With
@@ -409,7 +409,7 @@ checked properties gives the duration of each.
     system calls already uses; list the states the library allows a crash to
     leave;
     build each state in a scratch directory and restart the backend on it;
-    and check the expected result of \reqref{TC-PERSISTENCE.CRASHSAFE-02}.
+    and check the expected result of \reqref{TC-PERSISTENCE.CRASHSAFE-03}.
     Small scenarios run on each change, every scenario of the compatibility
     tests daily.
   \item The cross-check: each state a replay of the \texttt{log-writes}

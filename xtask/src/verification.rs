@@ -256,7 +256,7 @@ fn differences(
 }
 
 /// The crate's test the log-writes replay runs on each state.
-const REPLAY_CHECK: &str = "tc_persistence_crashsafe_02_replay_check";
+const REPLAY_CHECK: &str = "tc_persistence_crashsafe_03_replay_check";
 
 /// The log-writes replays, on every file system and mode of
 /// `crash_replay::MATRIX`: whether all pass. Each reports its own failure.

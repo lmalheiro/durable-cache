@@ -3936,7 +3936,7 @@
 
   \reqexpect{verify}{TC-COMPLIANCE.REVALIDATION-01}{Verify that a metadata
   update reported as applied is what a lookup returns after a process restart.}
-  \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-02}{Verify that after a host crash
+  \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-03}{Verify that after a host crash
   a freshened object returns either its updated or its superseded metadata,
   whole.}
   \reqexpect{satisfy}{FDS-STORAGE.METAUPDATE-01}{Specify how a metadata update
@@ -4244,7 +4244,7 @@
   \reqexpect{verify}{TC-COMPLIANCE.PURGE-01}{Verify that a purged key stays
   absent across a clean restart and across a restart after the process was
   killed.}
-  \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-02}{Verify that no object whose
+  \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-03}{Verify that no object whose
   purge was acknowledged is served after a host crash or power loss.}
   \reqexpect{satisfy}{FDS-STORAGE.PURGE-01}{Specify how an invalidating purge
   reports its outcome, an object removed or none found, only once the key's
@@ -4299,7 +4299,7 @@
   \reqexpect{verify}{TC-COMPLIANCE.INCOMPLETE-01}{Verify that a store that
   aborts, or whose process crashes, is never served afterwards, in the writing
   process or a later one.}
-  \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-02}{Verify that a store whose
+  \reqexpect{verify}{TC-PERSISTENCE.CRASHSAFE-03}{Verify that a store whose
   content had not reached stable storage when the host crashed is not served
   after the restart, where HLR-PERSISTENCE.CRASHSAFE-02 forbids it.}
   \reqexpect{satisfy}{FDS-STORAGE.PUBLISH-03}{Specify how a store that does not
