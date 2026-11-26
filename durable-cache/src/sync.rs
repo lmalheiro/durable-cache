@@ -15,14 +15,14 @@
 //! as a dependency never does.
 
 #[cfg(not(all(test, durable_cache_loom)))]
-pub(crate) use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+pub(crate) use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 // loom runs its threads on one of the process's own, so a thread-local of
 // the standard library's would be shared among them.
 #[cfg(not(all(test, durable_cache_loom)))]
 pub(crate) use std::thread_local;
 
 #[cfg(all(test, durable_cache_loom))]
-pub(crate) use loom::sync::{MutexGuard, RwLockReadGuard};
+pub(crate) use loom::sync::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 
 /// loom's `thread_local!`, for the declarations the standard library's
 /// takes with a `const` initialiser, which loom's does not: there the cell
@@ -78,7 +78,7 @@ impl<T> RwLock<T> {
         self.0.read()
     }
 
-    pub(crate) fn write(&self) -> std::sync::LockResult<loom::sync::RwLockWriteGuard<'_, T>> {
+    pub(crate) fn write(&self) -> std::sync::LockResult<RwLockWriteGuard<'_, T>> {
         self.0.write()
     }
 
@@ -89,14 +89,21 @@ impl<T> RwLock<T> {
     pub(crate) fn clear_poison(&self) {}
 }
 
+#[cfg(all(test, durable_cache_loom))]
+impl<T: Default> Default for RwLock<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
 pub(crate) mod atomic {
     //! The atomics, swapped as the locks are.
 
     #[cfg(not(all(test, durable_cache_loom)))]
-    pub(crate) use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    pub(crate) use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
     #[cfg(all(test, durable_cache_loom))]
-    pub(crate) use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    pub(crate) use loom::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 }
 
 /// Run `f` under loom, every interleaving of its threads up to the
