@@ -182,11 +182,27 @@ bounds = "three operations, three slots, one worker; at most 2 preemptions on a 
 runs = "change"
 duration = "0.3 s on a change, 0.5 s daily (local, 2026-11-24)"
 
-[[planned]]
-property = "A purge that invalidates a key ends the key's in-flight stores, the readers waiting on them wake, and a store's entry leaves the registry when the store completes or aborts."
+[[check]]
+test_case = "TC-STORAGE.INFLIGHT-01"
+property = "Of two stores of one key opening at once, in whichever order they reach the registry, the most recent is the one with the higher id; each is found by its own tag; once both end, the key has no entry."
+requirements = ["FDS-STORAGE.PARTIAL-02"]
+checker = "loom"
+harness = "tc_storage_inflight_01_the_most_recent_of_two_stores_opening_at_once"
+bounds = "two stores opening at once; at most 2 preemptions on a change, 3 daily"
+runs = "change"
+assumes = ["loom's lock and atomics, swapped in through crate::sync, behave as the standard library's, without poisoning; the outcome's OnceLock and the readers' Notify stay the standard library's and Tokio's, used here without contention"]
+duration = "0.2 s on a change, 0.2 s daily (local, 2026-11-26)"
+
+[[check]]
+test_case = "TC-STORAGE.INFLIGHT-01"
+property = "A purge beside a store that opens and one that ends ends the store in flight throughout, and reports it; untagged lookups find only a store it did not end; a store in flight is found by its tag, purged or not; a store that ends leaves the registry."
 requirements = ["FDS-STORAGE.PARTIAL-02", "FRE-COMPLIANCE.PURGE-01"]
-checker = "shuttle"
-phase = 1
+checker = "loom"
+harness = "tc_storage_inflight_01_a_purge_ends_the_stores_in_flight"
+bounds = "a store in flight throughout, one opening and one ending beside a purge; at most 2 preemptions on a change, 3 daily"
+runs = "change"
+assumes = ["loom's lock and atomics, swapped in through crate::sync, behave as the standard library's, without poisoning"]
+duration = "0.2 s on a change, 0.2 s daily (local, 2026-11-26)"
 
 # --- The protocol across crashes --------------------------------------
 # The replay of a log-writes device (phase 1); the protocol model's
@@ -298,3 +314,7 @@ reason = "The name is formatted through std::fmt, which Kani cannot follow withi
 [[unchecked]]
 property = "For every stored deadline and every instant, the internal-metadata segment an expiry writes is no longer than the one it replaces."
 reason = "CacheMeta::serialize also compresses the header segment with zstd, C code Kani cannot follow, and the internal segment's own encoder is private to pingora-cache; the tests cover every width the encoding gives a deadline (FDS-STORAGE.EXPIRE-01)."
+
+[[unchecked]]
+property = "A partial hit's reader waiting for a store in flight wakes on each chunk the store appends, and when the store ends, and never sleeps through one."
+reason = "The reader waits on Tokio's Notify inside the hit handler's read loop, beside reads on the blocking pool; neither loom nor shuttle runs that loop without the runtime, and Notify's own guarantee (a waiter created before notify_waiters is woken by it) is Tokio's. The streaming tests (TC-COMPAT.STREAMING-02) exercise it."

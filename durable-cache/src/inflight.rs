@@ -17,10 +17,12 @@
 //! one end as they would have.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, OnceLock};
 
 use tokio::sync::Notify;
+
+use crate::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use crate::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// One in-flight store.
 pub struct InFlightWriter {
@@ -445,5 +447,118 @@ mod tests {
         let w = begin(&registry, "abc");
         w.set_outcome(WriteOutcome::Aborted);
         w.set_outcome(WriteOutcome::Aborted);
+    }
+}
+
+/// The registry under every interleaving of the stores and purges that use
+/// it, up to loom's bounds (TC-STORAGE.INFLIGHT-01). Built only in the
+/// crate's tests with `--cfg durable_cache_loom`, which gives this module
+/// loom's lock and atomics through `crate::sync`.
+#[cfg(all(test, durable_cache_loom))]
+mod loom_checks {
+    use std::path::PathBuf;
+
+    use loom::sync::Arc as LoomArc;
+    use loom::thread;
+
+    use super::*;
+
+    // IMP-TC.STORAGE.INFLIGHT-01: satisfy TC-STORAGE.INFLIGHT-01
+
+    /// A key's name.
+    const NAME: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+
+    fn begin(registry: &InFlightRegistry) -> std::sync::Arc<InFlightWriter> {
+        registry.begin(NAME, PathBuf::new(), Vec::new(), Vec::new())
+    }
+
+    /// Whether the registry holds no store of any key.
+    fn is_empty(registry: &InFlightRegistry) -> bool {
+        registry.read_map().is_empty()
+    }
+
+    /// Two stores of one key opening at once, which can reach the map in
+    /// either order: the most recent is the one with the higher id; each is
+    /// found by its own tag; once both have ended, the key has no entry.
+    #[test]
+    fn tc_storage_inflight_01_the_most_recent_of_two_stores_opening_at_once() {
+        crate::sync::model(|| {
+            let registry = LoomArc::new(InFlightRegistry::new());
+            let opened: Vec<_> = (0..2)
+                .map(|_| {
+                    let registry = registry.clone();
+                    thread::spawn(move || begin(&registry).id)
+                })
+                .collect();
+            let ids: Vec<u64> = opened
+                .into_iter()
+                .map(|store| store.join().expect("a store opens"))
+                .collect();
+            let newest = registry
+                .most_recent(NAME)
+                .expect("two stores are in flight");
+            assert_eq!(newest.id, ids[0].max(ids[1]), "not the most recent store");
+            for &id in &ids {
+                let own = registry
+                    .by_tag(NAME, id)
+                    .expect("a store is found by its tag");
+                assert_eq!(own.id, id, "another store's tag");
+            }
+            for id in ids {
+                registry.end(NAME, id);
+            }
+            assert!(is_empty(&registry), "an ended store's key is left behind");
+        });
+    }
+
+    /// A purge beside a store that opens and one that ends, while another
+    /// stays in flight throughout: the purge ends that store, and reports
+    /// it, for untagged lookups, which find only a store the purge did not
+    /// end; every store is still found by its tag while in flight; a store
+    /// that ends leaves the registry, purged or not.
+    #[test]
+    fn tc_storage_inflight_01_a_purge_ends_the_stores_in_flight() {
+        crate::sync::model(|| {
+            let registry = LoomArc::new(InFlightRegistry::new());
+            let kept = begin(&registry);
+            let ending = begin(&registry);
+            let opening = {
+                let registry = registry.clone();
+                thread::spawn(move || begin(&registry))
+            };
+            let ender = {
+                let registry = registry.clone();
+                let id = ending.id;
+                thread::spawn(move || registry.end(NAME, id))
+            };
+            let found = registry.purge(NAME);
+            let opened = opening.join().expect("a store opens");
+            ender.join().expect("a store ends");
+
+            assert!(kept.purged(), "a store in flight throughout was not ended");
+            assert!(found, "a purge did not report the stores it ended");
+            match registry.most_recent(NAME) {
+                Some(store) => {
+                    assert!(!store.purged(), "an untagged lookup found a purged store");
+                    assert_eq!(store.id, opened.id, "a store that ended was found");
+                }
+                None => assert!(opened.purged(), "an unpurged store in flight was not found"),
+            }
+            let own = registry
+                .by_tag(NAME, opened.id)
+                .expect("found by its tag, purged or not");
+            assert_eq!(own.id, opened.id);
+            assert!(
+                registry.by_tag(NAME, ending.id).is_none(),
+                "an ended store was found"
+            );
+            assert!(
+                registry.by_tag(NAME, kept.id).is_some(),
+                "a purged store lost its tag"
+            );
+            registry.end(NAME, opened.id);
+            registry.end(NAME, kept.id);
+            assert!(is_empty(&registry), "an ended store's key is left behind");
+        });
     }
 }
