@@ -263,3 +263,32 @@ mod tests {
         assert!(cache.contains(name), "the shard is recorded");
     }
 }
+
+/// The bitset of shard directories for every shard (TC-LAYOUT.NAMES-01):
+/// an ordinary test that goes through each, as Kani runs out of memory on
+/// the bitset's 1024 words.
+#[cfg(test)]
+mod exhaustive_checks {
+    use super::*;
+
+    // IMP-TC.LAYOUT.NAMES-02: satisfy TC-LAYOUT.NAMES-01
+
+    /// Marking any shard present, in a bitset where none is, marks that
+    /// shard and no other, its bit within the bitset.
+    #[test]
+    fn tc_layout_names_01_every_shard_marks_its_own_bit() {
+        for shard in 0..SHARD_COUNT {
+            let cache = ShardDirCache {
+                bits: (0..WORD_COUNT).map(|_| AtomicU64::new(0)).collect(),
+            };
+            cache.mark_present(shard);
+            assert!(cache.is_present(shard), "shard {shard} not marked");
+            let marked: u32 = cache
+                .bits
+                .iter()
+                .map(|word| word.load(Ordering::Relaxed).count_ones())
+                .sum();
+            assert_eq!(marked, 1, "marking shard {shard} set {marked} bits");
+        }
+    }
+}

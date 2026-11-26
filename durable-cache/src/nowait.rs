@@ -222,7 +222,7 @@ fn fill(file: &File, buf: &mut Vec<u8>, end: usize, base: u64, wait: Wait) -> io
         // returns how many it wrote.
         let read = unsafe {
             match wait {
-                Wait::Allowed => libc::pread64(
+                Wait::Allowed => pread_blocking(
                     file.as_raw_fd(),
                     spare.as_mut_ptr().cast(),
                     spare.len(),
@@ -270,6 +270,20 @@ pub(crate) fn fill_blocking(
     base: u64,
 ) -> io::Result<()> {
     fill(file, buf, end, base, Wait::Allowed)
+}
+
+/// `pread64`, which waits for the device when it must.
+///
+/// # Safety
+///
+/// As for `pread64`: `buf` is valid for writes of `count` bytes.
+unsafe fn pread_blocking(
+    fd: libc::c_int,
+    buf: *mut libc::c_void,
+    count: libc::size_t,
+    offset: libc::off64_t,
+) -> libc::ssize_t {
+    libc::pread64(fd, buf, count, offset)
 }
 
 /// `pread64` from the page cache only: `preadv2` with `RWF_NOWAIT`, which
@@ -614,5 +628,104 @@ mod tests {
             read => read.expect("the page is in the page cache"),
         }
         assert_eq!(accessed(&path), before, "no read updated the access time");
+    }
+}
+
+/// The `unsafe` reads into a buffer's spare capacity, for every result the
+/// kernel may give, with Kani (TC-STORAGE.UNSAFE-01). Built only by Kani,
+/// which sets `cfg(kani)`.
+#[cfg(kani)]
+mod kani_checks {
+    use std::fs::File;
+    use std::mem::ManuallyDrop;
+    use std::os::fd::FromRawFd;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use super::*;
+
+    // IMP-TC.STORAGE.UNSAFE-01: satisfy TC-STORAGE.UNSAFE-01
+
+    /// How many bytes the stand-in for the kernel has written, all calls
+    /// together.
+    static WRITTEN: AtomicUsize = AtomicUsize::new(0);
+
+    /// Whether the stand-in has been interrupted once already.
+    static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+    /// A stand-in for `pread64` and for `preadv2` with `RWF_NOWAIT`, as the
+    /// kernel's contract has them: they write any number of the `count`
+    /// bytes asked for and return it, none at the end of the file, or fail
+    /// with `-1` and set `errno`, as libc does: to an interruption, once, then
+    /// to any of a read that would wait, a missing `preadv2`, or a failure of
+    /// the device.
+    unsafe fn any_read(
+        _fd: libc::c_int,
+        buf: *mut libc::c_void,
+        count: libc::size_t,
+        _offset: libc::off64_t,
+    ) -> libc::ssize_t {
+        let read: libc::ssize_t =
+            kani::any_where(|read| *read >= -1 && *read <= count as libc::ssize_t);
+        if read < 0 {
+            let interrupt = kani::any() && !INTERRUPTED.swap(true, Ordering::Relaxed);
+            let errno = if interrupt {
+                libc::EINTR
+            } else {
+                kani::any_where(|errno| {
+                    [libc::EAGAIN, libc::EOPNOTSUPP, libc::ENOSYS, libc::EIO].contains(errno)
+                })
+            };
+            // SAFETY: libc's errno of the calling thread.
+            unsafe { *libc::__errno_location() = errno };
+            return read;
+        }
+        for i in 0..read as usize {
+            // SAFETY: the caller's `buf` is valid for writes of `count`
+            // bytes, and `i` is below `read`, which is at most `count`.
+            unsafe { buf.cast::<u8>().add(i).write(kani::any()) };
+        }
+        WRITTEN.fetch_add(read as usize, Ordering::Relaxed);
+        read
+    }
+
+    /// A stand-in for [`not_supported`], without the message it formats,
+    /// which Kani cannot follow within the memory a run has.
+    fn plain_unsupported(_call: &str, _errno: Errno) -> io::Error {
+        io::ErrorKind::Unsupported.into()
+    }
+
+    /// Whatever the reads return, the buffer claims exactly the bytes the
+    /// kernel wrote, never more than up to `end`, and it holds them all up
+    /// to `end` when the fill succeeds.
+    #[kani::proof]
+    #[kani::stub(pread_blocking, any_read)]
+    #[kani::stub(pread_nowait, any_read)]
+    #[kani::stub(not_supported, plain_unsupported)]
+    #[kani::unwind(8)]
+    fn tc_storage_unsafe_01_a_fill_claims_only_what_the_kernel_wrote() {
+        // A descriptor the stand-ins never use; the file is never dropped,
+        // so it is never closed.
+        // SAFETY: nothing reads or closes descriptor 3 through this file.
+        let file = ManuallyDrop::new(unsafe { File::from_raw_fd(3) });
+        let start: usize = kani::any_where(|start| *start <= 2);
+        let end: usize = kani::any_where(|end| *end >= start && *end <= 4);
+        let mut buf = vec![0u8; start];
+        let wait = if kani::any() {
+            Wait::Allowed
+        } else {
+            Wait::Never
+        };
+        let result = fill(
+            &file,
+            &mut buf,
+            end,
+            kani::any_where(|base| *base < 1 << 32),
+            wait,
+        );
+        assert!(buf.len() == start + WRITTEN.load(Ordering::Relaxed));
+        assert!(buf.len() <= end && buf.len() <= buf.capacity());
+        if result.is_ok() {
+            assert!(buf.len() == end);
+        }
     }
 }

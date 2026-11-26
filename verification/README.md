@@ -4,7 +4,7 @@ The formal checks of durable-cache, and the record of what they establish.
 The plan they follow is Appendix D of the specification
 (`docs/durable-cache.pdf`), and the decisions behind it are
 ADR-VERIFICATION.FORMAL-01 and ADR-VERIFICATION.MODELS-01; where everything
-lives is SDS-VERIFICATION.LAYOUT-01.
+lives is SDS-VERIFICATION.LAYOUT-02.
 
 ## The record
 
@@ -16,7 +16,12 @@ establishes, with the reason. Check it against the repository with
     cargo xtask verify
 
 which fails on an entry whose test case, requirements or harness the
-repository does not have (TC-VERIFICATION.RECORD-01).
+repository does not have (TC-VERIFICATION.RECORD-01), and run one checker's
+checks with
+
+    cargo xtask verify --checker kani|loom|exhaustive [--daily]
+
+which also reports how long each took (TC-VERIFICATION.RUNS-01).
 
 ## Where the checks live
 
@@ -27,6 +32,9 @@ repository does not have (TC-VERIFICATION.RECORD-01).
   built only in the crate's tests with `--cfg durable_cache_loom`, which
   also swaps the module's synchronisation types for loom's
   (`durable-cache/src/sync.rs`).
+- **Exhaustive checks**, ordinary tests that go through every case within
+  their bounds where the cases are few enough and Kani cannot finish, sit
+  in an `exhaustive_checks` module of the module they check.
 - **Lean code** sits here, in a Lake project of its own for each Lean
   version the checks need. Each Lean library a check uses is a package of its
   own under `libs/<name>/`, named when it is created, and written to be
