@@ -52,7 +52,7 @@ Veil 2.0 & That the invariants of a model written in Lean hold: by SMT solvers w
 \hline
 Aeneas and Charon & Any theorem about the Rust code, as translated into Lean & A subset: no \texttt{async}, \texttt{unsafe}, trait objects or \texttt{Drop} behaviour & Charon in beta; the Lean library needs Lean 4.36.0 and Mathlib \\
 \hline
-\texttt{log-writes} replay & The disk state at each flush and FUA point of a real run & Yes, on the real kernel & Root and a scratch device; one kernel and one file system per run \\
+\texttt{log-writes} replay & The disk state after each write of a real run, and after each block of a longer one, the flush and FUA points among them & Yes, on the real kernel & Root and a scratch device; one kernel and one file system per run; the writes in the order the device completed them \\
 \hline
 Exhaustive test & That a property holds in every case of a domain small enough to go through, one case at a time & Yes & Only where the cases are few: the orders of a few events, the indices of a small table \\
 \hline
@@ -332,7 +332,42 @@ Where Tokio is involved --- a partial hit's reader waiting on Tokio's
 read loop, beside reads on the blocking pool, which neither loom nor
 shuttle runs without the runtime; it stays with the streaming tests, as
 the record of checked properties says, and phase~1 uses no shuttle check.
-The rest of the phase follows: the \texttt{log-writes} harness.
+The fourth part brings the \texttt{log-writes} harness,
+\texttt{cargo xtask crash-replay}. The kernel of GitHub's runners has the
+device-mapper target, so the harness runs there, as root, daily and by
+hand. It runs the scenario of \reqref{TC-PERSISTENCE.CRASHSAFE-02} on a file
+system over the logged device, marking the log after each operation the
+backend acknowledges; replays the log, with a replay of its own over the
+format the kernel writes; and restarts the backend on each state the replay
+reaches. What it found:
+\begin{itemize}
+  \item At the flush and FUA points the test case names, a store published
+    without its synchronisation is never served wrong: it is a miss, which
+    a host crash is allowed to cause. ext4 in its default
+    \texttt{data=ordered} mode and XFS write a file's data before the
+    metadata that gives the file its length, and ext4 in
+    \texttt{data=writeback} mode, with delayed allocation, allocates a
+    file's blocks and records its length only when it writes the data back.
+    With the backend's \texttt{fdatasync} taken out, every one of those
+    replays passed.
+  \item The harness therefore checks every state, not only those points:
+    after each write, and after each 4~KiB block of a longer one, as a power
+    failure may leave a write torn. It also mounts ext4 with
+    \texttt{data=writeback} and without delayed allocation, which records a
+    file's length with the next commit of its journal, whether the data is
+    written or not. There, with the \texttt{fdatasync} taken out, a write
+    torn after a record's header serves the header over a body never
+    written, and the check fails; with the directory's \texttt{fsync} after
+    a purge taken out, a purged object is served on each file system. With
+    the code as it is, the five runs pass: 4,082 states, about 800 each, in
+    7~minutes.
+  \item The states are those of the writes the device completed, in the
+    order it completed them. A device with a volatile write cache may also
+    lose some writes made before a flush and keep later ones; listing those
+    states is the file-system library's task, in phase~3.
+\end{itemize}
+With this part, phase~1 is complete: every check passes, and the record of
+checked properties gives the duration of each.
 
 \subsection*{Phase 2: the protocol in Lean}
 \begin{itemize}
