@@ -201,7 +201,7 @@ handoff to the blocking pool, while one of three inline slots is free
 Such writes go to the page cache and seldom wait, but once the host's dirty
 data passes the kernel's limit, the kernel throttles writers, for up to
 200 ms at a time, and a worker stalls with its write. So at most the
-runtime's workers less one write at once: on Pingora's default of one worker
+runtime's workers less one write at once: on the Pingora default of one worker
 (`ServerConf::threads`), or with `work_stealing` off, none do. With the
 discard after a host restart on, publication stays on the pool, since it may
 have to write the marker (ADR-STORAGE.INLINEWRITES-02).
@@ -338,11 +338,13 @@ test scaffolding, or tooling.
 ├── xtask/                     cargo xtask cache-tests | trace-report | headers |
 │                              fmt | readme-links | bench | cfg-matrix | verify |
 │                              crash-replay
-├── verification/              the formal checks' record of what they establish,
-│                              and their README (see "Continuous integration")
+├── verification/              the formal checks: the record of what they
+│                              establish, the Lean checks (protocol/) and the
+│                              Lean libraries (libs/); see its README
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
 ├── .github/workflows/         ci.yml, compliance.yml, deny.yml, pr-title.yml,
-│                              release-plz.yml and verification.yml (see below)
+│                              release-plz.yml, verification.yml and
+│                              httpcachestorage.yml (see below)
 ├── .githooks/                 opt-in hooks: pre-commit checks formatting, pre-push
 │                              that the specification still builds
 ├── .claude/skills/            AI-assistant skills for writing, checking and
@@ -571,7 +573,8 @@ Two differences shape the results:
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 | `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
 | `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date, its README's links and dependency line naming the new version; when one is merged, tags the version, publishes it with the token in the `crates-io` environment and creates the GitHub release (see below) |
-| `verification.yml` | pushes to `main`, pull requests, nightly, manual | the formal checks, none of them a required check yet: the record of what they establish (`verification/record.toml`), and the Kani, loom and exhaustive checks; daily and by hand, also the deeper bounds and the `log-writes` replay of TC-PERSISTENCE.CRASHSAFE-03, as root. See [`verification/README.md`](verification/README.md) |
+| `verification.yml` | pushes to `main`, pull requests, nightly, manual | the formal checks, none of them a required check yet: the record of what they establish (`verification/record.toml`), and the Kani, loom, exhaustive, Lean and trace checks; nightly and by hand, also the deeper bounds and the `log-writes` replay of TC-PERSISTENCE.CRASHSAFE-03, as root. See [`verification/README.md`](verification/README.md) |
+| `httpcachestorage.yml` | changes to `verification/libs/HttpCacheStorage`, nightly, manual | the storage-contract library's own check, `scripts/check.sh`: its proofs and tests, and the traces of `MemCache` against the contract |
 
 ### Releasing
 

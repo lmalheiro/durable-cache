@@ -19,7 +19,7 @@ which fails on an entry whose test case, requirements or harness the
 repository does not have (TC-VERIFICATION.RECORD-01), and run one checker's
 checks with
 
-    cargo xtask verify --checker kani|loom|exhaustive|log-writes [--daily]
+    cargo xtask verify --checker kani|loom|exhaustive|log-writes|lean|trace [--daily]
 
 which also reports how long each took (TC-VERIFICATION.RUNS-01).
 
@@ -43,6 +43,17 @@ which also reports how long each took (TC-VERIFICATION.RUNS-01).
   the log reaches. It needs Linux, the kernel's `dm-log-writes` target and
   `sudo` without a password; `--checker log-writes` makes the five runs the
   test case asks for.
+- **Lean checks** are theorems of `protocol/`, the Lake project under the
+  Lean version Veil pins, each named `tc_<test case>_<what>` in a file that
+  carries the test case's `IMP-TC.` marker and ends with `#assert_axioms`,
+  which lists the axioms the theorem rests on and fails on one outside the
+  reviewed list; `--checker lean` also fails on one the record does not
+  name for the check.
+- **Trace checks** are ignored tests of the crate, in
+  `durable-cache/tests/verification_contract.rs`, that drive a storage
+  through the workloads of the storage-contract library and write their
+  traces; `--checker trace` runs them, then the library's `check-trace` on
+  every trace.
 - **Lean code** sits here, in a Lake project of its own for each Lean
   version the checks need. Each Lean library a check uses is a package of its
   own under `libs/<name>/`, named when it is created, and written to be
@@ -51,3 +62,11 @@ which also reports how long each took (TC-VERIFICATION.RUNS-01).
 
 No check has a time limit: how long one may run is to be decided later, from
 the durations the record keeps.
+
+## The libraries
+
+- [`libs/HttpCacheStorage`](libs/HttpCacheStorage/README.md): the storage
+  contract of `pingora-cache` 0.9.0, as a checker of traces, with a
+  reference implementation proved to keep it, and a driver that writes the
+  trace of any storage. Its own check, `scripts/check.sh`, runs in the
+  `HttpCacheStorage` workflow.

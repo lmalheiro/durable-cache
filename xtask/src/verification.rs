@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -22,8 +22,23 @@ use serde::Deserialize;
 const RECORD: &str = "verification/record.toml";
 
 /// Where the checks' harnesses are, from the workspace root: the crate's
-/// sources and its tests, which its library's test binary builds.
-const HARNESS_ROOT: &str = "durable-cache";
+/// sources and its tests, which its library's test binary builds, and the
+/// project's Lean checks.
+const HARNESS_ROOTS: [&str; 2] = ["durable-cache", LEAN_CHECKS];
+
+/// The project's Lean checks, a Lake project under the Lean version Veil
+/// pins (SDS-VERIFICATION.LAYOUT-02).
+const LEAN_CHECKS: &str = "verification/protocol";
+
+/// The storage-contract library, whose `check-trace` checks the traces.
+const CONTRACT_LIBRARY: &str = "verification/libs/HttpCacheStorage";
+
+/// The crate's tests that write traces, in this module of its tests.
+const TRACE_MODULE: &str = "verification_contract";
+
+/// How many workloads a trace check drives each storage through, on each
+/// change and in the daily run.
+const TRACE_SEEDS: (u32, u32) = (8, 32);
 
 // IMP-VERIFICATION.LAYOUT-02: satisfy SDS-VERIFICATION.LAYOUT-02
 
@@ -70,6 +85,14 @@ pub(crate) enum Checker {
     #[serde(rename = "log-writes")]
     #[value(name = "log-writes")]
     LogWrites,
+    /// A theorem of the project's Lean checks, which Lean's kernel checks
+    /// as it elaborates the theorem's file; the file's `#assert_axioms`
+    /// fails it on an axiom outside the reviewed list.
+    Lean,
+    /// An ignored test of the crate that drives a storage through the
+    /// storage-contract library's workloads and writes their traces, which
+    /// the library's `check-trace` then checks against the contract.
+    Trace,
 }
 
 impl fmt::Display for Checker {
@@ -79,6 +102,8 @@ impl fmt::Display for Checker {
             Self::Loom => "loom",
             Self::Exhaustive => "exhaustive",
             Self::LogWrites => "log-writes",
+            Self::Lean => "Lean",
+            Self::Trace => "trace",
         })
     }
 }
@@ -120,7 +145,7 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
     let record: Record =
         toml::from_str(&text).with_context(|| format!("{RECORD} does not parse"))?;
     let declared = declared_ids(&root.join("docs"))?;
-    let harnesses = harness_index(&root.join(HARNESS_ROOT))?;
+    let harnesses = harness_index(root)?;
     let problems = problems(&record, &declared, &harnesses);
     if !problems.is_empty() {
         bail!(
@@ -128,13 +153,16 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
             problems.join("\n  ")
         );
     }
-    let (mut kani, mut loom, mut exhaustive, mut replayed, mut daily) = (0, 0, 0, 0, 0);
+    let (mut kani, mut loom, mut exhaustive, mut replayed, mut lean, mut traced, mut daily) =
+        (0, 0, 0, 0, 0, 0, 0);
     for check in &record.check {
         match check.checker {
             Checker::Kani => kani += 1,
             Checker::Loom => loom += 1,
             Checker::Exhaustive => exhaustive += 1,
             Checker::LogWrites => replayed += 1,
+            Checker::Lean => lean += 1,
+            Checker::Trace => traced += 1,
         }
         if matches!(check.runs, Runs::Daily) {
             daily += 1;
@@ -142,8 +170,8 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
     }
     println!(
         "verify: {RECORD} holds: {} checked ({kani} by Kani, {loom} by loom, {exhaustive} \
-         exhaustively, {replayed} by log-writes replays; {daily} of them daily), {} planned, \
-         {} unchecked",
+         exhaustively, {replayed} by log-writes replays, {lean} by Lean, {traced} by traces; \
+         {daily} of them daily), {} planned, {} unchecked",
         record.check.len(),
         record.planned.len(),
         record.unchecked.len()
@@ -171,11 +199,13 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
         Checker::Kani => kani_harnesses(root)?,
         Checker::Loom => module_tests(root, true, "loom_checks")?,
         Checker::Exhaustive => module_tests(root, false, "exhaustive_checks")?,
-        Checker::LogWrites => harness_index(&root.join(HARNESS_ROOT))?
+        Checker::LogWrites => harness_index(root)?
             .into_keys()
             .filter(|name| name.as_str() == REPLAY_CHECK)
             .map(|name| (name, "the log-writes replays".to_owned()))
             .collect(),
+        Checker::Lean => lean_theorems(root)?,
+        Checker::Trace => module_tests(root, false, TRACE_MODULE)?,
     };
     let recorded: Vec<&Check> = record
         .check
@@ -190,6 +220,15 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
         );
     }
 
+    // What the checks of these checkers need built first: the Lean checks'
+    // dependencies, and the checker of traces.
+    let built = match checker {
+        Checker::Lean => lake(root, LEAN_CHECKS, &["build"]),
+        Checker::Trace => lake(root, CONTRACT_LIBRARY, &["build", "check-trace"]),
+        _ => Ok(()),
+    };
+    built?;
+
     let mut results = Vec::new();
     for check in due(&recorded, daily) {
         let path = &found[&check.harness];
@@ -201,6 +240,18 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
             Checker::LogWrites => {
                 let start = Instant::now();
                 let passed = replay_matrix(root);
+                results.push((check, passed, start.elapsed()));
+                continue;
+            }
+            Checker::Lean => {
+                let start = Instant::now();
+                let passed = lean_check(root, check, path)?;
+                results.push((check, passed, start.elapsed()));
+                continue;
+            }
+            Checker::Trace => {
+                let start = Instant::now();
+                let passed = trace_check(root, &check.harness, path, daily)?;
                 results.push((check, passed, start.elapsed()));
                 continue;
             }
@@ -253,6 +304,121 @@ fn differences(
             .map(|name| format!("the record's {name} is no harness {checker} finds")),
     );
     differences
+}
+
+/// `lake ARGS` in the Lake project at `dir`, failing if it fails.
+fn lake(root: &Path, dir: &str, args: &[&str]) -> Result<()> {
+    let status = Command::new("lake")
+        .args(args)
+        .current_dir(root.join(dir))
+        .status()
+        .with_context(|| format!("failed to run lake in {dir}; is elan installed?"))?;
+    if !status.success() {
+        bail!("lake {} failed in {dir}", args.join(" "));
+    }
+    Ok(())
+}
+
+/// The theorems of the project's Lean checks named after a test case, each
+/// mapped to its file, from the Lake project's directory.
+fn lean_theorems(root: &Path) -> Result<BTreeMap<String, String>> {
+    let dir = root.join(LEAN_CHECKS);
+    let mut theorems = BTreeMap::new();
+    for (name, file) in lean_declarations(&dir)? {
+        let relative = file.strip_prefix(&dir).unwrap_or(&file);
+        theorems.insert(name, relative.to_string_lossy().into_owned());
+    }
+    Ok(theorems)
+}
+
+/// The Lean check `check`: Lean on its theorem's file `file`, every warning
+/// an error, as the Lake project's own build makes it; then the axioms the
+/// file's `#assert_axioms` reports for the theorem, each of which the
+/// record's assumptions for the check must name (FDS-VERIFICATION.RUNS-01).
+/// Whether the theorem holds on those axioms alone.
+fn lean_check(root: &Path, check: &Check, file: &str) -> Result<bool> {
+    let output = Command::new("lake")
+        .args(["env", "lean", "-DwarningAsError=true", file])
+        .current_dir(root.join(LEAN_CHECKS))
+        .output()
+        .with_context(|| format!("failed to run Lean on {file}"))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    print!("{text}");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        return Ok(false);
+    }
+    let Some(axioms) = rests_on(&text, &check.harness) else {
+        eprintln!(
+            "{file} reports no axioms for {}: it needs #assert_axioms",
+            check.harness
+        );
+        return Ok(false);
+    };
+    let unlisted: Vec<&str> = axioms
+        .iter()
+        .copied()
+        .filter(|axiom| !check.assumes.iter().any(|a| a.contains(axiom)))
+        .collect();
+    if !unlisted.is_empty() {
+        eprintln!(
+            "{} rests on {}, which the record's assumptions for it do not name",
+            check.harness,
+            unlisted.join(", ")
+        );
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// The axioms `#assert_axioms` reports `theorem` rests on, in Lean's
+/// output: `… theorem rests on [a, b, c]`.
+fn rests_on<'a>(output: &'a str, theorem: &str) -> Option<Vec<&'a str>> {
+    let marker = format!("{theorem} rests on [");
+    let line = output.lines().find(|line| line.contains(&marker))?;
+    let list = line.split_once(&marker)?.1.split_once(']')?.0;
+    Some(
+        list.split(',')
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .collect(),
+    )
+}
+
+/// The trace check `name`: the crate's test at `path` writes its traces,
+/// one for each workload, and the storage-contract library's `check-trace`
+/// checks them all. Whether every trace is allowed.
+fn trace_check(root: &Path, name: &str, path: &str, daily: bool) -> Result<bool> {
+    let dir = crate::target_dir(root)?.join("xtask/traces").join(name);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)
+            .with_context(|| format!("failed to clear {}", dir.display()))?;
+    }
+    let seeds = if daily { TRACE_SEEDS.1 } else { TRACE_SEEDS.0 };
+    let written = crate_tests(root, false, &["--exact", path, "--ignored"])
+        .env("DURABLE_CACHE_TRACE_DIR", &dir)
+        .env("DURABLE_CACHE_TRACE_SEEDS", seeds.to_string())
+        .status()
+        .with_context(|| format!("failed to run {path}"))?;
+    if !written.success() {
+        return Ok(false);
+    }
+    let mut traces: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("failed to list {}", dir.display()))?
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<std::io::Result<_>>()?;
+    traces.sort();
+    if traces.is_empty() {
+        bail!("{path} wrote no trace into {}", dir.display());
+    }
+    let checked = Command::new(
+        root.join(CONTRACT_LIBRARY)
+            .join(".lake/build/bin/check-trace"),
+    )
+    .args(&traces)
+    .status()
+    .context("failed to run check-trace")?;
+    Ok(checked.success())
 }
 
 /// The crate's test the log-writes replay runs on each state.
@@ -460,13 +626,15 @@ fn problems(
         }
         match harnesses.get(&check.harness) {
             None => problems.push(format!(
-                "the check {} has no function of that name under {HARNESS_ROOT}",
-                check.harness
+                "the check {} has no function or theorem of that name in {}",
+                check.harness,
+                HARNESS_ROOTS.join(" or ")
             )),
             Some(1) => {}
             Some(n) => problems.push(format!(
-                "the check {} names {n} functions under {HARNESS_ROOT}, not one",
-                check.harness
+                "the check {} names {n} functions or theorems in {}, not one",
+                check.harness,
+                HARNESS_ROOTS.join(" or ")
             )),
         }
         if !seen.insert(&check.harness) {
@@ -522,7 +690,7 @@ fn problems(
 
 /// The IDs the specification declares, each in a `\begin{requirement}{ID}`
 /// of a `.tex` file under `docs`.
-fn declared_ids(docs: &Path) -> Result<BTreeSet<String>> {
+pub(crate) fn declared_ids(docs: &Path) -> Result<BTreeSet<String>> {
     const OPENING: &str = "\\begin{requirement}{";
     let mut ids = BTreeSet::new();
     for entry in
@@ -548,8 +716,48 @@ fn declared_ids(docs: &Path) -> Result<BTreeSet<String>> {
     Ok(ids)
 }
 
+/// How many functions or theorems of each `tc_` name the harnesses'
+/// sources declare: the Rust files of the crate, and the Lean files of the
+/// project's Lean checks.
+fn harness_index(root: &Path) -> Result<BTreeMap<String, usize>> {
+    let mut index = rust_harnesses(&root.join(HARNESS_ROOTS[0]))?;
+    for (name, _) in lean_declarations(&root.join(LEAN_CHECKS))? {
+        *index.entry(name).or_default() += 1;
+    }
+    Ok(index)
+}
+
+/// Each `tc_` theorem or definition the Lean files under `dir` declare,
+/// with its file; Lake's own directory, which holds the packages it
+/// fetched, is not looked in.
+fn lean_declarations(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let mut found = Vec::new();
+    let walk = walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".lake");
+    for entry in walk {
+        let entry = entry?;
+        if entry.path().extension().is_none_or(|e| e != "lean") {
+            continue;
+        }
+        let text = std::fs::read_to_string(entry.path())
+            .with_context(|| format!("failed to read {}", entry.path().display()))?;
+        for line in text.lines() {
+            if let Some(name) = ["theorem ", "def "]
+                .iter()
+                .find_map(|keyword| line.strip_prefix(keyword))
+                .and_then(|rest| rest.split([' ', '(', ':', '{']).next())
+                .filter(|name| name.starts_with("tc_"))
+            {
+                found.push((name.to_owned(), entry.path().to_owned()));
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// How many functions of each `tc_` name the Rust files under `dir` declare.
-fn harness_index(dir: &Path) -> Result<BTreeMap<String, usize>> {
+fn rust_harnesses(dir: &Path) -> Result<BTreeMap<String, usize>> {
     let mut index = BTreeMap::new();
     for entry in walkdir::WalkDir::new(dir) {
         let entry = entry?;
@@ -782,6 +990,24 @@ mod tests {
             ["tc_storage_changelocks_01_one_change_per_key"]
         );
         assert_eq!(due(&recorded, true).len(), 2);
+    }
+
+    /// The axioms a Lean check's proof rests on are read from what
+    /// `#assert_axioms` reports for its theorem, and for no other.
+    #[test]
+    fn tc_verification_runs_01_a_proof_names_the_axioms_it_rests_on() {
+        let output = "info: Protocol/StorageContract.lean:21:0: tc_x_01_t rests on \
+                      [propext, Classical.choice, Quot.sound]\n";
+        assert_eq!(
+            rests_on(output, "tc_x_01_t"),
+            Some(vec!["propext", "Classical.choice", "Quot.sound"])
+        );
+        assert_eq!(rests_on(output, "tc_x_01_other"), None);
+        assert_eq!(
+            rests_on("t rests on []", "t"),
+            Some(vec![]),
+            "a proof on no axiom"
+        );
     }
 
     /// The report gives each check run its test case, its result and its

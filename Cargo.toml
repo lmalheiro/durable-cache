@@ -9,6 +9,9 @@ members = [
     "examples/caching-proxy",
     "xtask",
 ]
+# The Lean libraries' packages build on their own, each a workspace of its
+# own, as they are to be published apart (ADR-VERIFICATION.MODELS-01).
+exclude = ["verification/libs"]
 
 # `durable-cache` is the only published member; every other member
 # carries `publish = false` in its own manifest: they are an example, test
