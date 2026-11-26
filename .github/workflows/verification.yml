@@ -95,6 +95,38 @@ jobs:
             cargo xtask verify --checker kani
             ${{ github.event_name == 'schedule' && '--daily' || '' }}
 
+  lean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+
+      - name: The Lean checks (TC-VERIFICATION.RUNS-01)
+        # The theorems of verification/protocol, each checked by Lean's
+        # kernel, and the axioms each rests on against the record's list.
+        # elan installs the Lean version each Lake project names.
+        run: nix develop -c cargo xtask verify --checker lean
+
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+
+      - name: The trace checks (TC-VERIFICATION.RUNS-01)
+        # MemCache and the backend through the storage contract's
+        # workloads, each trace checked by the HttpCacheStorage library;
+        # daily, four times as many workloads.
+        run: >-
+          nix develop -c cargo xtask verify --checker trace
+          ${{ github.event_name == 'schedule' && '--daily' || '' }}
+
   log-writes:
     # The log-writes replay of TC-PERSISTENCE.CRASHSAFE-03, as root: loop
     # devices, the device-mapper log-writes target, mkfs and mount. Daily,

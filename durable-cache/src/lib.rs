@@ -184,4 +184,5 @@ mod integration_tests {
     mod storage_purge;
     mod storage_reclaim;
     mod storage_reclaim_reporting;
+    mod verification_contract;
 }

@@ -1,0 +1,31 @@
+name: HttpCacheStorage
+
+# The storage-contract library's own check (ADR-VERIFICATION.MODELS-01): its
+# proofs and tests, and MemCache's traces against the contract, by the
+# library's own script, which its workflow runs too once it has a repository
+# of its own. Here it runs when the library changes, and nightly.
+on:
+  push:
+    branches: [main]
+    paths: ["verification/libs/HttpCacheStorage/**", ".github/workflows/httpcachestorage.yml"]
+  pull_request:
+    paths: ["verification/libs/HttpCacheStorage/**", ".github/workflows/httpcachestorage.yml"]
+  schedule:
+    - cron: "15 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: verification/libs/HttpCacheStorage/driver
+      - name: The library's check
+        run: nix develop -c verification/libs/HttpCacheStorage/scripts/check.sh

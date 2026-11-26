@@ -68,6 +68,10 @@ pingora-http.workspace = true
 # optional).
 pingora-prometheus.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+# Drives the backend through the storage contract's workloads, for the
+# trace checks of TC-VERIFICATION.CONTRACT-01. A path dependency without a
+# version, so `cargo publish` leaves it out.
+httpcachestorage-driver = { path = "../verification/libs/HttpCacheStorage/driver" }
 
 # loom runs the tests built with `--cfg durable_cache_loom` under every
 # interleaving of their threads (crate::sync, ADR-VERIFICATION.FORMAL-01).

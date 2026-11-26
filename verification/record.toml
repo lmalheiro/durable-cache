@@ -10,8 +10,11 @@
 #   property      what it establishes, in one sentence
 #   requirements  the requirements the property is of
 #   checker       kani, loom, exhaustive (an ordinary test that goes
-#                 through every case within its bounds) or log-writes
-#   harness       the check's function, named tc_<test case>_<what>
+#                 through every case within its bounds), log-writes, lean
+#                 (a theorem of verification/protocol) or trace (a test
+#                 whose traces the storage-contract library checks)
+#   harness       the check's function or theorem, named
+#                 tc_<test case>_<what>
 #   bounds        what the check covers: its inputs, threads or states
 #   runs          change (each proposed change) or daily
 #   assumes       the stubs and axioms its result rests on
@@ -203,6 +206,43 @@ bounds = "a store in flight throughout, one opening and one ending beside a purg
 runs = "change"
 assumes = ["loom's lock and atomics, swapped in through crate::sync, behave as the standard library's, without poisoning"]
 duration = "0.2 s on a change, 0.2 s daily (local, 2026-11-26)"
+
+# --- The storage contract (phase 2) -----------------------------------
+# The library HttpCacheStorage (verification/libs/HttpCacheStorage) states
+# what pingora-cache 0.9.0 expects of a storage as a checker of traces.
+
+[[check]]
+test_case = "TC-VERIFICATION.CONTRACT-01"
+property = "The storage contract allows every trace of its reference implementation, for any calls in any order: a storage can keep it."
+requirements = ["ADR-VERIFICATION.MODELS-01"]
+checker = "lean"
+harness = "tc_verification_contract_01_reference_conforms"
+bounds = "every sequence of calls, a proof"
+runs = "change"
+assumes = ["Lean's own axioms: propext, Classical.choice, Quot.sound"]
+duration = "1.1 s on a change (local, 2026-11-26)"
+
+[[check]]
+test_case = "TC-VERIFICATION.CONTRACT-01"
+property = "Every result MemCache gives, in the workloads it can take, is one the storage contract allows: the contract is no stricter than the storage pingora-cache ships."
+requirements = ["ADR-VERIFICATION.MODELS-01"]
+checker = "trace"
+harness = "tc_verification_contract_01_memcache_traces"
+bounds = "8 workloads on each change and 32 daily, each of about 1,500 calls on 3 keys, one with a variance, bodies of 0 to 70,000 bytes; without purges during a write, updates of what is not stored, open seeks after bounded ones, and reads after an abandoned write, which MemCache cannot take"
+runs = "change"
+assumes = ["the driver records each call and the result the storage gave it, in the order made"]
+duration = "5.8 s on a change, 20.8 s daily (local, 2026-11-26)"
+
+[[check]]
+test_case = "TC-VERIFICATION.CONTRACT-01"
+property = "Every result the backend gives, in workloads of every call the storage contract allows, is one the contract allows: hits only of the stored entry or of a write in flight, bodies that end only at their end, and purges, expiries and metadata updates that hold."
+requirements = ["HLR-COMPAT.PINGORA-01", "FRE-COMPAT.STREAMING-01", "FRE-COMPAT.STREAMEND-01", "FRE-COMPAT.EXPIRE-01"]
+checker = "trace"
+harness = "tc_verification_contract_01_backend_traces"
+bounds = "8 workloads on each change and 32 daily, each of about 1,650 calls on 3 keys, one with a variance, bodies of 0 to 70,000 bytes, every call the contract allows"
+runs = "change"
+assumes = ["the driver records each call and the result the storage gave it, in the order made", "one call at a time: concurrent calls are the protocol model's to check"]
+duration = "14.8 s on a change, 54.8 s daily (local, 2026-11-26)"
 
 # --- The protocol across crashes --------------------------------------
 # The replay of a log-writes device (phase 1); the protocol model's

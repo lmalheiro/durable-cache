@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 The durable-cache authors
+# SPDX-License-Identifier: Apache-2.0
+
+# The Lean checks of durable-cache under the Lean version Veil pins
+# (SDS-VERIFICATION.LAYOUT-02): the storage contract's, and in later parts of
+# phase 2 the protocol model.
+
+name = "Protocol"
+defaultTargets = ["Protocol"]
+
+[leanOptions]
+# A proof with a gap, like any warning, fails the build.
+warningAsError = true
+
+[[require]]
+name = "HttpCacheStorage"
+path = "../libs/HttpCacheStorage"
+
+[[lean_lib]]
+name = "Protocol"

@@ -70,7 +70,9 @@ enum Cmd {
     /// with the project's SPDX header, after the shebang if it has one: a
     /// `SPDX-FileCopyrightText` line naming the durable-cache authors
     /// (see AUTHORS), or in a library under `verification/libs/<name>/` the
-    /// authors of `<name>`, then `SPDX-License-Identifier: Apache-2.0`.
+    /// authors of `<name>`, then `SPDX-License-Identifier: Apache-2.0`; and
+    /// that no file of such a library names this project or an ID of its
+    /// specification.
     Headers,
     /// Format the workspace with the nightly rustfmt pinned in
     /// `.config/rustfmt-toolchain`, since rustfmt.toml's import options are
@@ -946,7 +948,8 @@ fn check_headers() -> Result<()> {
     }
     let mut checked = 0;
     let mut missing = Vec::new();
-    for path in String::from_utf8(listing.stdout)?.split('\0') {
+    let listed = String::from_utf8(listing.stdout)?;
+    for path in listed.split('\0') {
         let Some(c) = header_comment(path) else {
             continue;
         };
@@ -974,6 +977,47 @@ fn check_headers() -> Result<()> {
         );
     }
     println!("headers: all {checked} source files carry the SPDX header");
+    check_library_names(&root, &listed)
+}
+
+/// The names of this project that no file of a library under
+/// `verification/libs/` may hold, beside the IDs of its specification: a
+/// library is to be published on its own, naming nothing of this backend
+/// (ADR-VERIFICATION.MODELS-01).
+const PROJECT_NAMES: [&str; 3] = ["durable-cache", "durable_cache", "FsCache"];
+
+/// Fail when a tracked file of a library under `verification/libs/` names
+/// this project, or an ID its specification declares, plainly or in the
+/// `IMP-` form of a marker.
+fn check_library_names(root: &Path, listed: &str) -> Result<()> {
+    let mut names: Vec<String> = PROJECT_NAMES.iter().map(|&n| n.to_owned()).collect();
+    for id in verification::declared_ids(&root.join("docs"))? {
+        if let Some((kind, rest)) = id.split_once('-') {
+            names.push(format!("IMP-{kind}.{rest}"));
+        }
+        names.push(id);
+    }
+    let mut found = Vec::new();
+    let mut checked = 0;
+    for path in listed
+        .split('\0')
+        .filter(|path| path.starts_with("verification/libs/"))
+    {
+        let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+            continue; // not text
+        };
+        checked += 1;
+        for name in names.iter().filter(|name| text.contains(name.as_str())) {
+            found.push(format!("{path} names {name}"));
+        }
+    }
+    if !found.is_empty() {
+        bail!(
+            "a library names this project, which it may not:\n  {}",
+            found.join("\n  ")
+        );
+    }
+    println!("headers: none of the libraries' {checked} files names this project");
     Ok(())
 }
 
