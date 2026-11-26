@@ -201,7 +201,7 @@ handoff to the blocking pool, while one of three inline slots is free
 Such writes go to the page cache and seldom wait, but once the host's dirty
 data passes the kernel's limit, the kernel throttles writers, for up to
 200 ms at a time, and a worker stalls with its write. So at most the
-runtime's workers less one write at once: on Pingora's default of one worker
+runtime's workers less one write at once: on the Pingora default of one worker
 (`ServerConf::threads`), or with `work_stealing` off, none do. With the
 discard after a host restart on, publication stays on the pool, since it may
 have to write the marker (ADR-STORAGE.INLINEWRITES-02).
