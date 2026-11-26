@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 The HttpCacheStorage authors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "httpcachestorage-driver"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Drives a storage backend of the pingora-cache crate through a workload, and writes the trace of its calls for the HttpCacheStorage checker"
+
+[dependencies]
+bytes = "1"
+pingora-cache = "0.9"
+pingora-http = "0.9"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+pingora-error = "0.9"
+
+# A workspace of its own: the package builds outside any other.
+[workspace]

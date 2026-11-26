@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 The HttpCacheStorage authors
+# SPDX-License-Identifier: Apache-2.0
+
+name = "HttpCacheStorage"
+version = "0.1.0"
+defaultTargets = ["HttpCacheStorage", "check-trace"]
+testDriver = "HttpCacheStorageTest"
+
+[leanOptions]
+# A proof with a gap fails the build.
+warningAsError = true
+
+[[lean_lib]]
+name = "HttpCacheStorage"
+
+[[lean_lib]]
+name = "HttpCacheStorageTest"
+
+[[lean_exe]]
+name = "check-trace"
+root = "Main"
