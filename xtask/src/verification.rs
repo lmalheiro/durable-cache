@@ -21,8 +21,9 @@ use serde::Deserialize;
 /// Where the record is, from the workspace root.
 const RECORD: &str = "verification/record.toml";
 
-/// Where the checks' harnesses are, from the workspace root.
-const HARNESS_ROOT: &str = "durable-cache/src";
+/// Where the checks' harnesses are, from the workspace root: the crate's
+/// sources and its tests, which its library's test binary builds.
+const HARNESS_ROOT: &str = "durable-cache";
 
 // IMP-VERIFICATION.LAYOUT-02: satisfy SDS-VERIFICATION.LAYOUT-02
 
@@ -64,6 +65,11 @@ pub(crate) enum Checker {
     /// An ordinary test that goes through every case within its bounds, in
     /// an `exhaustive_checks` module, for what Kani cannot follow.
     Exhaustive,
+    /// The replay of a device-mapper `log-writes` log to each flush and FUA
+    /// point (`cargo xtask crash-replay`), on Linux, with `sudo`.
+    #[serde(rename = "log-writes")]
+    #[value(name = "log-writes")]
+    LogWrites,
 }
 
 impl fmt::Display for Checker {
@@ -72,6 +78,7 @@ impl fmt::Display for Checker {
             Self::Kani => "Kani",
             Self::Loom => "loom",
             Self::Exhaustive => "exhaustive",
+            Self::LogWrites => "log-writes",
         })
     }
 }
@@ -121,12 +128,13 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
             problems.join("\n  ")
         );
     }
-    let (mut kani, mut loom, mut exhaustive, mut daily) = (0, 0, 0, 0);
+    let (mut kani, mut loom, mut exhaustive, mut replayed, mut daily) = (0, 0, 0, 0, 0);
     for check in &record.check {
         match check.checker {
             Checker::Kani => kani += 1,
             Checker::Loom => loom += 1,
             Checker::Exhaustive => exhaustive += 1,
+            Checker::LogWrites => replayed += 1,
         }
         if matches!(check.runs, Runs::Daily) {
             daily += 1;
@@ -134,7 +142,8 @@ pub(crate) fn verify(root: &Path) -> Result<Record> {
     }
     println!(
         "verify: {RECORD} holds: {} checked ({kani} by Kani, {loom} by loom, {exhaustive} \
-         exhaustively; {daily} of them daily), {} planned, {} unchecked",
+         exhaustively, {replayed} by log-writes replays; {daily} of them daily), {} planned, \
+         {} unchecked",
         record.check.len(),
         record.planned.len(),
         record.unchecked.len()
@@ -162,6 +171,11 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
         Checker::Kani => kani_harnesses(root)?,
         Checker::Loom => module_tests(root, true, "loom_checks")?,
         Checker::Exhaustive => module_tests(root, false, "exhaustive_checks")?,
+        Checker::LogWrites => harness_index(&root.join(HARNESS_ROOT))?
+            .into_keys()
+            .filter(|name| name.as_str() == REPLAY_CHECK)
+            .map(|name| (name, "the log-writes replays".to_owned()))
+            .collect(),
     };
     let recorded: Vec<&Check> = record
         .check
@@ -184,6 +198,12 @@ pub(crate) fn run_checks(root: &Path, checker: Checker, daily: bool) -> Result<(
             Checker::Kani => kani_command(root, path),
             Checker::Loom => loom_command(root, path, daily),
             Checker::Exhaustive => crate_tests(root, false, &["--exact", path]),
+            Checker::LogWrites => {
+                let start = Instant::now();
+                let passed = replay_matrix(root);
+                results.push((check, passed, start.elapsed()));
+                continue;
+            }
         };
         let start = Instant::now();
         let status = command
@@ -233,6 +253,29 @@ fn differences(
             .map(|name| format!("the record's {name} is no harness {checker} finds")),
     );
     differences
+}
+
+/// The crate's test the log-writes replay runs on each state.
+const REPLAY_CHECK: &str = "tc_persistence_crashsafe_03_replay_check";
+
+/// The log-writes replays, on every file system and mode of
+/// `crash_replay::MATRIX`: whether all pass. Each reports its own failure.
+fn replay_matrix(root: &Path) -> bool {
+    let target = match crate::target_dir(root) {
+        Ok(target) => target,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return false;
+        }
+    };
+    let mut passed = true;
+    for (fs, mode) in crate::crash_replay::MATRIX {
+        if let Err(e) = crate::crash_replay::crash_replay(root, &target, fs, mode) {
+            eprintln!("crash-replay {} {}: {e:#}", fs.name(), mode.name());
+            passed = false;
+        }
+    }
+    passed
 }
 
 /// The checks due: those the record marks `change`, and with `daily` all.

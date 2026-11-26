@@ -336,10 +336,13 @@ test scaffolding, or tooling.
 │   └── rfc9110/9111/3864        the standards the compliance chapter cites
 │
 ├── xtask/                     cargo xtask cache-tests | trace-report | headers |
-│                              fmt | readme-links | bench | cfg-matrix
+│                              fmt | readme-links | bench | cfg-matrix | verify |
+│                              crash-replay
+├── verification/              the formal checks' record of what they establish,
+│                              and their README (see "Continuous integration")
 ├── third_party/cache-tests/   git submodule, pinned — the HTTP cache test suite
-├── .github/workflows/         ci.yml, compliance.yml, deny.yml, pr-title.yml and
-│                              release-plz.yml (see below)
+├── .github/workflows/         ci.yml, compliance.yml, deny.yml, pr-title.yml,
+│                              release-plz.yml and verification.yml (see below)
 ├── .githooks/                 opt-in hooks: pre-commit checks formatting, pre-push
 │                              that the specification still builds
 ├── .claude/skills/            AI-assistant skills for writing, checking and
@@ -568,6 +571,7 @@ Two differences shape the results:
 | `deny.yml`        | dependency or policy changes, nightly, manual | `cargo deny` over the published crate's dependencies (`deny.toml`): security advisories, licences, duplicate versions, sources |
 | `pr-title.yml`    | pull requests                             | the title is a conventional commit subject (`type(scope): description`), since pull requests are squash-merged and the title becomes the commit's subject |
 | `release-plz.yml` | pushes to `main`                          | keeps the release pull request up to date, its README's links and dependency line naming the new version; when one is merged, tags the version, publishes it with the token in the `crates-io` environment and creates the GitHub release (see below) |
+| `verification.yml` | pushes to `main`, pull requests, nightly, manual | the formal checks, none of them a required check yet: the record of what they establish (`verification/record.toml`), and the Kani, loom and exhaustive checks; daily and by hand, also the deeper bounds and the `log-writes` replay of TC-PERSISTENCE.CRASHSAFE-03, as root. See [`verification/README.md`](verification/README.md) |
 
 ### Releasing
 
@@ -755,14 +759,16 @@ python3 ./.claude/skills/reqman-context/scripts/reqman-context.py \
 - **Hot upgrades need the helper.** `hotupgrade::install` is what makes the
   outgoing process's backend read-only and delays the incoming scan; without
   it both processes write the shared cache.
-- **The host-crash replay harness is not implemented.**
-  TC-PERSISTENCE.CRASHSAFE-02's setup replays a device-mapper `log-writes`
-  device to every flush point, which needs root, a scratch block device, and
-  the kernel's replay tool. `tests/persistence_crashsafe.rs` instead
-  constructs the on-disk states such a replay produces (a torn in-place
-  update or withdrawal, lost or corrupted body blocks, an unfinished store,
-  an acknowledged purge, and, with stores unsynchronised, a body that never
-  reached the device) and checks the same contract.
+- **The host-crash replay needs root.** TC-PERSISTENCE.CRASHSAFE-03 replays
+  a device-mapper `log-writes` device a write and a block at a time, on
+  ext4 and XFS. `cargo xtask crash-replay` does it, but needs `sudo` without
+  a password for its loop devices, `mkfs` and `mount`, so it runs in the
+  daily verification job rather than with `cargo test`. On every run,
+  `tests/persistence_crashsafe.rs` constructs the on-disk states such a
+  replay produces (a torn in-place update or withdrawal, lost or corrupted
+  body blocks, an unfinished store, an acknowledged purge, and, with stores
+  unsynchronised, a body that never reached the device) and checks the same
+  contract.
 - **Built for one Pingora release line at a time.** Any patch release of the
   line named at the top is accepted; moving to the next minor release is a
   deliberate revision, because the `Storage` and eviction surfaces this

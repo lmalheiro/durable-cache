@@ -9,8 +9,8 @@
 #   test_case     the test case the check implements, which names it
 #   property      what it establishes, in one sentence
 #   requirements  the requirements the property is of
-#   checker       kani, loom, or exhaustive: an ordinary test that goes
-#                 through every case within its bounds
+#   checker       kani, loom, exhaustive (an ordinary test that goes
+#                 through every case within its bounds) or log-writes
 #   harness       the check's function, named tc_<test case>_<what>
 #   bounds        what the check covers: its inputs, threads or states
 #   runs          change (each proposed change) or daily
@@ -209,11 +209,16 @@ duration = "0.2 s on a change, 0.2 s daily (local, 2026-11-26)"
 # invariants, proved with Veil (phase 2); the crash explorer on the real
 # backend (phase 3).
 
-[[planned]]
-property = "In every state a replay of the device's writes reaches, on ext4 and on XFS, the restarted backend gives the expected result of TC-PERSISTENCE.CRASHSAFE-02."
+[[check]]
+test_case = "TC-PERSISTENCE.CRASHSAFE-03"
+property = "In every state a replay of the device's writes reaches, write by write and block by block, the restarted backend serves no object whose content differs from what was stored, none whose purge it had acknowledged, and not the store left unfinished."
 requirements = ["HLR-PERSISTENCE.CRASHSAFE-02"]
 checker = "log-writes"
-phase = 1
+harness = "tc_persistence_crashsafe_03_replay_check"
+bounds = "the scenario of the test case's steps 1 and 2: eight objects of 1 byte to 300,000, two purges, an in-place update, a withdrawal, an unfinished store; ext4, ext4 with data=writeback and no delayed allocation, and XFS with stores synchronised, ext4 unsynchronised with the discard on and off; every state after mkfs, after each write and after each 4 KiB block of a longer one, the flush and FUA points among them"
+runs = "daily"
+assumes = ["the kernel's log-writes target logs each write with its flush and FUA flags, in the order the device completes them", "a crash leaves the writes the device completed, in the order it completed them, the last perhaps torn at a block; the reorderings a volatile write cache may make between two flushes are the file-system library's to explore (phase 3)"]
+duration = "5 min 37 s daily (GitHub runner, 2026-11-26)"
 
 [[planned]]
 property = "Synchronised stores: a published name never refers to data that is not on stable storage."
@@ -264,7 +269,7 @@ checker = "veil"
 phase = 2
 
 [[planned]]
-property = "In every state the file-system library allows a crash to leave after the scenario tests' system calls, the restarted backend gives the expected result of TC-PERSISTENCE.CRASHSAFE-02."
+property = "In every state the file-system library allows a crash to leave after the scenario tests' system calls, the restarted backend gives the expected result of TC-PERSISTENCE.CRASHSAFE-03."
 requirements = ["HLR-PERSISTENCE.CRASHSAFE-02"]
 checker = "crash-explorer"
 phase = 3
